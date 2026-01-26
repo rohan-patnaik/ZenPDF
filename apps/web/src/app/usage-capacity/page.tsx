@@ -2,6 +2,7 @@ import Link from "next/link";
 
 import SiteHeader from "@/components/SiteHeader";
 import { resolveCapacityState } from "@/lib/capacity";
+import { FRIENDLY_ERRORS } from "@/lib/errors";
 import { formatBytes, formatPercent } from "@/lib/formatters";
 import { DEFAULT_LIMITS, PlanTier } from "@/lib/limits";
 
@@ -36,33 +37,20 @@ const capacityCopy = {
   },
 };
 
-const errorCatalog = [
-  {
-    code: "USER_LIMIT_FILE_TOO_LARGE",
-    message: "This file is larger than your plan allows.",
-    next: "Reduce the file size or try again with fewer pages.",
-  },
-  {
-    code: "USER_LIMIT_DAILY_JOBS",
-    message: "You have reached today’s job limit.",
-    next: "Wait until tomorrow or run ZenPDF locally for unlimited jobs.",
-  },
-  {
-    code: "USER_LIMIT_DAILY_MINUTES",
-    message: "Daily processing minutes are fully used.",
-    next: "Try a lighter tool or resume once the counter resets.",
-  },
-  {
-    code: "SERVICE_CAPACITY_TEMPORARY",
-    message: "The service is temporarily overloaded.",
-    next: "Retry in a few minutes or download the local stack.",
-  },
-  {
-    code: "SERVICE_CAPACITY_MONTHLY_BUDGET",
-    message: "ZenPDF hit its monthly processing budget.",
-    next: "Use the local stack or wait for the new budget cycle.",
-  },
-];
+const errorCatalogOrder = [
+  "USER_LIMIT_FILE_TOO_LARGE",
+  "USER_LIMIT_MAX_FILES",
+  "USER_LIMIT_CONCURRENT_JOBS",
+  "USER_LIMIT_DAILY_JOBS",
+  "USER_LIMIT_DAILY_MINUTES",
+  "SERVICE_CAPACITY_TEMPORARY",
+  "SERVICE_CAPACITY_MONTHLY_BUDGET",
+] as const;
+
+const errorCatalog = errorCatalogOrder.map((code) => ({
+  code,
+  ...FRIENDLY_ERRORS[code],
+}));
 
 const UsageBar = ({
   label,
