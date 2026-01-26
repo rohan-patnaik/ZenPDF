@@ -1,0 +1,153 @@
+@import "tailwindcss";
+
+:root {
+  --paper-50: 247 240 229;
+  --paper-100: 240 229 210;
+  --paper-200: 227 212 187;
+  --paper-300: 213 196 166;
+  --ink-900: 43 39 35;
+  --ink-700: 77 70 63;
+  --ink-500: 107 98 88;
+  --forest-700: 23 55 45;
+  --forest-600: 31 67 56;
+  --forest-500: 42 87 71;
+  --sage-200: 215 228 214;
+  --rose-100: 246 235 224;
+  --gold-200: 230 212 176;
+  --paper-noise: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120' viewBox='0 0 120 120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='3' stitchTiles='stitch'/></filter><rect width='120' height='120' filter='url(%23n)' opacity='0.3'/></svg>");
+}
+
+body {
+  min-height: 100%;
+  background-color: rgb(var(--paper-50));
+  background-image: radial-gradient(
+      circle at top,
+      rgb(246 236 224 / 0.8),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 15% 30%,
+      rgb(231 217 183 / 0.6),
+      transparent 45%
+    );
+  color: rgb(var(--ink-900));
+  font-family: var(--font-body), serif;
+  position: relative;
+  isolation: isolate;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  background-image: var(--paper-noise);
+  opacity: 0.18;
+  pointer-events: none;
+  z-index: 0;
+}
+
+a {
+  color: inherit;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), serif;
+  color: rgb(var(--ink-900));
+  letter-spacing: -0.01em;
+}
+
+.paper-card {
+  background: linear-gradient(
+    145deg,
+    rgb(var(--paper-50)),
+    rgb(var(--paper-100))
+  );
+  border-radius: 28px;
+  border: 1px solid rgb(var(--ink-900) / 0.12);
+  box-shadow:
+    0 22px 45px -34px rgba(34, 26, 18, 0.65),
+    0 6px 14px -12px rgba(34, 26, 18, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+}
+
+.paper-stack {
+  background: linear-gradient(
+    160deg,
+    rgb(var(--paper-100)),
+    rgb(var(--paper-200))
+  );
+  border-radius: 34px;
+  border: 1px solid rgb(var(--ink-900) / 0.1);
+  box-shadow:
+    0 28px 60px -40px rgba(34, 26, 18, 0.6),
+    0 10px 20px -14px rgba(34, 26, 18, 0.35);
+}
+
+.paper-button {
+  background: rgb(var(--forest-600));
+  color: rgb(var(--paper-50));
+  border-radius: 999px;
+  padding: 0.7rem 1.6rem;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  box-shadow:
+    0 12px 24px -18px rgba(31, 67, 56, 0.8),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  transition: transform 0.2s ease, box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.paper-button:hover {
+  background: rgb(var(--forest-500));
+  transform: translateY(-1px);
+}
+
+.paper-button--ghost {
+  background: rgb(var(--paper-50));
+  color: rgb(var(--ink-700));
+  border-radius: 999px;
+  padding: 0.55rem 1.3rem;
+  border: 1px solid rgb(var(--ink-900) / 0.18);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  transition: background 0.2s ease, color 0.2s ease;
+}
+
+.paper-button--ghost:hover {
+  background: rgb(var(--paper-100));
+  color: rgb(var(--ink-900));
+}
+
+.ink-label {
+  text-transform: uppercase;
+  letter-spacing: 0.24em;
+  font-size: 0.65rem;
+  color: rgb(var(--ink-500));
+}
+
+.ink-divider {
+  height: 1px;
+  background: linear-gradient(
+    90deg,
+    rgb(var(--ink-900) / 0),
+    rgb(var(--ink-900) / 0.2),
+    rgb(var(--ink-900) / 0)
+  );
+}
+
+.fade-up {
+  animation: fade-up 0.75s ease both;
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(16px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
