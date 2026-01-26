@@ -32,6 +32,14 @@ export default defineSchema({
     status: jobStatus,
     progress: v.optional(v.number()),
     errorCode: v.optional(v.string()),
+    errorMessage: v.optional(v.string()),
+    claimedBy: v.optional(v.string()),
+    claimExpiresAt: v.optional(v.number()),
+    attempts: v.number(),
+    maxAttempts: v.number(),
+    startedAt: v.optional(v.number()),
+    finishedAt: v.optional(v.number()),
+    lastHeartbeatAt: v.optional(v.number()),
     inputs: v.array(
       v.object({
         storageId: v.id("_storage"),
@@ -52,7 +60,10 @@ export default defineSchema({
     updatedAt: v.number(),
   })
     .index("by_status", ["status"])
+    .index("by_status_created", ["status", "createdAt"])
+    .index("by_status_lock", ["status", "claimExpiresAt"])
     .index("by_user", ["userId", "createdAt"])
+    .index("by_user_status", ["userId", "status"])
     .index("by_updated", ["updatedAt"]),
 
   artifacts: defineTable({
@@ -67,7 +78,8 @@ export default defineSchema({
     expiresAt: v.number(),
   })
     .index("by_owner", ["ownerId", "createdAt"])
-    .index("by_job", ["jobId"]),
+    .index("by_job", ["jobId"])
+    .index("by_expires", ["expiresAt"]),
 
   usageCounters: defineTable({
     userId: v.optional(v.id("users")),
@@ -77,6 +89,33 @@ export default defineSchema({
     minutesUsed: v.number(),
     bytesProcessed: v.number(),
   }).index("by_user", ["userId", "periodStart"]),
+
+  globalUsageCounters: defineTable({
+    periodStart: v.number(),
+    jobsUsed: v.number(),
+    minutesUsed: v.number(),
+    bytesProcessed: v.number(),
+  }).index("by_period", ["periodStart"]),
+
+  planLimits: defineTable({
+    tier,
+    maxFilesPerJob: v.number(),
+    maxMbPerFile: v.number(),
+    maxConcurrentJobs: v.number(),
+    maxJobsPerDay: v.number(),
+    maxDailyMinutes: v.number(),
+    updatedAt: v.number(),
+  }).index("by_tier", ["tier"]),
+
+  globalLimits: defineTable({
+    maxConcurrentJobs: v.number(),
+    maxJobsPerDay: v.number(),
+    maxDailyMinutes: v.number(),
+    jobMaxAttempts: v.number(),
+    leaseDurationMs: v.number(),
+    artifactTtlHours: v.number(),
+    updatedAt: v.number(),
+  }),
 
   budgetState: defineTable({
     month: v.string(),

@@ -1,0 +1,32 @@
+export const FRIENDLY_ERRORS = {
+  USER_LIMIT_FILE_TOO_LARGE: {
+    message: "This file is larger than your plan allows.",
+    next: "Compress the file or split it into smaller parts.",
+  },
+  USER_LIMIT_DAILY_JOBS: {
+    message: "You have reached today’s job limit.",
+    next: "Wait until tomorrow or run ZenPDF locally for unlimited jobs.",
+  },
+  USER_LIMIT_DAILY_MINUTES: {
+    message: "Daily processing minutes are fully used.",
+    next: "Try again tomorrow or run ZenPDF locally.",
+  },
+  USER_LIMIT_MAX_FILES: {
+    message: "This job has more files than your plan allows.",
+    next: "Reduce the file count or split into multiple jobs.",
+  },
+  USER_LIMIT_CONCURRENT_JOBS: {
+    message: "You already have the maximum number of active jobs.",
+    next: "Wait for existing jobs to finish, then retry.",
+  },
+  SERVICE_CAPACITY_TEMPORARY: {
+    message: "ZenPDF is temporarily at capacity.",
+    next: "Retry in a few minutes or run the local stack.",
+  },
+  SERVICE_CAPACITY_MONTHLY_BUDGET: {
+    message: "ZenPDF hit its monthly processing budget.",
+    next: "Use the local stack or wait for the new budget cycle.",
+  },
+} as const;
+
+export type FriendlyErrorCode = keyof typeof FRIENDLY_ERRORS;

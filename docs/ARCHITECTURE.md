@@ -21,6 +21,8 @@
 - Artifacts: file metadata, storageId, TTL.
 - Usage counters: per-user and global limits.
 - Budget state: monthly cap, capacity status, heavy tool flags.
+- Plan limits: config-driven tier caps with env overrides.
+- Global limits: system-wide concurrency and job caps.
 - Workflows and teams (premium).
 
 ## Job Lifecycle
