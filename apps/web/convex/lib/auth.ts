@@ -4,14 +4,15 @@ import type {
   GenericQueryCtx,
   UserIdentity,
 } from "convex/server";
+import type { Id } from "convex/values";
 
-type Ctx =
-  | GenericMutationCtx<GenericDataModel>
-  | GenericQueryCtx<GenericDataModel>;
+type MutationCtx = GenericMutationCtx<GenericDataModel>;
+type QueryCtx = GenericQueryCtx<GenericDataModel>;
+type Ctx = MutationCtx | QueryCtx;
 
 export type ResolvedUser = {
   identity: UserIdentity | null;
-  userId: string | undefined;
+  userId: Id<"users"> | undefined;
   tier: "ANON" | "FREE_ACCOUNT" | "PREMIUM";
 };
 
@@ -32,15 +33,26 @@ export const resolveUser = async (ctx: Ctx): Promise<ResolvedUser> => {
     return { identity, userId: existing._id, tier: existing.tier };
   }
 
+  return { identity, userId: undefined, tier: "FREE_ACCOUNT" };
+};
+
+export const resolveOrCreateUser = async (
+  ctx: MutationCtx,
+): Promise<ResolvedUser> => {
+  const resolved = await resolveUser(ctx);
+  if (!resolved.identity || resolved.userId) {
+    return resolved;
+  }
+
   const now = Date.now();
   const userId = await ctx.db.insert("users", {
-    clerkUserId,
-    email: identity.email,
-    name: identity.name ?? identity.nickname,
+    clerkUserId: resolved.identity.subject,
+    email: resolved.identity.email,
+    name: resolved.identity.name ?? resolved.identity.nickname,
     tier: "FREE_ACCOUNT",
     createdAt: now,
     updatedAt: now,
   });
 
-  return { identity, userId, tier: "FREE_ACCOUNT" };
+  return { ...resolved, userId, tier: "FREE_ACCOUNT" };
 };

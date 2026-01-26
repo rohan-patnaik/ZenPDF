@@ -10,13 +10,13 @@ export const getCapacitySnapshot = query({
     const now = Date.now();
     const budget = await resolveBudgetState(ctx, now);
     const limits = await resolveGlobalLimits(ctx);
-    const { counter } = await resolveGlobalUsageCounter(ctx, now);
+    const { counter, periodStart } = await resolveGlobalUsageCounter(ctx, now);
 
     return {
       budget,
       limits,
       usage: counter ?? {
-        periodStart: now,
+        periodStart,
         jobsUsed: 0,
         minutesUsed: 0,
         bytesProcessed: 0,

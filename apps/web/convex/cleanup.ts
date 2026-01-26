@@ -7,17 +7,27 @@ export const cleanupExpiredArtifacts = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const batchSize = args.batchSize ?? 50;
+    const batchSize = Math.min(args.batchSize ?? 50, 500);
     const expired = await ctx.db
       .query("artifacts")
       .withIndex("by_expires", (q) => q.lt("expiresAt", now))
       .take(batchSize);
 
+    let deleted = 0;
+
     for (const artifact of expired) {
-      await ctx.storage.delete(artifact.storageId);
-      await ctx.db.delete(artifact._id);
+      try {
+        const meta = await ctx.db.system.get(artifact.storageId);
+        if (meta) {
+          await ctx.storage.delete(artifact.storageId);
+        }
+        await ctx.db.delete(artifact._id);
+        deleted += 1;
+      } catch {
+        continue;
+      }
     }
 
-    return { deleted: expired.length };
+    return { deleted };
   },
 });

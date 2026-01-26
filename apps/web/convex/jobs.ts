@@ -2,7 +2,7 @@ import type { GenericDataModel, GenericMutationCtx } from "convex/server";
 import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
 import { v } from "convex/values";
 
-import { resolveUser } from "./lib/auth";
+import { resolveOrCreateUser } from "./lib/auth";
 import { resolveBudgetState } from "./lib/budget";
 import { throwFriendlyError } from "./lib/errors";
 import { assertTransition } from "./lib/job-state";
@@ -66,7 +66,7 @@ export const createJob = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const { userId, tier } = await resolveUser(ctx);
+    const { userId, tier } = await resolveOrCreateUser(ctx);
     const planLimits = await resolvePlanLimits(ctx, tier);
     const globalLimits = await resolveGlobalLimits(ctx);
     const budget = await resolveBudgetState(ctx, now);
@@ -79,12 +79,7 @@ export const createJob = mutation({
       throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
     }
 
-    const { counter: usageCounter } = await resolveUsageCounter(
-      ctx,
-      userId,
-      tier,
-      now,
-    );
+    const { counter: usageCounter } = await resolveUsageCounter(ctx, userId, now);
     const { counter: globalUsage } = await resolveGlobalUsageCounter(ctx, now);
 
     const activeUserJobs =

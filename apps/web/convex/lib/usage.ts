@@ -3,6 +3,7 @@ import type {
   GenericMutationCtx,
   GenericQueryCtx,
 } from "convex/server";
+import type { Id } from "convex/values";
 
 import { startOfDayUtc } from "./time";
 
@@ -12,8 +13,7 @@ type Ctx =
 
 export const resolveUsageCounter = async (
   ctx: Ctx,
-  userId: string | undefined,
-  tier: string,
+  userId: Id<"users"> | undefined,
   timestamp: number,
 ) => {
   const periodStart = startOfDayUtc(timestamp);
@@ -27,7 +27,7 @@ export const resolveUsageCounter = async (
 
 export const incrementUsage = async (
   ctx: GenericMutationCtx<GenericDataModel>,
-  userId: string | undefined,
+  userId: Id<"users"> | undefined,
   tier: string,
   timestamp: number,
   updates: { jobs?: number; minutes?: number; bytes?: number },
@@ -35,7 +35,6 @@ export const incrementUsage = async (
   const { counter, periodStart } = await resolveUsageCounter(
     ctx,
     userId,
-    tier,
     timestamp,
   );
 

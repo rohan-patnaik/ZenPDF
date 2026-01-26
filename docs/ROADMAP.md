@@ -3,18 +3,18 @@
 Each epic is broken into PR-sized subtasks. Update this file as work ships.
 
 ## Epic 0 — Scaffold
-- [ ] 0.1 Project docs + planning files
-- [ ] 0.2 Repo scaffold (Next.js + Tailwind)
-- [ ] 0.3 Dossier UI theme baseline + landing shell
-- [ ] 0.4 Clerk Google sign-in wiring
-- [ ] 0.5 Convex setup (schema, jobs, artifacts, usage/budget tables)
-- [ ] 0.6 Usage & Capacity page skeleton
-- [ ] 0.7 CI pipeline + smoke tests
+- [x] 0.1 Project docs + planning files
+- [x] 0.2 Repo scaffold (Next.js + Tailwind)
+- [x] 0.3 Dossier UI theme baseline + landing shell
+- [x] 0.4 Clerk Google sign-in wiring
+- [x] 0.5 Convex setup (schema, jobs, artifacts, usage/budget tables)
+- [x] 0.6 Usage & Capacity page skeleton
+- [x] 0.7 CI pipeline + smoke tests
 
 ## Epic 1 — Core Job System
-- [ ] 1.1 Job status/progress model + TTL cleanup
-- [ ] 1.2 Safe claim + retries + idempotency
-- [ ] 1.3 Per-user and global caps with friendly errors
+- [x] 1.1 Job status/progress model + TTL cleanup
+- [x] 1.2 Safe claim + retries + idempotency
+- [x] 1.3 Per-user and global caps with friendly errors
 
 ## Epic 2 — Standard Tools v1
 - [ ] 2.1 Merge, split, compress
