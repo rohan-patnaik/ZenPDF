@@ -101,7 +101,9 @@ export const createJob = mutation({
         ? args.config
         : undefined;
     const devBypass =
-      args.devBypass === true && process.env.ZENPDF_DEV_MODE === "1";
+      args.devBypass === true &&
+      process.env.ZENPDF_DEV_MODE === "1" &&
+      process.env.NODE_ENV === "development";
     const planLimits = await resolvePlanLimits(ctx, tier);
     const globalLimits = await resolveGlobalLimits(ctx);
     const budget = await resolveBudgetState(ctx, now);

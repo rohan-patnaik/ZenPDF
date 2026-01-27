@@ -765,7 +765,7 @@ export default function ToolsPage() {
                 <div>
                   <div className="font-semibold text-ink-700">Dev mode</div>
                   <div className="text-ink-500">
-                    Bypass limits locally (requires `ZENPDF_DEV_MODE=1`).
+                    Bypass limits locally (development builds; requires `ZENPDF_DEV_MODE=1`).
                   </div>
                 </div>
                 <button

@@ -67,6 +67,7 @@ TOOL_OUTPUT_SUFFIXES = {
 
 
 def _strip_input_prefix(path: Path) -> Path:
+    """Remove the two-digit download prefix from a filename if present."""
     name = path.name
     if "_" in name:
         prefix, remainder = name.split("_", 1)
@@ -76,10 +77,12 @@ def _strip_input_prefix(path: Path) -> Path:
 
 
 def _normalize_extension(extension: str) -> str:
+    """Ensure the file extension starts with a dot."""
     return extension if extension.startswith(".") else f".{extension}"
 
 
 def _build_output_path(tool: str, inputs: List[Path], temp: Path) -> Path:
+    """Compute a consistent output filename based on the tool and input."""
     if tool == "web-to-pdf":
         return temp / "web_to_pdf.pdf"
     if tool not in TOOL_OUTPUT_SUFFIXES or not inputs:
@@ -93,6 +96,7 @@ def _build_output_path(tool: str, inputs: List[Path], temp: Path) -> Path:
 
 
 def _rename_output(source: Path, target: Path) -> Path:
+    """Rename a generated output file if the target name differs."""
     if source == target:
         return source
     if target.exists():
