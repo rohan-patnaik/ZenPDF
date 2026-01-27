@@ -52,7 +52,7 @@ export type FriendlyErrorCode = keyof typeof FRIENDLY_ERRORS;
 export const throwFriendlyError = (
   code: FriendlyErrorCode,
   details?: Record<string, string | number>,
-) => {
+): never => {
   const copy = FRIENDLY_ERRORS[code];
   throw new ConvexError({
     code,

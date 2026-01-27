@@ -1,6 +1,7 @@
 import { makeFunctionReference } from "convex/server";
 
 import type { BudgetSnapshot } from "../../convex/lib/budget";
+import type { WorkflowStep } from "../../convex/lib/workflow-spec";
 import type { PlanLimits, PlanTier } from "./limits";
 
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };
@@ -24,6 +25,39 @@ type ViewerSnapshot = {
   tier: PlanTier;
   adsFree: boolean;
   signedIn: boolean;
+};
+
+export type WorkflowSummary = {
+  _id: string;
+  name: string;
+  description?: string;
+  steps: WorkflowStep[];
+  teamId?: string;
+  teamName?: string;
+  ownerName?: string;
+  ownerEmail?: string;
+  createdAt: number;
+  updatedAt: number;
+  inputKind: string;
+  outputKind: string;
+  canManage: boolean;
+};
+
+export type TeamMemberSummary = {
+  _id: string;
+  userId: string;
+  role: string;
+  name?: string;
+  email?: string;
+};
+
+export type TeamSummary = {
+  _id: string;
+  name: string;
+  ownerId: string;
+  createdAt: number;
+  isOwner: boolean;
+  members: TeamMemberSummary[];
 };
 
 export const api = {
@@ -62,5 +96,38 @@ export const api = {
     getViewer: makeFunctionReference<"query", Record<string, never>, ViewerSnapshot>(
       "users:getViewer",
     ),
+  },
+  workflows: {
+    listWorkflows: makeFunctionReference<"query", Record<string, never>, WorkflowSummary[]>(
+      "workflows:listWorkflows",
+    ),
+    createWorkflow: makeFunctionReference<
+      "mutation",
+      { name: string; description?: string; steps: WorkflowStep[]; teamId?: string },
+      { workflowId: string; inputKind: string; outputKind: string }
+    >("workflows:createWorkflow"),
+    deleteWorkflow: makeFunctionReference<
+      "mutation",
+      { workflowId: string },
+      { success: boolean }
+    >("workflows:deleteWorkflow"),
+  },
+  teams: {
+    listTeams: makeFunctionReference<"query", Record<string, never>, TeamSummary[]>(
+      "teams:listTeams",
+    ),
+    createTeam: makeFunctionReference<"mutation", { name: string }, { teamId: string }>(
+      "teams:createTeam",
+    ),
+    addTeamMember: makeFunctionReference<
+      "mutation",
+      { teamId: string; email: string },
+      { memberId: string; alreadyMember: boolean }
+    >("teams:addTeamMember"),
+    removeTeamMember: makeFunctionReference<
+      "mutation",
+      { teamId: string; memberId: string },
+      { success: boolean }
+    >("teams:removeTeamMember"),
   },
 };

@@ -28,6 +28,9 @@ export default function SiteHeader() {
           <Link className="paper-button--ghost" href="/tools">
             Tools
           </Link>
+          <Link className="paper-button--ghost" href="/workflows">
+            Workflows
+          </Link>
           <Link className="paper-button--ghost" href="/usage-capacity">
             Usage & Capacity
           </Link>
