@@ -6,7 +6,7 @@ export const api = {
   files: {
     generateUploadUrl: makeFunctionReference<
       "mutation",
-      Record<string, never>,
+      { anonId?: string; workerToken?: string },
       string
     >("files:generateUploadUrl"),
     getOutputDownloadUrl: makeFunctionReference<

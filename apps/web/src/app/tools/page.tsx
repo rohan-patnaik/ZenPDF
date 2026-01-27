@@ -18,7 +18,11 @@ type ToolId =
   | "remove-pages"
   | "reorder-pages"
   | "image-to-pdf"
-  | "pdf-to-jpg";
+  | "pdf-to-jpg"
+  | "web-to-pdf"
+  | "office-to-pdf"
+  | "pdf-to-word"
+  | "pdf-to-excel";
 
 type ToolField = {
   key: string;
@@ -34,6 +38,7 @@ type ToolDefinition = {
   description: string;
   accept: string;
   multiple: boolean;
+  requiresFiles?: boolean;
   fields?: ToolField[];
 };
 
@@ -132,6 +137,42 @@ const TOOLS: ToolDefinition[] = [
     accept: ".pdf",
     multiple: false,
   },
+  {
+    id: "web-to-pdf",
+    label: "Web → PDF",
+    description: "Capture a URL into a printable PDF snapshot.",
+    accept: "",
+    multiple: false,
+    requiresFiles: false,
+    fields: [
+      {
+        key: "url",
+        label: "Web address",
+        placeholder: "https://example.com",
+      },
+    ],
+  },
+  {
+    id: "office-to-pdf",
+    label: "Office → PDF",
+    description: "Convert Word, Excel, or PowerPoint files to PDF.",
+    accept: ".docx,.xlsx,.pptx",
+    multiple: false,
+  },
+  {
+    id: "pdf-to-word",
+    label: "PDF → Word",
+    description: "Extract text from digital PDFs into DOCX.",
+    accept: ".pdf",
+    multiple: false,
+  },
+  {
+    id: "pdf-to-excel",
+    label: "PDF → Excel",
+    description: "Extract text into a simple XLSX worksheet.",
+    accept: ".pdf",
+    multiple: false,
+  },
 ];
 
 type JobRecord = {
@@ -216,21 +257,28 @@ export default function ToolsPage() {
     if (!tool) {
       return;
     }
-    if (files.length === 0) {
+    const needsFiles = tool.requiresFiles ?? true;
+    if (needsFiles && files.length === 0) {
       setStatus("Add at least one file to continue.");
       return;
     }
 
     setIsSubmitting(true);
-    setStatus("Uploading files...");
+    setStatus(needsFiles ? "Uploading files..." : "Preparing job...");
     try {
       const uploads = [] as Array<{
         storageId: string;
         filename: string;
         sizeBytes: number;
       }>;
-      for (const file of files) {
-        uploads.push(await uploadFile(file, generateUploadUrl));
+      if (needsFiles) {
+        for (const file of files) {
+          uploads.push(
+            await uploadFile(file, () =>
+              generateUploadUrl({ anonId: anonId ?? undefined }),
+            ),
+          );
+        }
       }
 
       setStatus("Creating job...");
@@ -320,23 +368,25 @@ export default function ToolsPage() {
             <div className="mt-4 text-sm text-ink-700">{tool?.description}</div>
 
             <div className="mt-6 space-y-4">
-              <div>
-                <label className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                  Files
-                </label>
-                <input
-                  type="file"
-                  className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
-                  accept={tool?.accept}
-                  multiple={tool?.multiple}
-                  onChange={handleFilesChange}
-                />
-                {files.length > 0 && (
-                  <p className="mt-2 text-xs text-ink-500">
-                    {files.length} file(s) selected.
-                  </p>
-                )}
-              </div>
+              {(tool?.requiresFiles ?? true) && (
+                <div>
+                  <label className="text-xs uppercase tracking-[0.2em] text-ink-500">
+                    Files
+                  </label>
+                  <input
+                    type="file"
+                    className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
+                    accept={tool?.accept}
+                    multiple={tool?.multiple}
+                    onChange={handleFilesChange}
+                  />
+                  {files.length > 0 && (
+                    <p className="mt-2 text-xs text-ink-500">
+                      {files.length} file(s) selected.
+                    </p>
+                  )}
+                </div>
+              )}
 
               {tool?.fields?.map((field) => (
                 <div key={field.key}>

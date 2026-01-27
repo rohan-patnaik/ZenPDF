@@ -1,12 +1,23 @@
 from __future__ import annotations
 
+import ipaddress
+import shutil
+import socket
+import subprocess
 import zipfile
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Iterable, List, Sequence, Tuple
+from urllib.parse import urlparse
 
 import img2pdf
 import fitz
+import requests
+from docx import Document
+from fpdf import FPDF
+from openpyxl import Workbook
 from pypdf import PdfReader, PdfWriter
+from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
 
 
 def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
@@ -197,3 +208,197 @@ def zip_outputs(outputs: Iterable[Path], zip_path: Path) -> Path:
         for item in outputs:
             archive.write(item, arcname=item.name)
     return zip_path
+
+
+MAX_WEB_BYTES = 2 * 1024 * 1024
+
+
+class _HTMLTextExtractor(HTMLParser):
+    """Minimal HTML to text extractor."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._parts: List[str] = []
+
+    def handle_data(self, data: str) -> None:
+        text = data.strip()
+        if text:
+            self._parts.append(text)
+
+    def text(self) -> str:
+        return "\n".join(self._parts)
+
+
+def html_to_pdf(html: str, output_path: Path) -> Path:
+    """Render basic HTML text into a PDF."""
+    parser = _HTMLTextExtractor()
+    parser.feed(html)
+    text = parser.text() or "(no content)"
+
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_margins(15, 15, 15)
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=12)
+    max_width = pdf.w - pdf.l_margin - pdf.r_margin
+    for line in text.splitlines():
+        if line.strip():
+            pdf.multi_cell(max_width, 6, line)
+        else:
+            pdf.ln(5)
+    pdf.output(str(output_path))
+    return output_path
+
+
+def web_to_pdf(url: str, output_path: Path) -> Path:
+    """Fetch a URL and convert its HTML to PDF."""
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("Only http/https URLs are supported")
+    target_ip = _resolve_public_ip(parsed.hostname)
+    netloc = (
+        f"{target_ip}:{parsed.port}" if parsed.port is not None else target_ip
+    )
+    target_url = parsed._replace(netloc=netloc).geturl()
+
+    session = requests.Session()
+    if parsed.scheme == "https":
+        session.mount("https://", HostHeaderSSLAdapter())
+
+    body = bytearray()
+    with session.get(
+        target_url,
+        timeout=20,
+        allow_redirects=False,
+        stream=True,
+        headers={"Host": parsed.hostname},
+    ) as response:
+        if 300 <= response.status_code < 400:
+            raise ValueError("Redirects are not allowed")
+        response.raise_for_status()
+        for chunk in response.iter_content(chunk_size=64 * 1024):
+            if not chunk:
+                continue
+            body.extend(chunk)
+            if len(body) > MAX_WEB_BYTES:
+                raise ValueError("Web response too large")
+        encoding = response.encoding or "utf-8"
+
+    html = body.decode(encoding, errors="replace")
+    return html_to_pdf(html, output_path)
+
+
+def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
+    """Convert an Office document to PDF using LibreOffice."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        raise RuntimeError("LibreOffice is required for office-to-pdf")
+
+    try:
+        result = subprocess.run(
+            [
+                soffice,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(output_dir),
+                str(input_path),
+            ],
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=120,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("Office conversion timed out") from error
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or "Office conversion failed")
+
+    output_path = output_dir / f"{input_path.stem}.pdf"
+    if not output_path.exists():
+        raise RuntimeError("Office conversion produced no output")
+    return output_path
+
+
+def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
+    """Convert a PDF into a Word document by extracting text."""
+    reader = PdfReader(str(input_path))
+    document = Document()
+    for index, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        if index > 1:
+            document.add_page_break()
+        if text.strip():
+            for line in text.splitlines():
+                if line.strip():
+                    document.add_paragraph(line)
+        else:
+            document.add_paragraph("")
+    document.save(str(output_path))
+    return output_path
+
+
+def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
+    """Convert a PDF into an Excel workbook by extracting text."""
+    reader = PdfReader(str(input_path))
+    workbook = Workbook()
+    sheet = workbook.active
+    row = 1
+    for index, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            sheet.cell(row=row, column=1, value=f"Page {index}")
+            row += 1
+        else:
+            for line in lines:
+                sheet.cell(row=row, column=1, value=line)
+                row += 1
+        row += 1
+    workbook.save(str(output_path))
+    return output_path
+
+
+def _is_public_host(hostname: str) -> bool:
+    """Return False if the hostname resolves to a private address."""
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror:
+        return False
+
+    for info in infos:
+        address = str(info[4][0])
+        if not _is_public_ip(address):
+            return False
+    return True
+
+
+def _resolve_public_ip(hostname: str) -> str:
+    """Resolve a hostname to a public IP address."""
+    try:
+        infos = socket.getaddrinfo(hostname, None)
+    except socket.gaierror as error:
+        raise ValueError("Unable to resolve host") from error
+
+    for info in infos:
+        address = str(info[4][0])
+        if _is_public_ip(address):
+            return address
+    raise ValueError("URL host is not allowed")
+
+
+def _is_public_ip(address: str) -> bool:
+    """Return True if the address is a public IP."""
+    try:
+        ip = ipaddress.ip_address(address)
+    except ValueError:
+        return False
+    return not (
+        ip.is_private
+        or ip.is_loopback
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+    )
+

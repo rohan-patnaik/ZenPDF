@@ -22,9 +22,9 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 2.3 Image <-> PDF, PDF <-> JPG
 
 ## Epic 3 — Conversions v1
-- [ ] 3.1 Web to PDF
-- [ ] 3.2 Office to PDF
-- [ ] 3.3 PDF to office (non-OCR)
+- [x] 3.1 Web to PDF
+- [x] 3.2 Office to PDF
+- [x] 3.3 PDF to office (non-OCR)
 
 ## Epic 4 — Editor & Utilities
 - [ ] 4.1 Watermark, page numbers, crop

@@ -26,7 +26,7 @@ type ClaimedJob = {
 
 const claimNextJob = makeFunctionReference<
   "mutation",
-  { workerId: string },
+  { workerId: string; workerToken?: string },
   ClaimedJob
 >("jobs:claimNextJob");
 
@@ -90,6 +90,8 @@ describe("job system", () => {
       email: "user@example.com",
     });
 
+    process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
+
     const storageId = await t.run(async (ctx) =>
       ctx.storage.store(new Blob(["test"])),
     );
@@ -99,7 +101,10 @@ describe("job system", () => {
       inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5000 }],
     });
 
-    const claimed = await t.mutation(claimNextJob, { workerId: "worker-1" });
+    const claimed = await t.mutation(claimNextJob, {
+      workerId: "worker-1",
+      workerToken: "test-worker-token",
+    });
     expect(claimed?._id).toBe(jobId);
     expect(claimed?.status).toBe("running");
     expect(claimed?.attempts).toBe(1);

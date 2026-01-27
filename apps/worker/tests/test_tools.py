@@ -1,15 +1,25 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+from unittest.mock import Mock, patch
+
+import pytest
+from docx import Document
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from zenpdf_worker.tools import (
+    MAX_WEB_BYTES,
+    html_to_pdf,
     image_to_pdf,
     merge_pdfs,
+    office_to_pdf,
+    pdf_to_docx,
+    pdf_to_xlsx,
     pdf_to_jpg,
     rotate_pdf,
     split_pdf,
+    web_to_pdf,
     zip_outputs,
 )
 
@@ -70,3 +80,134 @@ def test_image_to_pdf_and_pdf_to_jpg() -> None:
         assert len(images) == 1
         zipped = zip_outputs(images, temp_path / "pages.zip")
         assert zipped.exists()
+
+
+def test_html_to_pdf() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        output = html_to_pdf("<h1>Hello</h1><p>ZenPDF</p>", temp_path / "web.pdf")
+        assert output.exists()
+        assert output.stat().st_size > 0
+
+
+def test_web_to_pdf_fetches_html() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"<p>Example</p>")
+        session = _DummySession(response)
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
+        ):
+            output = web_to_pdf("https://example.com", temp_path / "site.pdf")
+        assert output.exists()
+
+
+def test_web_to_pdf_blocks_private_host() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        with patch(
+            "zenpdf_worker.tools._resolve_public_ip",
+            side_effect=ValueError("URL host is not allowed"),
+        ):
+            with pytest.raises(ValueError):
+                web_to_pdf("http://127.0.0.1", temp_path / "blocked.pdf")
+
+
+def test_web_to_pdf_blocks_redirects() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"", status_code=302)
+        session = _DummySession(response)
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
+        ):
+            with pytest.raises(ValueError):
+                web_to_pdf("https://example.com", temp_path / "redirect.pdf")
+
+
+def test_web_to_pdf_limits_body_size() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"a" * (MAX_WEB_BYTES + 1))
+        session = _DummySession(response)
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
+        ):
+            with pytest.raises(ValueError):
+                web_to_pdf("https://example.com", temp_path / "large.pdf")
+
+
+def test_pdf_to_docx_and_xlsx() -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        docx_path = pdf_to_docx(source, temp_path / "output.docx")
+        xlsx_path = pdf_to_xlsx(source, temp_path / "output.xlsx")
+
+        assert docx_path.exists()
+        assert xlsx_path.exists()
+
+
+def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        doc_path = temp_path / "sample.docx"
+        document = Document()
+        document.add_paragraph("Hello")
+        document.save(doc_path)
+
+        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: None)
+        with pytest.raises(RuntimeError):
+            office_to_pdf(doc_path, temp_path)
+
+
+class _DummySocket:
+    def __init__(self, ip: str) -> None:
+        self._ip = ip
+
+    def getpeername(self):
+        return (self._ip, 443)
+
+
+class _DummyConnection:
+    def __init__(self, ip: str) -> None:
+        self.sock = _DummySocket(ip)
+
+
+class _DummyRaw:
+    def __init__(self, ip: str) -> None:
+        self._connection = _DummyConnection(ip)
+
+
+class _DummyResponse:
+    def __init__(self, body: bytes, status_code: int = 200, ip: str = "93.184.216.34") -> None:
+        self._body = body
+        self.status_code = status_code
+        self.encoding = "utf-8"
+        self.raw = _DummyRaw(ip)
+
+    def iter_content(self, chunk_size: int = 1024):
+        yield self._body
+
+    def raise_for_status(self) -> None:
+        if self.status_code >= 400:
+            raise RuntimeError("Bad response")
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
+class _DummySession:
+    def __init__(self, response: _DummyResponse) -> None:
+        self._response = response
+
+    def mount(self, *_args, **_kwargs):
+        return None
+
+    def get(self, *_args, **_kwargs):
+        return self._response
