@@ -256,9 +256,20 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Only http/https URLs are supported")
     target_ip = _resolve_public_ip(parsed.hostname)
-    netloc = (
-        f"{target_ip}:{parsed.port}" if parsed.port is not None else target_ip
+    is_ipv6 = isinstance(ipaddress.ip_address(target_ip), ipaddress.IPv6Address)
+    host = f"[{target_ip}]" if is_ipv6 else target_ip
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+    try:
+        hostname_ip = ipaddress.ip_address(parsed.hostname)
+        hostname_is_ipv6 = isinstance(hostname_ip, ipaddress.IPv6Address)
+    except ValueError:
+        hostname_is_ipv6 = False
+
+    host_header = (
+        f"[{parsed.hostname}]" if hostname_is_ipv6 else parsed.hostname
     )
+    if parsed.port is not None:
+        host_header = f"{host_header}:{parsed.port}"
     target_url = parsed._replace(netloc=netloc).geturl()
 
     session = requests.Session()
@@ -271,7 +282,7 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
         timeout=20,
         allow_redirects=False,
         stream=True,
-        headers={"Host": parsed.hostname},
+        headers={"Host": host_header},
     ) as response:
         if 300 <= response.status_code < 400:
             raise ValueError("Redirects are not allowed")
@@ -400,5 +411,5 @@ def _is_public_ip(address: str) -> bool:
         or ip.is_link_local
         or ip.is_multicast
         or ip.is_reserved
+        or ip.is_unspecified
     )
-

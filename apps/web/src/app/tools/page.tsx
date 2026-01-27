@@ -262,6 +262,18 @@ export default function ToolsPage() {
       setStatus("Add at least one file to continue.");
       return;
     }
+    if (!needsFiles && tool.id === "web-to-pdf") {
+      const urlValue = configValues.url?.trim() ?? "";
+      try {
+        const parsed = new URL(urlValue);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          throw new Error("Invalid protocol");
+        }
+      } catch {
+        setStatus("Enter a valid URL.");
+        return;
+      }
+    }
 
     setIsSubmitting(true);
     setStatus(needsFiles ? "Uploading files..." : "Preparing job...");

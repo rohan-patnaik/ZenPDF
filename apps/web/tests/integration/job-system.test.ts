@@ -90,23 +90,31 @@ describe("job system", () => {
       email: "user@example.com",
     });
 
+    const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
+    try {
+      const storageId = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["test"])),
+      );
 
-    const storageId = await t.run(async (ctx) =>
-      ctx.storage.store(new Blob(["test"])),
-    );
+      const { jobId } = await t.mutation(createJob, {
+        tool: "merge",
+        inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5000 }],
+      });
 
-    const { jobId } = await t.mutation(createJob, {
-      tool: "merge",
-      inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5000 }],
-    });
-
-    const claimed = await t.mutation(claimNextJob, {
-      workerId: "worker-1",
-      workerToken: "test-worker-token",
-    });
-    expect(claimed?._id).toBe(jobId);
-    expect(claimed?.status).toBe("running");
-    expect(claimed?.attempts).toBe(1);
+      const claimed = await t.mutation(claimNextJob, {
+        workerId: "worker-1",
+        workerToken: "test-worker-token",
+      });
+      expect(claimed?._id).toBe(jobId);
+      expect(claimed?.status).toBe("running");
+      expect(claimed?.attempts).toBe(1);
+    } finally {
+      if (previousWorkerToken === undefined) {
+        delete process.env.ZENPDF_WORKER_TOKEN;
+      } else {
+        process.env.ZENPDF_WORKER_TOKEN = previousWorkerToken;
+      }
+    }
   });
 });
