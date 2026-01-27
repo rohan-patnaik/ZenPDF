@@ -7,20 +7,28 @@ from unittest.mock import patch
 
 import pytest
 from docx import Document
+from fpdf import FPDF
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
 from zenpdf_worker.tools import (
     MAX_WEB_BYTES,
+    compare_pdfs,
+    crop_pdf,
     html_to_pdf,
     image_to_pdf,
     merge_pdfs,
     office_to_pdf,
+    page_numbers_pdf,
     pdf_to_docx,
     pdf_to_xlsx,
     pdf_to_jpg,
+    protect_pdf,
+    redact_pdf,
     rotate_pdf,
     split_pdf,
+    unlock_pdf,
+    watermark_pdf,
     web_to_pdf,
     zip_outputs,
 )
@@ -33,6 +41,15 @@ def _make_pdf(path: Path, pages: int) -> None:
         writer.add_blank_page(width=300, height=300)
     with path.open("wb") as handle:
         writer.write(handle)
+
+
+def _make_text_pdf(path: Path, text: str) -> None:
+    """Create a single-page PDF with text content."""
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.add_page()
+    pdf.set_font("Helvetica", size=14)
+    pdf.text(10, 20, text)
+    pdf.output(str(path))
 
 
 def test_merge_pdfs() -> None:
@@ -72,6 +89,36 @@ def test_rotate_pdf() -> None:
         assert output.exists()
 
 
+def test_watermark_and_page_numbers() -> None:
+    """Apply watermark and page numbers to a PDF."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+
+        watermarked = watermark_pdf(source, temp_path / "watermarked.pdf", "CONFIDENTIAL", None)
+        numbered = page_numbers_pdf(source, temp_path / "numbered.pdf", 3, None)
+
+        watermarked_reader = PdfReader(str(watermarked))
+        numbered_reader = PdfReader(str(numbered))
+        assert "CONFIDENTIAL" in (watermarked_reader.pages[0].extract_text() or "")
+        assert "3" in (numbered_reader.pages[0].extract_text() or "")
+
+
+def test_crop_pdf() -> None:
+    """Crop a PDF using point margins."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        cropped = crop_pdf(source, temp_path / "cropped.pdf", "10,10,10,10", None)
+        reader = PdfReader(str(cropped))
+        page = reader.pages[0]
+        assert float(page.cropbox.width) == pytest.approx(280)
+        assert float(page.cropbox.height) == pytest.approx(280)
+
+
 def test_image_to_pdf_and_pdf_to_jpg() -> None:
     """Convert image to PDF and PDF to JPG."""
     with TemporaryDirectory() as temp:
@@ -87,6 +134,48 @@ def test_image_to_pdf_and_pdf_to_jpg() -> None:
         assert len(images) == 1
         zipped = zip_outputs(images, temp_path / "pages.zip")
         assert zipped.exists()
+
+
+def test_unlock_and_protect_pdf() -> None:
+    """Protect a PDF with a password and unlock it."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        protected = protect_pdf(source, temp_path / "protected.pdf", "secret")
+        protected_reader = PdfReader(str(protected))
+        assert protected_reader.is_encrypted
+
+        unlocked = unlock_pdf(protected, temp_path / "unlocked.pdf", "secret")
+        unlocked_reader = PdfReader(str(unlocked))
+        assert not unlocked_reader.is_encrypted
+
+
+def test_redact_pdf() -> None:
+    """Redact matching text in a PDF."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_text_pdf(source, "CONFIDENTIAL")
+
+        redacted = redact_pdf(source, temp_path / "redacted.pdf", "CONFIDENTIAL", None)
+        reader = PdfReader(str(redacted))
+        assert "CONFIDENTIAL" not in (reader.pages[0].extract_text() or "")
+
+
+def test_compare_pdfs() -> None:
+    """Generate a comparison report for two PDFs."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        first = temp_path / "first.pdf"
+        second = temp_path / "second.pdf"
+        _make_text_pdf(first, "Alpha")
+        _make_text_pdf(second, "Beta")
+
+        report = compare_pdfs(first, second, temp_path / "report.txt")
+        report_text = report.read_text(encoding="utf-8")
+        assert "text differs" in report_text
 
 
 def test_html_to_pdf() -> None:

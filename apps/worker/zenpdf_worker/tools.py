@@ -9,8 +9,9 @@ import socket
 import subprocess
 import zipfile
 from html.parser import HTMLParser
+from io import BytesIO
 from pathlib import Path
-from typing import Iterable, List, Sequence, Tuple
+from typing import Callable, Iterable, List, Sequence, Tuple
 from urllib.parse import urlparse
 
 import img2pdf
@@ -52,6 +53,22 @@ def _parse_page_list(value: str, total_pages: int) -> List[int]:
     return [page for page in pages if 1 <= page <= total_pages]
 
 
+def _parse_margins(value: str) -> Tuple[float, float, float, float]:
+    """Parse margin values as top, right, bottom, left points."""
+    parts = [part.strip() for part in value.split(",") if part.strip()]
+    try:
+        numbers = [float(part) for part in parts]
+    except ValueError as error:
+        raise ValueError("Margins must be numeric") from error
+    if len(numbers) == 1:
+        top = right = bottom = left = numbers[0]
+    elif len(numbers) == 4:
+        top, right, bottom, left = numbers
+    else:
+        raise ValueError("Margins must have 1 or 4 values")
+    return (top, right, bottom, left)
+
+
 def _rotate_page(page, angle: int) -> None:
     """Rotate a PDF page using whichever API is available."""
     if hasattr(page, "rotate_clockwise"):
@@ -60,6 +77,34 @@ def _rotate_page(page, angle: int) -> None:
         page.rotateClockwise(angle)
     elif hasattr(page, "rotate"):
         page.rotate(angle)
+
+
+def _points_to_mm(points: float) -> float:
+    """Convert PDF points to millimeters."""
+    return points * 25.4 / 72
+
+
+def _build_overlay_page(
+    width_points: float,
+    height_points: float,
+    draw_fn: Callable[[FPDF, float, float], None],
+):
+    """Create a single-page PDF overlay for merging text."""
+    width_mm = _points_to_mm(width_points)
+    height_mm = _points_to_mm(height_points)
+    orientation = "L" if width_mm > height_mm else "P"
+    pdf = FPDF(orientation=orientation, unit="mm", format=(width_mm, height_mm))
+    pdf.set_margins(0, 0, 0)
+    pdf.set_auto_page_break(auto=False)
+    pdf.add_page()
+    draw_fn(pdf, width_mm, height_mm)
+    pdf_output = pdf.output(dest="S")
+    if isinstance(pdf_output, str):
+        pdf_bytes = pdf_output.encode("latin-1")
+    else:
+        pdf_bytes = bytes(pdf_output)
+    overlay_reader = PdfReader(BytesIO(pdf_bytes))
+    return overlay_reader.pages[0]
 
 
 def merge_pdfs(inputs: Sequence[Path], output_path: Path) -> Path:
@@ -174,6 +219,194 @@ def reorder_pages(
     return output_path
 
 
+def watermark_pdf(
+    input_path: Path,
+    output_path: Path,
+    text: str,
+    pages: str | None,
+) -> Path:
+    """Apply a centered text watermark to selected pages."""
+    reader = PdfReader(str(input_path))
+    writer = PdfWriter()
+    total_pages = len(reader.pages)
+    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    for index, page in enumerate(reader.pages, start=1):
+        if target_pages is None or index in target_pages:
+            width = float(page.mediabox.width)
+            height = float(page.mediabox.height)
+
+            def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
+                font_size = min(max(int(min(width_mm, height_mm) * 0.12), 18), 48)
+                _set_overlay_font(pdf, text, font_size)
+                pdf.set_text_color(160, 160, 160)
+                pdf.set_xy(0, height_mm / 2)
+                pdf.cell(width_mm, 10, text, align="C")
+
+            overlay = _build_overlay_page(width, height, _draw)
+            page.merge_page(overlay)
+        writer.add_page(page)
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def page_numbers_pdf(
+    input_path: Path,
+    output_path: Path,
+    start: int,
+    pages: str | None,
+) -> Path:
+    """Add page numbers to the footer of each page."""
+    reader = PdfReader(str(input_path))
+    writer = PdfWriter()
+    total_pages = len(reader.pages)
+    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    for index, page in enumerate(reader.pages, start=1):
+        if target_pages is None or index in target_pages:
+            width = float(page.mediabox.width)
+            height = float(page.mediabox.height)
+            number = start + index - 1
+
+            def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
+                font_size = min(max(int(min(width_mm, height_mm) * 0.04), 8), 16)
+                _set_overlay_font(pdf, str(number), font_size)
+                pdf.set_text_color(60, 60, 60)
+                margin = 10
+                pdf.set_xy(0, height_mm - margin)
+                pdf.cell(width_mm - margin, 6, str(number), align="R")
+
+            overlay = _build_overlay_page(width, height, _draw)
+            page.merge_page(overlay)
+        writer.add_page(page)
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def crop_pdf(
+    input_path: Path,
+    output_path: Path,
+    margins: str,
+    pages: str | None,
+) -> Path:
+    """Crop PDF pages by the given margins in points."""
+    reader = PdfReader(str(input_path))
+    writer = PdfWriter()
+    total_pages = len(reader.pages)
+    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    top, right, bottom, left = _parse_margins(margins)
+    for index, page in enumerate(reader.pages, start=1):
+        if target_pages is None or index in target_pages:
+            lower_left_x = float(page.mediabox.lower_left[0]) + left
+            lower_left_y = float(page.mediabox.lower_left[1]) + bottom
+            upper_right_x = float(page.mediabox.upper_right[0]) - right
+            upper_right_y = float(page.mediabox.upper_right[1]) - top
+            if upper_right_x <= lower_left_x or upper_right_y <= lower_left_y:
+                raise ValueError("Crop margins remove the entire page")
+            page.mediabox.lower_left = (lower_left_x, lower_left_y)
+            page.mediabox.upper_right = (upper_right_x, upper_right_y)
+            page.cropbox.lower_left = (lower_left_x, lower_left_y)
+            page.cropbox.upper_right = (upper_right_x, upper_right_y)
+            page.trimbox.lower_left = (lower_left_x, lower_left_y)
+            page.trimbox.upper_right = (upper_right_x, upper_right_y)
+        writer.add_page(page)
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def unlock_pdf(input_path: Path, output_path: Path, password: str) -> Path:
+    """Remove password protection from a PDF."""
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        result = reader.decrypt(password)
+        if result == 0:
+            raise ValueError("Unable to unlock PDF")
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.add_metadata(reader.metadata or {})
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def protect_pdf(input_path: Path, output_path: Path, password: str) -> Path:
+    """Encrypt a PDF with a new password."""
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        raise ValueError("PDF is already encrypted")
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.add_metadata(reader.metadata or {})
+    writer.encrypt(user_password=password, owner_password=password, use_128bit=True)
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def redact_pdf(
+    input_path: Path,
+    output_path: Path,
+    text: str,
+    pages: str | None,
+) -> Path:
+    """Redact matching text from a PDF."""
+    document = fitz.open(str(input_path))
+    total_pages = document.page_count
+    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    for index in range(total_pages):
+        page_number = index + 1
+        if target_pages is not None and page_number not in target_pages:
+            continue
+        page = document.load_page(index)
+        rectangles = page.search_for(text)
+        if not rectangles:
+            continue
+        for rect in rectangles:
+            page.add_redact_annot(rect, fill=(0, 0, 0))
+        page.apply_redactions()
+    document.save(str(output_path), deflate=True)
+    document.close()
+    return output_path
+
+
+def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path:
+    """Generate a text report comparing two PDFs."""
+    reader_a = PdfReader(str(first_path))
+    reader_b = PdfReader(str(second_path))
+    pages_a = len(reader_a.pages)
+    pages_b = len(reader_b.pages)
+    lines = [
+        "ZenPDF comparison report",
+        f"File A: {first_path.name}",
+        f"File B: {second_path.name}",
+        f"Pages: {pages_a} vs {pages_b}",
+        "",
+    ]
+    differences: List[str] = []
+    if pages_a != pages_b:
+        differences.append("Page counts differ.")
+    for index in range(max(pages_a, pages_b)):
+        if index >= pages_a:
+            differences.append(f"Page {index + 1}: missing from file A")
+            continue
+        if index >= pages_b:
+            differences.append(f"Page {index + 1}: missing from file B")
+            continue
+        text_a = (reader_a.pages[index].extract_text() or "").strip()
+        text_b = (reader_b.pages[index].extract_text() or "").strip()
+        if text_a != text_b:
+            differences.append(f"Page {index + 1}: text differs")
+    if not differences:
+        lines.append("No text differences detected.")
+    else:
+        lines.extend(differences)
+    output_path.write_text("\n".join(lines), encoding="utf-8")
+    return output_path
+
+
 def image_to_pdf(inputs: Sequence[Path], output_path: Path) -> Path:
     """Convert images to a single PDF."""
     pdf_bytes = img2pdf.convert([str(path) for path in inputs])
@@ -232,6 +465,22 @@ def _resolve_unicode_font_path() -> Path | None:
         if candidate.is_file():
             return candidate
     return None
+
+
+def _set_overlay_font(pdf: FPDF, text: str, size: int) -> None:
+    """Select an available font for overlay text."""
+    font_path = _resolve_unicode_font_path()
+    if font_path:
+        pdf.add_font("DejaVuSans", fname=str(font_path), uni=True)
+        pdf.set_font("DejaVuSans", size=size)
+        return
+    try:
+        text.encode("latin-1")
+    except UnicodeEncodeError as error:
+        raise RuntimeError(
+            "Unicode font unavailable. Set ZENPDF_TTF_PATH to a DejaVuSans.ttf path."
+        ) from error
+    pdf.set_font("Helvetica", size=size)
 
 
 class _HTMLTextExtractor(HTMLParser):

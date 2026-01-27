@@ -11,17 +11,24 @@ import requests
 
 from .client import ConvexClient, ConvexError
 from .tools import (
+    compare_pdfs,
     compress_pdf,
+    crop_pdf,
     image_to_pdf,
     merge_pdfs,
     office_to_pdf,
+    page_numbers_pdf,
     pdf_to_docx,
     pdf_to_xlsx,
     pdf_to_jpg,
+    protect_pdf,
+    redact_pdf,
     remove_pages,
     reorder_pages,
     rotate_pdf,
     split_pdf,
+    unlock_pdf,
+    watermark_pdf,
     web_to_pdf,
     zip_outputs,
 )
@@ -199,6 +206,45 @@ class ZenPdfWorker:
             if not order.strip():
                 return [merge_pdfs([inputs[0]], output_path)]
             return [reorder_pages(inputs[0], output_path, order)]
+        if tool == "watermark":
+            text = config.get("text") or ""
+            if not str(text).strip():
+                raise ValueError("Watermark text is required")
+            return [
+                watermark_pdf(inputs[0], output_path, str(text), config.get("pages"))
+            ]
+        if tool == "page-numbers":
+            start = _parse_int(config.get("start"), 1)
+            return [
+                page_numbers_pdf(inputs[0], output_path, start, config.get("pages"))
+            ]
+        if tool == "crop":
+            margins = config.get("margins") or ""
+            if not str(margins).strip():
+                raise ValueError("Margins are required")
+            return [crop_pdf(inputs[0], output_path, str(margins), config.get("pages"))]
+        if tool == "redact":
+            text = config.get("text") or ""
+            if not str(text).strip():
+                raise ValueError("Text to redact is required")
+            return [
+                redact_pdf(inputs[0], output_path, str(text), config.get("pages"))
+            ]
+        if tool == "compare":
+            if len(inputs) < 2:
+                raise ValueError("Two PDF files are required")
+            report_path = temp / "compare_report.txt"
+            return [compare_pdfs(inputs[0], inputs[1], report_path)]
+        if tool == "unlock":
+            password = config.get("password") or ""
+            if not str(password).strip():
+                raise ValueError("Password is required")
+            return [unlock_pdf(inputs[0], output_path, str(password))]
+        if tool == "protect":
+            password = config.get("password") or ""
+            if not str(password).strip():
+                raise ValueError("Password is required")
+            return [protect_pdf(inputs[0], output_path, str(password))]
         if tool == "image-to-pdf":
             return [image_to_pdf(inputs, output_path)]
         if tool == "pdf-to-jpg":
