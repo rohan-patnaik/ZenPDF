@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useConvex, useMutation, useQuery } from "convex/react";
+import { useMutation, useQuery } from "convex/react";
 
 import SiteHeader from "@/components/SiteHeader";
 import { ANON_STORAGE_KEY, getOrCreateAnonId } from "@/lib/anon-id";
@@ -407,7 +407,6 @@ export default function ToolsPage() {
   const [anonId, setAnonId] = useState<string | null>(() => getOrCreateAnonId());
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const convex = useConvex();
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
   const createJob = useMutation(api.jobs.createJob);
   const jobsArgs = useMemo(
@@ -546,15 +545,16 @@ export default function ToolsPage() {
     }
   };
 
-  const handleDownload = async (jobId: string, storageId: string) => {
-    const url = (await convex.query(api.files.getOutputDownloadUrl, {
+  const handleDownload = (jobId: string, storageId: string, filename: string) => {
+    const params = new URLSearchParams({
       jobId,
       storageId,
-      anonId: anonId ?? undefined,
-    })) as string | null;
-    if (url) {
-      window.open(url, "_blank", "noopener");
+      filename,
+    });
+    if (anonId) {
+      params.set("anonId", anonId);
     }
+    window.open(`/api/download?${params.toString()}`, "_blank", "noopener");
   };
 
   return (
@@ -719,7 +719,9 @@ export default function ToolsPage() {
                         key={output.storageId}
                         type="button"
                         className="paper-button--ghost text-xs"
-                        onClick={() => handleDownload(job._id, output.storageId)}
+                        onClick={() =>
+                          handleDownload(job._id, output.storageId, output.filename)
+                        }
                       >
                         {output.filename}
                       </button>
