@@ -50,7 +50,7 @@ const planSnapshots = [
     tier: "ANON",
     description: "No sign-in required for quick one-off work.",
     details: [
-      `${ANON.maxFilesPerJob} file per job`,
+      `${ANON.maxFilesPerJob} ${ANON.maxFilesPerJob === 1 ? "file" : "files"} per job`,
       `${formatBytes(ANON.maxMbPerFile * 1024 * 1024)} per file`,
       `${ANON.maxJobsPerDay} jobs per day`,
     ],

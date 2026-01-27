@@ -34,19 +34,21 @@ export const getUsageSnapshot = query({
     const { userId, tier } = await resolveUser(ctx);
     const anonId = args.anonId?.trim() || undefined;
     const resolvedAnonId = userId ? undefined : anonId;
-    const planLimits = await resolvePlanLimits(ctx, tier);
+    const [planLimits, anonLimits, freeLimits, premiumLimits, budget, usageResult] =
+      await Promise.all([
+        resolvePlanLimits(ctx, tier),
+        resolvePlanLimits(ctx, "ANON"),
+        resolvePlanLimits(ctx, "FREE_ACCOUNT"),
+        resolvePlanLimits(ctx, "PREMIUM"),
+        resolveBudgetState(ctx, now),
+        resolveUsageCounter(ctx, userId, resolvedAnonId, now),
+      ]);
     const planSnapshot = {
-      ANON: await resolvePlanLimits(ctx, "ANON"),
-      FREE_ACCOUNT: await resolvePlanLimits(ctx, "FREE_ACCOUNT"),
-      PREMIUM: await resolvePlanLimits(ctx, "PREMIUM"),
+      ANON: anonLimits,
+      FREE_ACCOUNT: freeLimits,
+      PREMIUM: premiumLimits,
     };
-    const budget = await resolveBudgetState(ctx, now);
-    const { counter, periodStart } = await resolveUsageCounter(
-      ctx,
-      userId,
-      resolvedAnonId,
-      now,
-    );
+    const { counter, periodStart } = usageResult;
 
     return {
       tier,

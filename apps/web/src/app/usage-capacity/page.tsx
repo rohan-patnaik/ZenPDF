@@ -291,8 +291,9 @@ export default function UsageCapacityPage() {
             </SignedOut>
             <SignedIn>
               <div className="rounded-[20px] border border-forest-600/30 bg-sage-200/70 p-4 text-sm text-forest-700">
-                Supporter mode is enabled per account and may pause when capacity
-                is limited.
+                {tier === "PREMIUM"
+                  ? "Supporter mode is enabled per account and may pause when capacity is limited."
+                  : "Supporter mode is available for Premium accounts and may pause when capacity is limited."}
               </div>
             </SignedIn>
             <div className="mt-auto rounded-[20px] border border-ink-900/10 bg-paper-100 p-4 text-sm text-ink-700">

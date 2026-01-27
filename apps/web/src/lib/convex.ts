@@ -1,5 +1,6 @@
 import { makeFunctionReference } from "convex/server";
 
+import type { BudgetSnapshot } from "../../convex/lib/budget";
 import type { PlanLimits, PlanTier } from "./limits";
 
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };
@@ -9,12 +10,6 @@ type UsageCounter = {
   jobsUsed: number;
   minutesUsed: number;
   bytesProcessed: number;
-};
-
-type BudgetSnapshot = {
-  monthlyBudgetUsage: number;
-  heavyToolsEnabled: boolean;
-  status: "available" | "limited" | "at_capacity";
 };
 
 type UsageSnapshot = {
