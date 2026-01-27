@@ -20,8 +20,14 @@ import requests
 from docx import Document
 from fpdf import FPDF
 from openpyxl import Workbook
+from PIL import Image
 from pypdf import PdfReader, PdfWriter
 from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
+
+try:
+    import pytesseract
+except ImportError:  # pragma: no cover - optional dependency for OCR tools
+    pytesseract = None
 
 
 def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
@@ -859,6 +865,60 @@ def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+OCR_DPI = 300
+DEFAULT_OCR_LANG = os.getenv("ZENPDF_OCR_LANG", "eng")
+
+
+def _render_page_image(page: fitz.Page, dpi: int) -> Image.Image:
+    """Render a PDF page to a PIL image for OCR."""
+    scale = dpi / 72
+    matrix = fitz.Matrix(scale, scale)
+    pix = page.get_pixmap(matrix=matrix, alpha=False)
+    image = Image.open(BytesIO(pix.tobytes("png")))
+    return image.convert("RGB")
+
+
+def _ocr_image(image: Image.Image, lang: str) -> str:
+    """Run OCR on a PIL image using Tesseract."""
+    if pytesseract is None:
+        raise RuntimeError("pytesseract is required for OCR conversions")
+    if not shutil.which("tesseract"):
+        raise RuntimeError("Tesseract is required for OCR conversions")
+    return pytesseract.image_to_string(image, lang=lang)
+
+
+def _ocr_pdf_pages(input_path: Path, lang: str, dpi: int) -> List[str]:
+    """Extract OCR text for each page in a PDF."""
+    document = fitz.open(str(input_path))
+    page_texts: List[str] = []
+    try:
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            image = _render_page_image(page, dpi)
+            page_texts.append(_ocr_image(image, lang).strip())
+    finally:
+        document.close()
+    return page_texts
+
+
+def pdf_to_docx_ocr(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
+    """Convert a PDF into a Word document using OCR."""
+    language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
+    page_texts = _ocr_pdf_pages(input_path, language, OCR_DPI)
+    document = Document()
+    for index, text in enumerate(page_texts, start=1):
+        if index > 1:
+            document.add_page_break()
+        if text.strip():
+            for line in text.splitlines():
+                if line.strip():
+                    document.add_paragraph(line)
+        else:
+            document.add_paragraph("")
+    document.save(str(output_path))
+    return output_path
+
+
 def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
     """Convert a PDF into an Excel workbook by extracting text."""
     reader = PdfReader(str(input_path))
@@ -867,6 +927,27 @@ def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
     row = 1
     for index, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
+        lines = [line for line in text.splitlines() if line.strip()]
+        if not lines:
+            sheet.cell(row=row, column=1, value=f"Page {index}")
+            row += 1
+        else:
+            for line in lines:
+                sheet.cell(row=row, column=1, value=line)
+                row += 1
+        row += 1
+    workbook.save(str(output_path))
+    return output_path
+
+
+def pdf_to_xlsx_ocr(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
+    """Convert a PDF into an Excel workbook using OCR."""
+    language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
+    page_texts = _ocr_pdf_pages(input_path, language, OCR_DPI)
+    workbook = Workbook()
+    sheet = workbook.active
+    row = 1
+    for index, text in enumerate(page_texts, start=1):
         lines = [line for line in text.splitlines() if line.strip()]
         if not lines:
             sheet.cell(row=row, column=1, value=f"Page {index}")

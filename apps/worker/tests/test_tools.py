@@ -8,6 +8,7 @@ from unittest.mock import patch
 import pytest
 from docx import Document
 from fpdf import FPDF
+from openpyxl import load_workbook
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
@@ -21,7 +22,9 @@ from zenpdf_worker.tools import (
     office_to_pdf,
     page_numbers_pdf,
     pdf_to_docx,
+    pdf_to_docx_ocr,
     pdf_to_xlsx,
+    pdf_to_xlsx_ocr,
     pdf_to_jpg,
     protect_pdf,
     repair_pdf,
@@ -286,6 +289,37 @@ def test_pdf_to_docx_and_xlsx() -> None:
 
         assert docx_path.exists()
         assert xlsx_path.exists()
+
+
+def test_pdf_to_docx_and_xlsx_ocr() -> None:
+    """Convert a PDF to DOCX/XLSX using OCR."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+
+        with patch(
+            "zenpdf_worker.tools._ocr_image",
+            side_effect=["First page", "Second page"],
+        ):
+            docx_path = pdf_to_docx_ocr(source, temp_path / "ocr.docx")
+
+        with patch(
+            "zenpdf_worker.tools._ocr_image",
+            side_effect=["First sheet", "Second sheet"],
+        ):
+            xlsx_path = pdf_to_xlsx_ocr(source, temp_path / "ocr.xlsx")
+
+        document = Document(str(docx_path))
+        doc_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        assert "First page" in doc_text
+        assert "Second page" in doc_text
+
+        workbook = load_workbook(xlsx_path)
+        sheet = workbook.active
+        values = [cell.value for cell in sheet["A"] if cell.value]
+        assert "First sheet" in values
+        assert "Second sheet" in values
 
 
 def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
