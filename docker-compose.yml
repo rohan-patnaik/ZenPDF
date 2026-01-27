@@ -1,0 +1,20 @@
+services:
+  web:
+    build:
+      context: ./apps/web
+    env_file:
+      - ./apps/web/.env.local
+    ports:
+      - "3000:3000"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      - worker
+
+  worker:
+    build:
+      context: ./apps/worker
+    env_file:
+      - ./apps/worker/.env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

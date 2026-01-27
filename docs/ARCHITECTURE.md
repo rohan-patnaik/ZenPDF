@@ -33,6 +33,7 @@
 4. Worker claims job via safe-claim mutation and updates progress.
 5. Worker downloads inputs via Convex-generated URLs and uploads outputs.
 6. Job completes or returns a stable error code with friendly message.
+7. Downloads stream through a Next.js route that validates access.
 
 ## Storage
 - Default: Convex File Storage.

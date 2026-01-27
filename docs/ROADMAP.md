@@ -47,7 +47,7 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 7.2 Teams with shared templates
 
 ## Epic 8 — Hardening
-- [ ] 8.1 Security doc + logging/metrics
-- [ ] 8.2 Streaming downloads + final QA
-- [ ] 8.3 Release checklist
-- [ ] 8.4 Local self-host guide + docker compose
+- [x] 8.1 Security doc + logging/metrics
+- [x] 8.2 Streaming downloads + final QA
+- [x] 8.3 Release checklist
+- [x] 8.4 Local self-host guide + docker compose
