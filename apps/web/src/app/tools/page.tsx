@@ -21,6 +21,7 @@ type ToolId =
   | "crop"
   | "unlock"
   | "protect"
+  | "repair"
   | "redact"
   | "compare"
   | "image-to-pdf"
@@ -253,6 +254,13 @@ const TOOLS: ToolDefinition[] = [
         required: true,
       },
     ],
+  },
+  {
+    id: "repair",
+    label: "Repair PDF",
+    description: "Rebuild a PDF file to fix structural issues.",
+    accept: ".pdf",
+    multiple: false,
   },
   {
     id: "image-to-pdf",

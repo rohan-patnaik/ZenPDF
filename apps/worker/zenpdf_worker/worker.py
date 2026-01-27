@@ -22,6 +22,7 @@ from .tools import (
     pdf_to_xlsx,
     pdf_to_jpg,
     protect_pdf,
+    repair_pdf,
     redact_pdf,
     remove_pages,
     reorder_pages,
@@ -202,6 +203,8 @@ class ZenPdfWorker:
             return [zip_outputs(outputs, zip_path)]
         if tool == "compress":
             return [compress_pdf(inputs[0], output_path)]
+        if tool == "repair":
+            return [repair_pdf(inputs[0], output_path)]
         if tool == "rotate":
             angle = _parse_int(config.get("angle"), 90)
             if angle not in (90, 180, 270):

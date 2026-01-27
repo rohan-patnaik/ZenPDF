@@ -19,8 +19,8 @@ const toolShelves = [
   },
   {
     title: "Protect & Repair",
-    description: "Lock, unlock, and compare versions while keeping text intact.",
-    items: ["Protect & unlock", "Compare versions", "Remove pages"],
+    description: "Lock, unlock, repair, and compare versions while keeping text intact.",
+    items: ["Protect & unlock", "Compare versions", "Repair PDFs"],
     badge: "Standard",
   },
   {
@@ -194,7 +194,7 @@ export default function Home() {
                   <div className="flex items-center justify-between text-sm text-ink-700">
                     <span className="ink-label">Active tools</span>
                     <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      19 standard
+                      20 standard
                     </span>
                   </div>
                   <p className="mt-3 text-sm text-ink-700">
