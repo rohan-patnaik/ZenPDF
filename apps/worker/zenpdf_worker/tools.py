@@ -215,6 +215,20 @@ def compress_pdf(input_path: Path, output_path: Path) -> Path:
     return output_path
 
 
+def repair_pdf(input_path: Path, output_path: Path) -> Path:
+    """Rewrite a PDF to rebuild its internal structure."""
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        raise ValueError("PDF is encrypted")
+    writer = PdfWriter()
+    for page in reader.pages:
+        writer.add_page(page)
+    writer.add_metadata(reader.metadata or {})
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
 def rotate_pdf(
     input_path: Path,
     output_path: Path,

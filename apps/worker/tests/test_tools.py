@@ -24,6 +24,7 @@ from zenpdf_worker.tools import (
     pdf_to_xlsx,
     pdf_to_jpg,
     protect_pdf,
+    repair_pdf,
     redact_pdf,
     rotate_pdf,
     split_pdf,
@@ -173,6 +174,18 @@ def test_unlock_and_protect_pdf() -> None:
         unlocked = unlock_pdf(protected, temp_path / "unlocked.pdf", "secret")
         unlocked_reader = PdfReader(str(unlocked))
         assert not unlocked_reader.is_encrypted
+
+
+def test_repair_pdf() -> None:
+    """Rewrite a PDF into a repaired copy."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+
+        repaired = repair_pdf(source, temp_path / "repaired.pdf")
+        reader = PdfReader(str(repaired))
+        assert len(reader.pages) == 2
 
 
 def test_redact_pdf() -> None:
