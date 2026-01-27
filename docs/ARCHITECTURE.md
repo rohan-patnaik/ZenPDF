@@ -56,6 +56,7 @@ Stable error codes are mapped to friendly UI messages:
 - Clerk-based auth for protected routes.
 - Signed upload URLs for files.
 - Least-privilege worker tokens.
+- Run the worker container as non-root and enforce a restrictive seccomp/AppArmor policy (or Cloud Run sandboxing) for LibreOffice conversions.
 
 ## Testing & CI
 - Unit: limits, job state machine, error mapping, workflow compiler.

@@ -18,6 +18,7 @@ ZenPDF is an open-source web app that delivers feature parity with iLovePDF's St
 Standard (limited):
 - Merge, split, compress
 - Image <-> PDF, PDF <-> JPG
+- Office -> PDF, PDF -> Word/Excel (non-OCR)
 - Rotate, remove pages, reorder
 - Watermark, page numbers, crop
 - Repair, unlock, protect

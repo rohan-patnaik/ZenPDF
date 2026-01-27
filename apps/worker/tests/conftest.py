@@ -1,3 +1,5 @@
+"""Pytest configuration for worker tests."""
+
 import sys
 from pathlib import Path
 

@@ -14,6 +14,7 @@ import {
   resolveGlobalUsageCounter,
   resolveUsageCounter,
 } from "./lib/usage";
+import { assertWorkerToken } from "./lib/worker-auth";
 
 const jobInput = v.object({
   storageId: v.id("_storage"),
@@ -188,8 +189,10 @@ export const createJob = mutation({
 export const claimNextJob = mutation({
   args: {
     workerId: v.string(),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertWorkerToken(args.workerToken);
     const now = Date.now();
     const globalLimits = await resolveGlobalLimits(ctx);
 
@@ -244,8 +247,10 @@ export const reportJobProgress = mutation({
     jobId: v.id("jobs"),
     workerId: v.string(),
     progress: v.number(),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertWorkerToken(args.workerToken);
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
@@ -276,8 +281,10 @@ export const completeJob = mutation({
     outputs: v.array(jobOutput),
     minutesUsed: v.optional(v.number()),
     bytesProcessed: v.optional(v.number()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertWorkerToken(args.workerToken);
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
@@ -338,8 +345,10 @@ export const failJob = mutation({
     workerId: v.string(),
     errorCode: v.string(),
     errorMessage: v.optional(v.string()),
+    workerToken: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    assertWorkerToken(args.workerToken);
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;

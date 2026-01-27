@@ -1,3 +1,5 @@
+"""Worker runtime for executing PDF tools."""
+
 import os
 import threading
 import time
@@ -12,11 +14,15 @@ from .tools import (
     compress_pdf,
     image_to_pdf,
     merge_pdfs,
+    office_to_pdf,
+    pdf_to_docx,
+    pdf_to_xlsx,
     pdf_to_jpg,
     remove_pages,
     reorder_pages,
     rotate_pdf,
     split_pdf,
+    web_to_pdf,
     zip_outputs,
 )
 
@@ -27,6 +33,9 @@ def _parse_int(value: Any, default: int) -> int:
         return int(value)
     except (TypeError, ValueError):
         return default
+
+
+MAX_DPI = 300
 
 
 class ZenPdfWorker:
@@ -43,7 +52,10 @@ class ZenPdfWorker:
         """Run the worker polling loop."""
         poll_interval = float(os.environ.get("ZENPDF_POLL_INTERVAL", "5"))
         while True:
-            job = self._mutation("jobs:claimNextJob", {"workerId": self.worker_id})
+            job = self._mutation(
+                "jobs:claimNextJob",
+                {"workerId": self.worker_id, "workerToken": self.worker_token},
+            )
             if not job:
                 time.sleep(poll_interval)
                 continue
@@ -80,6 +92,7 @@ class ZenPdfWorker:
                     "outputs": output_payload,
                     "minutesUsed": elapsed_minutes,
                     "bytesProcessed": bytes_processed,
+                    "workerToken": self.worker_token,
                 },
             )
             self._report(job_id, 100)
@@ -99,6 +112,7 @@ class ZenPdfWorker:
                 "jobId": job_id,
                 "workerId": self.worker_id,
                 "progress": progress,
+                "workerToken": self.worker_token,
             },
         )
 
@@ -112,6 +126,7 @@ class ZenPdfWorker:
                 "workerId": self.worker_id,
                 "errorCode": "SERVICE_CAPACITY_TEMPORARY",
                 "errorMessage": "Processing failed. Please retry.",
+                "workerToken": self.worker_token,
             },
         )
 
@@ -188,16 +203,38 @@ class ZenPdfWorker:
             return [image_to_pdf(inputs, output_path)]
         if tool == "pdf-to-jpg":
             dpi = _parse_int(config.get("dpi"), 150)
+            dpi = min(max(dpi, 72), MAX_DPI)
             images = pdf_to_jpg(inputs[0], temp, dpi)
             zip_path = temp / "pdf_pages.zip"
             return [zip_outputs(images, zip_path)]
+        if tool == "web-to-pdf":
+            url = config.get("url")
+            if not url:
+                raise ValueError("URL is required")
+            return [web_to_pdf(str(url), output_path)]
+        if tool == "office-to-pdf":
+            if not inputs:
+                raise ValueError("Office file is required")
+            return [office_to_pdf(inputs[0], temp)]
+        if tool == "pdf-to-word":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            docx_path = temp / "output.docx"
+            return [pdf_to_docx(inputs[0], docx_path)]
+        if tool == "pdf-to-excel":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            xlsx_path = temp / "output.xlsx"
+            return [pdf_to_xlsx(inputs[0], xlsx_path)]
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:
         """Upload output files to Convex storage."""
         payload = []
         for output in outputs:
-            upload_url = self._mutation("files:generateUploadUrl", {})
+            upload_url = self._mutation(
+                "files:generateUploadUrl", {"workerToken": self.worker_token}
+            )
             with output.open("rb") as handle:
                 response = requests.post(
                     upload_url,
