@@ -18,6 +18,7 @@ from .tools import (
     merge_pdfs,
     office_to_pdf,
     page_numbers_pdf,
+    pdf_to_pdfa,
     pdf_to_docx,
     pdf_to_docx_ocr,
     pdf_to_xlsx,
@@ -278,6 +279,10 @@ class ZenPdfWorker:
             if not inputs:
                 raise ValueError("Office file is required")
             return [office_to_pdf(inputs[0], temp)]
+        if tool == "pdfa":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            return [pdf_to_pdfa(inputs[0], output_path)]
         if tool == "pdf-to-word":
             if not inputs:
                 raise ValueError("PDF file is required")

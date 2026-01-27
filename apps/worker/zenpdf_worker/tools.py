@@ -847,6 +847,105 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     return output_path
 
 
+PDF_A_TIMEOUT_SEC = 120
+PDF_A_VERSION_TIMEOUT_SEC = 10
+PDF_A_MIN_VERSION = (10, 3, 1)
+
+
+def _parse_version_tuple(raw: str) -> Tuple[int, int, int]:
+    """Parse a version string into a comparable tuple."""
+    token = raw.strip().split()[0] if raw.strip() else ""
+    parts = [part for part in token.split(".") if part]
+    numbers: List[int] = []
+    for part in parts:
+        if not part.isdigit():
+            break
+        numbers.append(int(part))
+    if not numbers:
+        raise ValueError("Unable to parse version")
+    while len(numbers) < 3:
+        numbers.append(0)
+    return (numbers[0], numbers[1], numbers[2])
+
+
+def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
+    """
+    Convert a PDF into PDF/A-2b using Ghostscript.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF file.
+        output_path (Path): Destination path for the PDF/A file.
+    
+    Returns:
+        Path: The output_path of the generated PDF/A file.
+    
+    Raises:
+        RuntimeError: If Ghostscript is missing, times out, or fails the conversion.
+        ValueError: If the input PDF is encrypted.
+    """
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        raise ValueError("Encrypted PDFs are not supported for PDF/A conversion")
+
+    ghostscript = shutil.which("gs")
+    if not ghostscript:
+        raise RuntimeError("Ghostscript is required for PDF/A conversion")
+
+    version_result = subprocess.run(
+        [ghostscript, "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=PDF_A_VERSION_TIMEOUT_SEC,
+    )
+    if version_result.returncode != 0:
+        raise RuntimeError("Ghostscript version check failed")
+    version_output = (version_result.stdout or version_result.stderr or "").strip()
+    try:
+        version = _parse_version_tuple(version_output)
+    except ValueError as error:
+        raise RuntimeError("Ghostscript >= 10.03.1 is required for PDF/A conversion") from error
+    if version < PDF_A_MIN_VERSION:
+        raise RuntimeError("Ghostscript >= 10.03.1 is required for PDF/A conversion")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        ghostscript,
+        "-dSAFER",
+        "-dPDFA=2",
+        "-dBATCH",
+        "-dNOPAUSE",
+        "-dNOOUTERSAVE",
+        "-sDEVICE=pdfwrite",
+        "-dPDFACompatibilityPolicy=1",
+        "-sProcessColorModel=DeviceRGB",
+        "-sColorConversionStrategy=RGB",
+        "-dUseCIEColor",
+        f"-sOutputFile={output_path}",
+        str(input_path),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PDF_A_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("PDF/A conversion timed out") from error
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or "PDF/A conversion failed")
+
+    if not output_path.exists():
+        raise RuntimeError("PDF/A conversion produced no output")
+
+    return output_path
+
+
 def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
     """Convert a PDF into a Word document by extracting text."""
     reader = PdfReader(str(input_path))

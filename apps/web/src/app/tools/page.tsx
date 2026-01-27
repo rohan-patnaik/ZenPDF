@@ -28,6 +28,7 @@ type ToolId =
   | "pdf-to-jpg"
   | "web-to-pdf"
   | "office-to-pdf"
+  | "pdfa"
   | "pdf-to-word"
   | "pdf-to-excel"
   | "pdf-to-word-ocr"
@@ -301,6 +302,14 @@ const TOOLS: ToolDefinition[] = [
     description: "Convert Word, Excel, or PowerPoint files to PDF.",
     accept: ".docx,.xlsx,.pptx",
     multiple: false,
+  },
+  {
+    id: "pdfa",
+    label: "PDF → PDF/A",
+    description: "Convert PDFs into archival PDF/A-2b output.",
+    accept: ".pdf",
+    multiple: false,
+    tier: "Premium",
   },
   {
     id: "pdf-to-word",
