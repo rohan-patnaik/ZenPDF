@@ -1,3 +1,5 @@
+"""Entrypoint for the ZenPDF worker container."""
+
 from zenpdf_worker.worker import main
 
 

@@ -21,24 +21,36 @@ from .tools import (
 )
 
 
+def _parse_int(value: Any, default: int) -> int:
+    """Parse an integer with a safe fallback."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
 class ZenPdfWorker:
+    """Poll Convex for jobs and execute PDF tools."""
+
     def __init__(self, convex_url: str, worker_id: str, worker_token: str) -> None:
+        """Initialize the worker with Convex configuration."""
         self.client = ConvexClient(convex_url)
         self.worker_id = worker_id
         self.worker_token = worker_token
+        self._client_lock = threading.Lock()
 
     def run(self) -> None:
+        """Run the worker polling loop."""
         poll_interval = float(os.environ.get("ZENPDF_POLL_INTERVAL", "5"))
         while True:
-            job = self.client.mutation(
-                "jobs:claimNextJob", {"workerId": self.worker_id}
-            )
+            job = self._mutation("jobs:claimNextJob", {"workerId": self.worker_id})
             if not job:
                 time.sleep(poll_interval)
                 continue
             self._process_job(job)
 
     def _process_job(self, job: Dict[str, Any]) -> None:
+        """Process a single job from Convex."""
         job_id = job["_id"]
         started = time.time()
         progress = {"value": 10}
@@ -60,7 +72,7 @@ class ZenPdfWorker:
                 output_payload = self._upload_outputs(outputs)
             elapsed_minutes = max((time.time() - started) / 60, 0.01)
             bytes_processed = sum(item.get("sizeBytes", 0) for item in job["inputs"])
-            self.client.mutation(
+            self._mutation(
                 "jobs:completeJob",
                 {
                     "jobId": job_id,
@@ -80,7 +92,8 @@ class ZenPdfWorker:
             heartbeat.join(timeout=1)
 
     def _report(self, job_id: str, progress: int) -> None:
-        self.client.mutation(
+        """Update job progress and renew the lease."""
+        self._mutation(
             "jobs:reportJobProgress",
             {
                 "jobId": job_id,
@@ -90,8 +103,9 @@ class ZenPdfWorker:
         )
 
     def _fail(self, job_id: str, message: str) -> None:
+        """Report a failed job with a friendly error."""
         print(f"Job {job_id} failed: {message}")
-        self.client.mutation(
+        self._mutation(
             "jobs:failJob",
             {
                 "jobId": job_id,
@@ -102,6 +116,7 @@ class ZenPdfWorker:
         )
 
     def _safe_fail(self, job_id: str, message: str) -> None:
+        """Attempt to report a failure without crashing the worker."""
         try:
             self._fail(job_id, message)
         except Exception as error:  # noqa: BLE001
@@ -110,14 +125,16 @@ class ZenPdfWorker:
     def _heartbeat(
         self, job_id: str, progress: Dict[str, int], stop_event: threading.Event
     ) -> None:
+        """Heartbeat loop that renews the job lease."""
         interval = float(os.environ.get("ZENPDF_WORKER_HEARTBEAT_SECONDS", "25"))
         while not stop_event.wait(interval):
             self._report(job_id, progress["value"])
 
     def _download_inputs(self, inputs: List[Dict[str, Any]], temp: Path) -> List[Path]:
+        """Download job inputs to a temporary directory."""
         paths: List[Path] = []
         for index, item in enumerate(inputs, start=1):
-            url = self.client.query(
+            url = self._query(
                 "files:getDownloadUrl",
                 {
                     "storageId": item["storageId"],
@@ -138,6 +155,7 @@ class ZenPdfWorker:
         return paths
 
     def _run_tool(self, job: Dict[str, Any], inputs: List[Path], temp: Path) -> List[Path]:
+        """Execute the requested tool for a job."""
         tool = job["tool"]
         config = job.get("config")
         if not isinstance(config, dict):
@@ -152,7 +170,7 @@ class ZenPdfWorker:
         if tool == "compress":
             return [compress_pdf(inputs[0], output_path)]
         if tool == "rotate":
-            angle = int(config.get("angle") or 90)
+            angle = _parse_int(config.get("angle"), 90)
             if angle not in (90, 180, 270):
                 angle = 90
             return [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
@@ -169,15 +187,17 @@ class ZenPdfWorker:
         if tool == "image-to-pdf":
             return [image_to_pdf(inputs, output_path)]
         if tool == "pdf-to-jpg":
-            images = pdf_to_jpg(inputs[0], temp, int(config.get("dpi") or 150))
+            dpi = _parse_int(config.get("dpi"), 150)
+            images = pdf_to_jpg(inputs[0], temp, dpi)
             zip_path = temp / "pdf_pages.zip"
             return [zip_outputs(images, zip_path)]
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:
+        """Upload output files to Convex storage."""
         payload = []
         for output in outputs:
-            upload_url = self.client.mutation("files:generateUploadUrl", {})
+            upload_url = self._mutation("files:generateUploadUrl", {})
             with output.open("rb") as handle:
                 response = requests.post(
                     upload_url,
@@ -196,8 +216,19 @@ class ZenPdfWorker:
             )
         return payload
 
+    def _mutation(self, path: str, args: Dict[str, Any]) -> Any:
+        """Execute a mutation with thread-safe access."""
+        with self._client_lock:
+            return self.client.mutation(path, args)
+
+    def _query(self, path: str, args: Dict[str, Any]) -> Any:
+        """Execute a query with thread-safe access."""
+        with self._client_lock:
+            return self.client.query(path, args)
+
 
 def main() -> None:
+    """Entrypoint for the worker process."""
     convex_url = os.environ.get("ZENPDF_CONVEX_URL")
     if not convex_url:
         raise RuntimeError("ZENPDF_CONVEX_URL is required")

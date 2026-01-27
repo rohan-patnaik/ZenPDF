@@ -10,6 +10,8 @@ describe("friendly error catalog", () => {
       "USER_LIMIT_DAILY_MINUTES",
       "USER_LIMIT_MAX_FILES",
       "USER_LIMIT_CONCURRENT_JOBS",
+      "USER_SESSION_REQUIRED",
+      "USER_LIMIT_SIZE_REQUIRED",
       "SERVICE_CAPACITY_TEMPORARY",
       "SERVICE_CAPACITY_MONTHLY_BUDGET",
     ];

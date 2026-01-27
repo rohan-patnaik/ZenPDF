@@ -166,6 +166,7 @@ export default function ToolsPage() {
     }
     return resolved;
   });
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const convex = useConvex();
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -209,6 +210,9 @@ export default function ToolsPage() {
   };
 
   const handleSubmit = async () => {
+    if (isSubmitting) {
+      return;
+    }
     if (!tool) {
       return;
     }
@@ -217,6 +221,7 @@ export default function ToolsPage() {
       return;
     }
 
+    setIsSubmitting(true);
     setStatus("Uploading files...");
     try {
       const uploads = [] as Array<{
@@ -247,6 +252,8 @@ export default function ToolsPage() {
       setConfigValues({});
     } catch {
       setStatus("Unable to create job. Check limits or try again.");
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -338,6 +345,10 @@ export default function ToolsPage() {
                   </label>
                   <input
                     type={field.type ?? "text"}
+                    inputMode={field.type === "number" ? "numeric" : undefined}
+                    min={field.key === "angle" ? 90 : undefined}
+                    max={field.key === "angle" ? 270 : undefined}
+                    step={field.key === "angle" ? 90 : undefined}
                     value={configValues[field.key] ?? ""}
                     onChange={(event) =>
                       updateConfig(field.key, event.target.value)
@@ -353,7 +364,12 @@ export default function ToolsPage() {
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
-              <button className="paper-button" type="button" onClick={handleSubmit}>
+              <button
+                className="paper-button"
+                type="button"
+                onClick={handleSubmit}
+                disabled={isSubmitting}
+              >
                 Queue job
               </button>
               {status && <p className="text-sm text-ink-700">{status}</p>}

@@ -26,7 +26,7 @@ export const checkPlanLimits = (
     if (input.sizeBytes === undefined) {
       return {
         ok: false,
-        code: "USER_LIMIT_FILE_TOO_LARGE",
+        code: "USER_LIMIT_SIZE_REQUIRED",
         details: { limitMb: limits.maxMbPerFile },
       };
     }

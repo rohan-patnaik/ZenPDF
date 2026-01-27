@@ -39,6 +39,7 @@ const capacityCopy = {
 
 const errorCatalogOrder = [
   "USER_LIMIT_FILE_TOO_LARGE",
+  "USER_LIMIT_SIZE_REQUIRED",
   "USER_LIMIT_MAX_FILES",
   "USER_LIMIT_CONCURRENT_JOBS",
   "USER_LIMIT_DAILY_JOBS",

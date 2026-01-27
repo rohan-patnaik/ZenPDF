@@ -13,8 +13,9 @@ const createJob = makeFunctionReference<
     tool: string;
     inputs: Array<{ storageId: string; filename: string; sizeBytes?: number }>;
     config?: unknown;
+    anonId?: string;
   },
-  { jobId: string }
+  { jobId: string; anonId?: string }
 >("jobs:createJob");
 
 type ClaimedJob = {
