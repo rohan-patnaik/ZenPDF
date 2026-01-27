@@ -20,6 +20,12 @@ type UsageSnapshot = {
   budget: BudgetSnapshot;
 };
 
+type ViewerSnapshot = {
+  tier: PlanTier;
+  adsFree: boolean;
+  signedIn: boolean;
+};
+
 export const api = {
   files: {
     generateUploadUrl: makeFunctionReference<
@@ -51,5 +57,10 @@ export const api = {
       { anonId?: string },
       UsageSnapshot
     >("capacity:getUsageSnapshot"),
+  },
+  users: {
+    getViewer: makeFunctionReference<"query", Record<string, never>, ViewerSnapshot>(
+      "users:getViewer",
+    ),
   },
 };

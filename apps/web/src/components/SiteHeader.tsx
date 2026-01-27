@@ -2,8 +2,14 @@
 
 import Link from "next/link";
 import { SignInButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
+import { useQuery } from "convex/react";
+
+import { api } from "@/lib/convex";
 
 export default function SiteHeader() {
+  const viewer = useQuery(api.users.getViewer, {});
+  const showSupporter = viewer ? !viewer.adsFree : false;
+
   return (
     <header className="relative z-20">
       <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
@@ -37,6 +43,22 @@ export default function SiteHeader() {
           </SignedIn>
         </div>
       </div>
+      {showSupporter && (
+        <div className="mx-auto w-full max-w-6xl px-6 pb-4">
+          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-forest-600/30 bg-sage-200/70 px-5 py-4 text-forest-700">
+            <div>
+              <span className="ink-label">Supporter mode</span>
+              <p className="mt-1 max-w-2xl text-sm">
+                Unlock OCR + PDF/A exports, larger batches, and remove this banner
+                when supporter mode is enabled.
+              </p>
+            </div>
+            <Link className="paper-button--ghost text-xs" href="/usage-capacity">
+              Review premium limits
+            </Link>
+          </div>
+        </div>
+      )}
     </header>
   );
 }
