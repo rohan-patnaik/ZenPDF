@@ -19,7 +19,9 @@ from .tools import (
     office_to_pdf,
     page_numbers_pdf,
     pdf_to_docx,
+    pdf_to_docx_ocr,
     pdf_to_xlsx,
+    pdf_to_xlsx_ocr,
     pdf_to_jpg,
     protect_pdf,
     repair_pdf,
@@ -281,11 +283,21 @@ class ZenPdfWorker:
                 raise ValueError("PDF file is required")
             docx_path = temp / "output.docx"
             return [pdf_to_docx(inputs[0], docx_path)]
+        if tool == "pdf-to-word-ocr":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            docx_path = temp / "output.docx"
+            return [pdf_to_docx_ocr(inputs[0], docx_path, config.get("lang"))]
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
             xlsx_path = temp / "output.xlsx"
             return [pdf_to_xlsx(inputs[0], xlsx_path)]
+        if tool == "pdf-to-excel-ocr":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            xlsx_path = temp / "output.xlsx"
+            return [pdf_to_xlsx_ocr(inputs[0], xlsx_path, config.get("lang"))]
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:

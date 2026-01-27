@@ -37,7 +37,7 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 5.2 Usage & Capacity page fully implemented
 
 ## Epic 6 — Premium
-- [ ] 6.1 OCR conversions to Word/Excel
+- [x] 6.1 OCR conversions to Word/Excel
 - [ ] 6.2 PDF/A conversion
 - [x] 6.3 Premium limits + ads-free flag
 

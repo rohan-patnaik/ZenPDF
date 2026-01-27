@@ -35,6 +35,12 @@ const HEAVY_TOOLS = new Set([
   "pdfa",
 ]);
 
+const PREMIUM_ONLY_TOOLS = new Set([
+  "pdf-to-word-ocr",
+  "pdf-to-excel-ocr",
+  "pdfa",
+]);
+
 type MutationCtx = GenericMutationCtx<GenericDataModel>;
 
 const countJobs = async (
@@ -103,6 +109,10 @@ export const createJob = mutation({
 
     if (!budget.heavyToolsEnabled && HEAVY_TOOLS.has(args.tool)) {
       throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
+    }
+
+    if (tier !== "PREMIUM" && PREMIUM_ONLY_TOOLS.has(args.tool)) {
+      throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
     }
 
     const { counter: usageCounter } = await resolveUsageCounter(

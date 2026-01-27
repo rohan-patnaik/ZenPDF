@@ -29,7 +29,9 @@ type ToolId =
   | "web-to-pdf"
   | "office-to-pdf"
   | "pdf-to-word"
-  | "pdf-to-excel";
+  | "pdf-to-excel"
+  | "pdf-to-word-ocr"
+  | "pdf-to-excel-ocr";
 
 type ToolField = {
   key: string;
@@ -46,6 +48,7 @@ type ToolDefinition = {
   description: string;
   accept: string;
   multiple: boolean;
+  tier?: "Standard" | "Premium";
   requiresFiles?: boolean;
   fields?: ToolField[];
 };
@@ -307,11 +310,27 @@ const TOOLS: ToolDefinition[] = [
     multiple: false,
   },
   {
+    id: "pdf-to-word-ocr",
+    label: "PDF → Word (OCR)",
+    description: "OCR scanned PDFs into a Word document.",
+    accept: ".pdf",
+    multiple: false,
+    tier: "Premium",
+  },
+  {
     id: "pdf-to-excel",
     label: "PDF → Excel",
     description: "Extract text into a simple XLSX worksheet.",
     accept: ".pdf",
     multiple: false,
+  },
+  {
+    id: "pdf-to-excel-ocr",
+    label: "PDF → Excel (OCR)",
+    description: "OCR scanned PDFs into a simple XLSX worksheet.",
+    accept: ".pdf",
+    multiple: false,
+    tier: "Premium",
   },
 ];
 
@@ -501,7 +520,7 @@ export default function ToolsPage() {
       <SiteHeader />
       <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-16">
         <section className="paper-card mt-4 p-8">
-          <span className="ink-label">Standard tools</span>
+          <span className="ink-label">Tool desk</span>
           <h1 className="mt-3 text-4xl">Run a tool in a calm, guided flow.</h1>
           <p className="mt-3 max-w-2xl text-base text-ink-700">
             Each tool runs in the background worker, with limits enforced before
@@ -511,28 +530,37 @@ export default function ToolsPage() {
 
         <section className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-4">
-            {TOOLS.map((item) => (
-              <button
-                key={item.id}
-                type="button"
-                onClick={() => selectTool(item.id)}
-                className={`paper-card w-full p-4 text-left transition ${
-                  item.id === activeTool
-                    ? "border-forest-600/60 shadow-paper-lift"
-                    : "hover:border-forest-600/30"
-                }`}
-              >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h2 className="text-lg font-display">{item.label}</h2>
-                    <p className="text-xs text-ink-500">{item.description}</p>
+            {TOOLS.map((item) => {
+              const tierLabel = item.tier ?? "Standard";
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => selectTool(item.id)}
+                  className={`paper-card w-full p-4 text-left transition ${
+                    item.id === activeTool
+                      ? "border-forest-600/60 shadow-paper-lift"
+                      : "hover:border-forest-600/30"
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h2 className="text-lg font-display">{item.label}</h2>
+                      <p className="text-xs text-ink-500">{item.description}</p>
+                    </div>
+                    <span
+                      className={`rounded-full px-3 py-1 text-[0.6rem] uppercase tracking-[0.2em] ${
+                        tierLabel === "Premium"
+                          ? "border border-ink-900/15 bg-rose-100 text-ink-700"
+                          : "border border-ink-900/10 bg-paper-100 text-ink-500"
+                      }`}
+                    >
+                      {tierLabel}
+                    </span>
                   </div>
-                  <span className="rounded-full border border-ink-900/10 bg-paper-100 px-3 py-1 text-[0.6rem] uppercase tracking-[0.2em] text-ink-500">
-                    Standard
-                  </span>
-                </div>
-              </button>
-            ))}
+                </button>
+              );
+            })}
           </div>
 
           <div className="paper-card p-6">
