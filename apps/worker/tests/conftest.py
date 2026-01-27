@@ -1,3 +1,5 @@
+"""Test configuration for the ZenPDF worker."""
+
 import sys
 from pathlib import Path
 

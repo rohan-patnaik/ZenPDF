@@ -25,6 +25,7 @@ from zenpdf_worker.tools import (
 
 
 def _make_pdf(path: Path, pages: int) -> None:
+    """Create a blank PDF with the given number of pages."""
     writer = PdfWriter()
     for _ in range(pages):
         writer.add_blank_page(width=300, height=300)
@@ -33,6 +34,7 @@ def _make_pdf(path: Path, pages: int) -> None:
 
 
 def test_merge_pdfs() -> None:
+    """Merge multiple PDFs into one output."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         first = temp_path / "first.pdf"
@@ -46,6 +48,7 @@ def test_merge_pdfs() -> None:
 
 
 def test_split_pdf_ranges() -> None:
+    """Split a PDF using page ranges."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
@@ -58,6 +61,7 @@ def test_split_pdf_ranges() -> None:
 
 
 def test_rotate_pdf() -> None:
+    """Rotate pages in a PDF."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
@@ -67,6 +71,7 @@ def test_rotate_pdf() -> None:
 
 
 def test_image_to_pdf_and_pdf_to_jpg() -> None:
+    """Convert image to PDF and PDF to JPG."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         image_path = temp_path / "sample.png"
@@ -83,6 +88,7 @@ def test_image_to_pdf_and_pdf_to_jpg() -> None:
 
 
 def test_html_to_pdf() -> None:
+    """Render HTML content into a PDF."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         output = html_to_pdf("<h1>Hello</h1><p>ZenPDF</p>", temp_path / "web.pdf")
@@ -91,6 +97,7 @@ def test_html_to_pdf() -> None:
 
 
 def test_web_to_pdf_fetches_html() -> None:
+    """Fetch HTML over HTTP and render to PDF."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         response = _DummyResponse(b"<p>Example</p>")
@@ -103,6 +110,7 @@ def test_web_to_pdf_fetches_html() -> None:
 
 
 def test_web_to_pdf_blocks_private_host() -> None:
+    """Reject private hosts for web-to-pdf."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         with patch(
@@ -114,6 +122,7 @@ def test_web_to_pdf_blocks_private_host() -> None:
 
 
 def test_web_to_pdf_blocks_redirects() -> None:
+    """Reject redirect responses for web-to-pdf."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         response = _DummyResponse(b"", status_code=302)
@@ -126,6 +135,7 @@ def test_web_to_pdf_blocks_redirects() -> None:
 
 
 def test_web_to_pdf_limits_body_size() -> None:
+    """Enforce the max response size for web-to-pdf."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         response = _DummyResponse(b"a" * (MAX_WEB_BYTES + 1))
@@ -138,6 +148,7 @@ def test_web_to_pdf_limits_body_size() -> None:
 
 
 def test_pdf_to_docx_and_xlsx() -> None:
+    """Convert PDF text to DOCX and XLSX files."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
@@ -151,6 +162,7 @@ def test_pdf_to_docx_and_xlsx() -> None:
 
 
 def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail when LibreOffice is not available."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         doc_path = temp_path / "sample.docx"
@@ -164,6 +176,7 @@ def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 class _DummySocket:
+    """Mock socket for response peer IP retrieval."""
     def __init__(self, ip: str) -> None:
         self._ip = ip
 
@@ -172,16 +185,19 @@ class _DummySocket:
 
 
 class _DummyConnection:
+    """Mock connection wrapper."""
     def __init__(self, ip: str) -> None:
         self.sock = _DummySocket(ip)
 
 
 class _DummyRaw:
+    """Mock raw response wrapper."""
     def __init__(self, ip: str) -> None:
         self._connection = _DummyConnection(ip)
 
 
 class _DummyResponse:
+    """Mock response used for web-to-pdf tests."""
     def __init__(self, body: bytes, status_code: int = 200, ip: str = "93.184.216.34") -> None:
         self._body = body
         self.status_code = status_code
@@ -203,6 +219,7 @@ class _DummyResponse:
 
 
 class _DummySession:
+    """Mock requests session wrapper."""
     def __init__(self, response: _DummyResponse) -> None:
         self._response = response
 

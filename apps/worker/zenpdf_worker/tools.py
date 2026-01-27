@@ -217,15 +217,18 @@ class _HTMLTextExtractor(HTMLParser):
     """Minimal HTML to text extractor."""
 
     def __init__(self) -> None:
+        """Initialize the parser."""
         super().__init__()
         self._parts: List[str] = []
 
     def handle_data(self, data: str) -> None:
+        """Capture text content from HTML."""
         text = data.strip()
         if text:
             self._parts.append(text)
 
     def text(self) -> str:
+        """Return the collected text content."""
         return "\n".join(self._parts)
 
 
