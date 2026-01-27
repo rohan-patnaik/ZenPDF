@@ -847,6 +847,69 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     return output_path
 
 
+PDF_A_TIMEOUT_SEC = 120
+
+
+def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
+    """
+    Convert a PDF into PDF/A-2b using Ghostscript.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF file.
+        output_path (Path): Destination path for the PDF/A file.
+    
+    Returns:
+        Path: The output_path of the generated PDF/A file.
+    
+    Raises:
+        RuntimeError: If Ghostscript is missing, times out, or fails the conversion.
+        ValueError: If the input PDF is encrypted.
+    """
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        raise ValueError("Encrypted PDFs are not supported for PDF/A conversion")
+
+    ghostscript = shutil.which("gs")
+    if not ghostscript:
+        raise RuntimeError("Ghostscript is required for PDF/A conversion")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    command = [
+        ghostscript,
+        "-dPDFA=2",
+        "-dBATCH",
+        "-dNOPAUSE",
+        "-dNOOUTERSAVE",
+        "-sDEVICE=pdfwrite",
+        "-dPDFACompatibilityPolicy=1",
+        "-sProcessColorModel=DeviceRGB",
+        "-sColorConversionStrategy=RGB",
+        "-dUseCIEColor",
+        f"-sOutputFile={output_path}",
+        str(input_path),
+    ]
+
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=PDF_A_TIMEOUT_SEC,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError("PDF/A conversion timed out") from error
+
+    if result.returncode != 0:
+        raise RuntimeError(result.stderr or result.stdout or "PDF/A conversion failed")
+
+    if not output_path.exists():
+        raise RuntimeError("PDF/A conversion produced no output")
+
+    return output_path
+
+
 def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
     """Convert a PDF into a Word document by extracting text."""
     reader = PdfReader(str(input_path))

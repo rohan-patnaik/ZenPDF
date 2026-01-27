@@ -3,6 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import subprocess
 from unittest.mock import patch
 
 import pytest
@@ -21,6 +22,7 @@ from zenpdf_worker.tools import (
     merge_pdfs,
     office_to_pdf,
     page_numbers_pdf,
+    pdf_to_pdfa,
     pdf_to_docx,
     pdf_to_docx_ocr,
     pdf_to_xlsx,
@@ -320,6 +322,38 @@ def test_pdf_to_docx_and_xlsx_ocr() -> None:
         values = [cell.value for cell in sheet["A"] if cell.value]
         assert "First sheet" in values
         assert "Second sheet" in values
+
+
+def test_pdfa_requires_ghostscript(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail when Ghostscript is not available for PDF/A conversion."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: None)
+        with pytest.raises(RuntimeError):
+            pdf_to_pdfa(source, temp_path / "output.pdf")
+
+
+def test_pdfa_conversion_runs_ghostscript(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Run PDF/A conversion through Ghostscript."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        output = temp_path / "output.pdf"
+        _make_pdf(source, 1)
+
+        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: "/usr/bin/gs")
+
+        def fake_run(command, **_kwargs):
+            output.write_bytes(b"%PDF-1.7\n")
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("zenpdf_worker.tools.subprocess.run", fake_run)
+
+        result = pdf_to_pdfa(source, output)
+        assert result.exists()
 
 
 def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:

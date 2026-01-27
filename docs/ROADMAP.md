@@ -38,7 +38,7 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 
 ## Epic 6 — Premium
 - [x] 6.1 OCR conversions to Word/Excel
-- [ ] 6.2 PDF/A conversion
+- [x] 6.2 PDF/A conversion
 - [x] 6.3 Premium limits + ads-free flag
 
 ## Epic 7 — Workflows + Teams
