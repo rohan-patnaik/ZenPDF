@@ -318,6 +318,16 @@ type JobRecord = {
   createdAt: number;
 };
 
+/**
+ * Render the tools page UI for selecting a tool, uploading files or inputs,
+ * configuring options, queuing background jobs, and viewing recent jobs and outputs.
+ *
+ * The page manages tool selection, file inputs, tool-specific configuration fields,
+ * anonymous user identification, upload and job-creation flows, and download links
+ * for job outputs.
+ *
+ * @returns The React element representing the tools page UI.
+ */
 export default function ToolsPage() {
   const [activeTool, setActiveTool] = useState<ToolId>("merge");
   const [files, setFiles] = useState<File[]>([]);

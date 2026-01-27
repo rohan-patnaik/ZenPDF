@@ -141,6 +141,11 @@ const ToolCard = ({
   </div>
 );
 
+/**
+ * Render the application's landing page with hero, status panel, tool shelf, plans, workflow, and footer.
+ *
+ * @returns A React element representing the home page layout and its static content.
+ */
 export default function Home() {
   return (
     <div className="relative">

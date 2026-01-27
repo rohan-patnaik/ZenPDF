@@ -177,7 +177,18 @@ class ZenPdfWorker:
         return paths
 
     def _run_tool(self, job: Dict[str, Any], inputs: List[Path], temp: Path) -> List[Path]:
-        """Execute the requested tool for a job."""
+        """
+        Dispatches and executes the PDF tool specified by a job and returns the generated output file paths.
+        
+        The function reads tool and config from `job`, validates required config fields for each tool, invokes the corresponding PDF helper, and returns a list of filesystem Paths pointing to produced output files (single files or archive files for multi-file outputs).
+        
+        Returns:
+            List[Path]: Paths to the generated output file(s).
+        
+        Raises:
+            ValueError: When required configuration or inputs for a specific tool are missing or invalid (e.g., missing watermark text, password, URL, or insufficient input files).
+            RuntimeError: When the job specifies an unsupported tool.
+        """
         tool = job["tool"]
         config = job.get("config")
         if not isinstance(config, dict):

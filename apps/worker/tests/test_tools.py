@@ -35,7 +35,13 @@ from zenpdf_worker.tools import (
 
 
 def _make_pdf(path: Path, pages: int) -> None:
-    """Create a blank PDF with the given number of pages."""
+    """
+    Create a blank PDF at the given path containing the specified number of pages.
+    
+    Parameters:
+        path (Path): Destination file path for the generated PDF.
+        pages (int): Number of blank pages to include (must be greater than or equal to 0).
+    """
     writer = PdfWriter()
     for _ in range(pages):
         writer.add_blank_page(width=300, height=300)
@@ -117,6 +123,23 @@ def test_crop_pdf() -> None:
         page = reader.pages[0]
         assert float(page.cropbox.width) == pytest.approx(280)
         assert float(page.cropbox.height) == pytest.approx(280)
+
+
+def test_crop_pdf_rejects_invalid_margins() -> None:
+    """Reject invalid margin specifications when cropping."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        for index, margins in enumerate(["bad", "10,10"], start=1):
+            with pytest.raises(ValueError):
+                crop_pdf(
+                    source,
+                    temp_path / f"invalid_{index}.pdf",
+                    margins,
+                    None,
+                )
 
 
 def test_image_to_pdf_and_pdf_to_jpg() -> None:
