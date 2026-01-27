@@ -545,7 +545,11 @@ export default function ToolsPage() {
     }
   };
 
-  const handleDownload = (jobId: string, storageId: string, filename: string) => {
+  function handleDownload(
+    jobId: string,
+    storageId: string,
+    filename: string,
+  ): void {
     const params = new URLSearchParams({
       jobId,
       storageId,
@@ -555,7 +559,7 @@ export default function ToolsPage() {
       params.set("anonId", anonId);
     }
     window.open(`/api/download?${params.toString()}`, "_blank", "noopener");
-  };
+  }
 
   return (
     <div className="relative">

@@ -9,19 +9,23 @@ export const dynamic = "force-dynamic";
 /**
  * Sanitize filenames for safe Content-Disposition headers.
  */
-const sanitizeFilename = (filename: string) => {
+function sanitizeFilename(filename: string): string {
   const cleaned = filename
     .replace(/[\r\n]/g, " ")
     .replace(/[<>:"/\\|?*]+/g, "_")
     .replace(/\s+/g, " ")
     .trim();
   return cleaned || "zenpdf-output";
-};
+}
+
+function downloadErrorResponse(): Response {
+  return new Response("Unable to stream the download.", { status: 502 });
+}
 
 /**
  * Proxy download requests while enforcing access checks.
  */
-export async function GET(request: NextRequest) {
+export async function GET(request: NextRequest): Promise<Response> {
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("jobId");
   const storageId = searchParams.get("storageId");
@@ -49,7 +53,7 @@ export async function GET(request: NextRequest) {
     });
   } catch (error) {
     console.error("Download URL query failed:", error);
-    return new Response("Unable to stream the download.", { status: 502 });
+    return downloadErrorResponse();
   }
 
   if (!downloadUrl) {
@@ -61,10 +65,10 @@ export async function GET(request: NextRequest) {
     upstream = await fetch(downloadUrl);
   } catch (error) {
     console.error("Download fetch failed:", error);
-    return new Response("Unable to stream the download.", { status: 502 });
+    return downloadErrorResponse();
   }
   if (!upstream.ok || !upstream.body) {
-    return new Response("Unable to stream the download.", { status: 502 });
+    return downloadErrorResponse();
   }
 
   const headers = new Headers(upstream.headers);
