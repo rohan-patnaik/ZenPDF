@@ -125,6 +125,23 @@ def test_crop_pdf() -> None:
         assert float(page.cropbox.height) == pytest.approx(280)
 
 
+def test_crop_pdf_rejects_invalid_margins() -> None:
+    """Reject invalid margin specifications when cropping."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+
+        for index, margins in enumerate(["bad", "10,10"], start=1):
+            with pytest.raises(ValueError):
+                crop_pdf(
+                    source,
+                    temp_path / f"invalid_{index}.pdf",
+                    margins,
+                    None,
+                )
+
+
 def test_image_to_pdf_and_pdf_to_jpg() -> None:
     """Convert image to PDF and PDF to JPG."""
     with TemporaryDirectory() as temp:

@@ -314,7 +314,7 @@ def watermark_pdf(
                 """
                 Render centered overlay text onto the provided PDF page area.
                 
-                Calculates a font size from the smaller of the page width and height (clamped to the range 18–48), configures a unicode-capable font if required, sets a medium-gray text color, and writes the overlay text centered horizontally at the vertical midpoint of the page.
+                Calculates a font size from the smaller of the page width and height (clamped to the range 18-48), configures a unicode-capable font if required, sets a medium-gray text color, and writes the overlay text centered horizontally at the vertical midpoint of the page.
                 
                 Parameters:
                     pdf (FPDF): The FPDF instance representing the overlay page to draw on.
@@ -367,7 +367,7 @@ def page_numbers_pdf(
                 """
                 Draws a right-aligned numeric footer near the bottom edge of the overlay page.
                 
-                Positions and renders the page number (captured from the surrounding scope) as a footer using a font size chosen to fit the page: the size is proportional to the smaller page dimension and clamped to the range 8–16 points. The rendered text is right-aligned with a 10 mm right/bottom margin and uses a muted gray color.
+                Positions and renders the page number (captured from the surrounding scope) as a footer using a font size chosen to fit the page: the size is proportional to the smaller page dimension and clamped to the range 8-16 points. The rendered text is right-aligned with a 10 mm right/bottom margin and uses a muted gray color.
                 
                 Parameters:
                     pdf (FPDF): The FPDF instance used to draw on the overlay page.
