@@ -31,6 +31,10 @@ export const FRIENDLY_ERRORS = {
     message: "We could not verify the file size for this upload.",
     next: "Try uploading the file again or use a smaller file.",
   },
+  USER_INPUT_INVALID: {
+    message: "Some of the provided options are invalid.",
+    next: "Review the tool inputs and try again.",
+  },
   SERVICE_CAPACITY_TEMPORARY: {
     message: "ZenPDF is temporarily at capacity.",
     next: "Retry in a few minutes or run the local stack.",

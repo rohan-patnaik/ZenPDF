@@ -69,6 +69,44 @@ def _parse_page_list(value: str, total_pages: int) -> List[int]:
     return [page for page in pages if 1 <= page <= total_pages]
 
 
+def _load_pdf(input_path: Path, allow_encrypted: bool = False) -> PdfReader:
+    """Load a PDF and optionally enforce unencrypted input."""
+    reader = PdfReader(str(input_path))
+    if reader.is_encrypted and not allow_encrypted:
+        raise ValueError("PDF is encrypted")
+    return reader
+
+
+def _resolve_page_selection(pages: str | None, total_pages: int) -> set[int] | None:
+    """Return a validated set of target pages or None for all."""
+    if pages is None:
+        return None
+    value = str(pages).strip()
+    if not value:
+        return None
+    selection = _parse_page_list(value, total_pages)
+    if not selection:
+        raise ValueError("No valid pages selected")
+    return set(selection)
+
+
+def _copy_metadata(writer: PdfWriter, reader: PdfReader) -> None:
+    """Copy metadata from a PDF reader into a writer."""
+    metadata = reader.metadata or {}
+    if metadata:
+        writer.add_metadata(metadata)
+
+
+def _assert_fitz_unencrypted(document: fitz.Document) -> None:
+    """Raise if a PyMuPDF document is encrypted."""
+    is_encrypted = bool(
+        getattr(document, "is_encrypted", False)
+        or getattr(document, "isEncrypted", False)
+    )
+    if is_encrypted:
+        raise ValueError("PDF is encrypted")
+
+
 def _parse_margins(value: str) -> Tuple[float, float, float, float]:
     """
     Parse a comma-separated margin string into top, right, bottom, and left values in points.
@@ -242,10 +280,10 @@ def rotate_pdf(
     pages: str | None,
 ) -> Path:
     """Rotate selected pages by the provided angle."""
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             _rotate_page(page, angle)
@@ -321,10 +359,10 @@ def watermark_pdf(
     Returns:
         Path: The same as `output_path` after the watermarked PDF has been written.
     """
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             width = float(page.mediabox.width)
@@ -350,6 +388,7 @@ def watermark_pdf(
             overlay = _build_overlay_page(width, height, _draw)
             page.merge_page(overlay)
         writer.add_page(page)
+    _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
         writer.write(handle)
     return output_path
@@ -373,10 +412,10 @@ def page_numbers_pdf(
     Returns:
         Path: The path to the written PDF file (same as output_path).
     """
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             width = float(page.mediabox.width)
@@ -407,6 +446,7 @@ def page_numbers_pdf(
             overlay = _build_overlay_page(width, height, _draw)
             page.merge_page(overlay)
         writer.add_page(page)
+    _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
         writer.write(handle)
     return output_path
@@ -433,11 +473,13 @@ def crop_pdf(
     Raises:
         ValueError: If the provided margins would remove an entire page or if margin parsing fails.
     """
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
     top, right, bottom, left = _parse_margins(margins)
+    if any(value < 0 for value in (top, right, bottom, left)):
+        raise ValueError("Margins must be zero or positive")
+    target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             lower_left_x = float(page.mediabox.lower_left[0]) + left
@@ -453,6 +495,7 @@ def crop_pdf(
             page.trimbox.lower_left = (lower_left_x, lower_left_y)
             page.trimbox.upper_right = (upper_right_x, upper_right_y)
         writer.add_page(page)
+    _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
         writer.write(handle)
     return output_path
@@ -540,8 +583,9 @@ def redact_pdf(
         Path: The `output_path` of the saved redacted PDF.
     """
     document = fitz.open(str(input_path))
+    _assert_fitz_unencrypted(document)
     total_pages = document.page_count
-    target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
+    target_pages = _resolve_page_selection(pages, total_pages)
     for index in range(total_pages):
         page_number = index + 1
         if target_pages is not None and page_number not in target_pages:
@@ -553,6 +597,45 @@ def redact_pdf(
         for rect in rectangles:
             page.add_redact_annot(rect, fill=(0, 0, 0))
         page.apply_redactions()
+    document.save(str(output_path), deflate=True)
+    document.close()
+    return output_path
+
+
+def highlight_pdf(
+    input_path: Path,
+    output_path: Path,
+    text: str,
+    pages: str | None,
+) -> Path:
+    """
+    Highlight occurrences of a given text in a PDF, optionally restricted to specific pages.
+    
+    Searches each targeted page for exact occurrences of `text`, adds highlight annotations over matches, and writes the modified PDF to `output_path`.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF.
+        output_path (Path): Path where the highlighted PDF will be written.
+        text (str): Text to search for and highlight; matches are searched as exact occurrences.
+        pages (str | None): Optional page selection string (e.g., "1-3,5") restricting which pages to process; if `None`, all pages are searched.
+    
+    Returns:
+        Path: The `output_path` of the saved highlighted PDF.
+    """
+    document = fitz.open(str(input_path))
+    _assert_fitz_unencrypted(document)
+    total_pages = document.page_count
+    target_pages = _resolve_page_selection(pages, total_pages)
+    for index in range(total_pages):
+        page_number = index + 1
+        if target_pages is not None and page_number not in target_pages:
+            continue
+        page = document.load_page(index)
+        rectangles = page.search_for(text)
+        if not rectangles:
+            continue
+        for rect in rectangles:
+            page.add_highlight_annot(rect)
     document.save(str(output_path), deflate=True)
     document.close()
     return output_path
@@ -572,8 +655,8 @@ def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path
     Returns:
         Path: The path to the written report (output_path).
     """
-    reader_a = PdfReader(str(first_path))
-    reader_b = PdfReader(str(second_path))
+    reader_a = _load_pdf(first_path)
+    reader_b = _load_pdf(second_path)
     pages_a = len(reader_a.pages)
     pages_b = len(reader_b.pages)
     lines = [
@@ -948,7 +1031,7 @@ def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
 
 def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
     """Convert a PDF into a Word document by extracting text."""
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     document = Document()
     for index, page in enumerate(reader.pages, start=1):
         text = page.extract_text() or ""
@@ -961,6 +1044,22 @@ def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
         else:
             document.add_paragraph("")
     document.save(str(output_path))
+    return output_path
+
+
+def pdf_to_text(input_path: Path, output_path: Path) -> Path:
+    """Extract PDF text into a plain UTF-8 text file."""
+    reader = _load_pdf(input_path)
+    lines: List[str] = []
+    for index, page in enumerate(reader.pages, start=1):
+        text = page.extract_text() or ""
+        if index > 1:
+            lines.append("")
+        if text.strip():
+            lines.extend(line.rstrip() for line in text.splitlines())
+        else:
+            lines.append("")
+    output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return output_path
 
 
@@ -1020,7 +1119,7 @@ def pdf_to_docx_ocr(input_path: Path, output_path: Path, lang: str | None = None
 
 def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
     """Convert a PDF into an Excel workbook by extracting text."""
-    reader = PdfReader(str(input_path))
+    reader = _load_pdf(input_path)
     workbook = Workbook()
     sheet = workbook.active
     row = 1

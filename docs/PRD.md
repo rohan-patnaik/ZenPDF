@@ -23,8 +23,8 @@ Standard (limited):
 - Watermark, page numbers, crop
 - Repair, unlock, protect
 - Web to PDF
-- Basic annotations
-- Redact, compare, copy utility
+- Basic annotations (highlight text)
+- Redact, compare, copy utility (PDF → Text)
 - OCR to searchable PDF (limited)
 
 Premium (feature-flagged, no billing yet):
@@ -60,6 +60,7 @@ Premium access is currently enabled through environment allowlists (no billing y
 - USER_LIMIT_SIZE_REQUIRED
 - USER_LIMIT_DAILY_JOBS
 - USER_LIMIT_DAILY_MINUTES
+- USER_INPUT_INVALID
 - USER_SESSION_REQUIRED
 - USER_LIMIT_PREMIUM_REQUIRED
 - SERVICE_CAPACITY_TEMPORARY

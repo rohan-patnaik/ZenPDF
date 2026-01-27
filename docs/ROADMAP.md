@@ -31,6 +31,7 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 4.2 Unlock, protect
 - [x] 4.3 Redact, compare
 - [x] 4.4 Repair PDFs (rebuild structure)
+- [x] 4.5 Annotations + copy utility hardening
 
 ## Epic 5 — Tiers Polish
 - [x] 5.1 ANON/FREE/PREMIUM UX clarity

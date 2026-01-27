@@ -14,7 +14,7 @@ const toolShelves = [
   {
     title: "Convert & Export",
     description: "Translate scans and images into polished PDFs or shareable JPGs.",
-    items: ["Image to PDF", "PDF to JPG", "PDF compression"],
+    items: ["Image to PDF", "PDF to JPG", "PDF compression", "PDF to Text"],
     badge: "Standard",
   },
   {
@@ -26,7 +26,7 @@ const toolShelves = [
   {
     title: "Annotate & Redact",
     description: "Mark up, crop, watermark, and redact with clarity-first controls.",
-    items: ["Watermark", "Page numbers", "Crop & redact"],
+    items: ["Watermark", "Page numbers", "Highlight annotations", "Crop & redact"],
     badge: "Standard",
   },
   {
@@ -194,7 +194,7 @@ export default function Home() {
                   <div className="flex items-center justify-between text-sm text-ink-700">
                     <span className="ink-label">Active tools</span>
                     <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      20 standard
+                      22 standard
                     </span>
                   </div>
                   <p className="mt-3 text-sm text-ink-700">

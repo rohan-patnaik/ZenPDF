@@ -14,6 +14,7 @@ from .tools import (
     compare_pdfs,
     compress_pdf,
     crop_pdf,
+    highlight_pdf,
     image_to_pdf,
     merge_pdfs,
     office_to_pdf,
@@ -21,6 +22,7 @@ from .tools import (
     pdf_to_pdfa,
     pdf_to_docx,
     pdf_to_docx_ocr,
+    pdf_to_text,
     pdf_to_xlsx,
     pdf_to_xlsx_ocr,
     pdf_to_jpg,
@@ -107,10 +109,22 @@ class ZenPdfWorker:
                 },
             )
             self._report(job_id, 100)
+        except ValueError as error:
+            self._safe_fail(job_id, "USER_INPUT_INVALID", str(error), str(error))
         except ConvexError as error:
-            self._safe_fail(job_id, error.message)
+            self._safe_fail(
+                job_id,
+                "SERVICE_CAPACITY_TEMPORARY",
+                "Processing failed. Please retry.",
+                error.message,
+            )
         except Exception as error:  # noqa: BLE001
-            self._safe_fail(job_id, str(error))
+            self._safe_fail(
+                job_id,
+                "SERVICE_CAPACITY_TEMPORARY",
+                "Processing failed. Please retry.",
+                str(error),
+            )
         finally:
             stop_event.set()
             heartbeat.join(timeout=1)
@@ -127,24 +141,36 @@ class ZenPdfWorker:
             },
         )
 
-    def _fail(self, job_id: str, message: str) -> None:
+    def _fail(
+        self,
+        job_id: str,
+        error_code: str,
+        error_message: str,
+        log_message: str | None = None,
+    ) -> None:
         """Report a failed job with a friendly error."""
-        print(f"Job {job_id} failed: {message}")
+        print(f"Job {job_id} failed: {log_message or error_message}")
         self._mutation(
             "jobs:failJob",
             {
                 "jobId": job_id,
                 "workerId": self.worker_id,
-                "errorCode": "SERVICE_CAPACITY_TEMPORARY",
-                "errorMessage": "Processing failed. Please retry.",
+                "errorCode": error_code,
+                "errorMessage": error_message,
                 "workerToken": self.worker_token,
             },
         )
 
-    def _safe_fail(self, job_id: str, message: str) -> None:
+    def _safe_fail(
+        self,
+        job_id: str,
+        error_code: str,
+        error_message: str,
+        log_message: str | None = None,
+    ) -> None:
         """Attempt to report a failure without crashing the worker."""
         try:
-            self._fail(job_id, message)
+            self._fail(job_id, error_code, error_message, log_message)
         except Exception as error:  # noqa: BLE001
             print(f"Failed to report job failure for {job_id}: {error}")
 
@@ -248,10 +274,19 @@ class ZenPdfWorker:
                 redact_pdf(inputs[0], output_path, str(text), config.get("pages"))
             ]
         if tool == "compare":
-            if len(inputs) < 2:
+            if len(inputs) != 2:
                 raise ValueError("Two PDF files are required")
             report_path = temp / "compare_report.txt"
             return [compare_pdfs(inputs[0], inputs[1], report_path)]
+        if tool == "highlight":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            text = config.get("text") or ""
+            if not str(text).strip():
+                raise ValueError("Text to highlight is required")
+            return [
+                highlight_pdf(inputs[0], output_path, str(text), config.get("pages"))
+            ]
         if tool == "unlock":
             password = config.get("password") or ""
             if not str(password).strip():
@@ -288,6 +323,11 @@ class ZenPdfWorker:
                 raise ValueError("PDF file is required")
             docx_path = temp / "output.docx"
             return [pdf_to_docx(inputs[0], docx_path)]
+        if tool == "pdf-to-text":
+            if not inputs:
+                raise ValueError("PDF file is required")
+            text_path = temp / "output.txt"
+            return [pdf_to_text(inputs[0], text_path)]
         if tool == "pdf-to-word-ocr":
             if not inputs:
                 raise ValueError("PDF file is required")
