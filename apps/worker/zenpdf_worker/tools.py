@@ -245,8 +245,45 @@ def split_pdf(
 
 
 def compress_pdf(input_path: Path, output_path: Path) -> Path:
-    """Compress a PDF by rewriting content streams."""
+    """Compress a PDF using Ghostscript when available."""
     reader = PdfReader(str(input_path))
+    if reader.is_encrypted:
+        raise ValueError("PDF is encrypted")
+
+    ghostscript = shutil.which("gs")
+    if ghostscript:
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        command = [
+            ghostscript,
+            "-dSAFER",
+            "-dBATCH",
+            "-dNOPAUSE",
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            "-dPDFSETTINGS=/screen",
+            "-dDetectDuplicateImages=true",
+            "-dDownsampleColorImages=true",
+            "-dDownsampleGrayImages=true",
+            "-dDownsampleMonoImages=true",
+            "-dColorImageResolution=120",
+            "-dGrayImageResolution=120",
+            "-dMonoImageResolution=300",
+            f"-sOutputFile={output_path}",
+            str(input_path),
+        ]
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=120,
+            )
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("Compression timed out") from error
+        if result.returncode == 0 and output_path.exists():
+            return output_path
+
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)

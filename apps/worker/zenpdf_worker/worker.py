@@ -39,6 +39,65 @@ from .tools import (
     zip_outputs,
 )
 
+TOOL_OUTPUT_SUFFIXES = {
+    "compress": ("compressed", None),
+    "repair": ("repaired", None),
+    "rotate": ("rotated", None),
+    "remove-pages": ("trimmed", None),
+    "reorder-pages": ("reordered", None),
+    "watermark": ("watermarked", None),
+    "page-numbers": ("numbered", None),
+    "crop": ("cropped", None),
+    "redact": ("redacted", None),
+    "highlight": ("highlighted", None),
+    "unlock": ("unlocked", None),
+    "protect": ("protected", None),
+    "pdfa": ("pdfa", None),
+    "pdf-to-word": ("word", ".docx"),
+    "pdf-to-text": ("text", ".txt"),
+    "compare": ("compare", ".txt"),
+    "pdf-to-word-ocr": ("word_ocr", ".docx"),
+    "pdf-to-excel": ("excel", ".xlsx"),
+    "pdf-to-excel-ocr": ("excel_ocr", ".xlsx"),
+    "office-to-pdf": ("converted", ".pdf"),
+    "image-to-pdf": ("images", ".pdf"),
+    "web-to-pdf": ("web", ".pdf"),
+}
+
+
+def _strip_input_prefix(path: Path) -> Path:
+    name = path.name
+    if "_" in name:
+        prefix, remainder = name.split("_", 1)
+        if prefix.isdigit():
+            name = remainder
+    return Path(name)
+
+
+def _normalize_extension(extension: str) -> str:
+    return extension if extension.startswith(".") else f".{extension}"
+
+
+def _build_output_path(tool: str, inputs: List[Path], temp: Path) -> Path:
+    if tool == "web-to-pdf":
+        return temp / "web_to_pdf.pdf"
+    if tool not in TOOL_OUTPUT_SUFFIXES or not inputs:
+        return temp / "output.pdf"
+    base_path = _strip_input_prefix(inputs[0])
+    stem = base_path.stem or "output"
+    suffix, extension = TOOL_OUTPUT_SUFFIXES[tool]
+    resolved_extension = extension or (base_path.suffix or ".pdf")
+    resolved_extension = _normalize_extension(resolved_extension)
+    return temp / f"{stem}_{suffix}{resolved_extension}"
+
+
+def _rename_output(source: Path, target: Path) -> Path:
+    if source == target:
+        return source
+    if target.exists():
+        target.unlink()
+    return source.rename(target)
+
 
 def _parse_int(value: Any, default: int) -> int:
     """Parse an integer with a safe fallback."""
@@ -223,7 +282,7 @@ class ZenPdfWorker:
         config = job.get("config")
         if not isinstance(config, dict):
             config = {}
-        output_path = temp / "output.pdf"
+        output_path = _build_output_path(tool, inputs, temp)
         if tool == "merge":
             return [merge_pdfs(inputs, output_path)]
         if tool == "split":
@@ -276,8 +335,7 @@ class ZenPdfWorker:
         if tool == "compare":
             if len(inputs) != 2:
                 raise ValueError("Two PDF files are required")
-            report_path = temp / "compare_report.txt"
-            return [compare_pdfs(inputs[0], inputs[1], report_path)]
+            return [compare_pdfs(inputs[0], inputs[1], output_path)]
         if tool == "highlight":
             if not inputs:
                 raise ValueError("PDF file is required")
@@ -313,7 +371,8 @@ class ZenPdfWorker:
         if tool == "office-to-pdf":
             if not inputs:
                 raise ValueError("Office file is required")
-            return [office_to_pdf(inputs[0], temp)]
+            converted = office_to_pdf(inputs[0], temp)
+            return [_rename_output(converted, output_path)]
         if tool == "pdfa":
             if not inputs:
                 raise ValueError("PDF file is required")
@@ -321,28 +380,23 @@ class ZenPdfWorker:
         if tool == "pdf-to-word":
             if not inputs:
                 raise ValueError("PDF file is required")
-            docx_path = temp / "output.docx"
-            return [pdf_to_docx(inputs[0], docx_path)]
+            return [pdf_to_docx(inputs[0], output_path)]
         if tool == "pdf-to-text":
             if not inputs:
                 raise ValueError("PDF file is required")
-            text_path = temp / "output.txt"
-            return [pdf_to_text(inputs[0], text_path)]
+            return [pdf_to_text(inputs[0], output_path)]
         if tool == "pdf-to-word-ocr":
             if not inputs:
                 raise ValueError("PDF file is required")
-            docx_path = temp / "output.docx"
-            return [pdf_to_docx_ocr(inputs[0], docx_path, config.get("lang"))]
+            return [pdf_to_docx_ocr(inputs[0], output_path, config.get("lang"))]
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
-            xlsx_path = temp / "output.xlsx"
-            return [pdf_to_xlsx(inputs[0], xlsx_path)]
+            return [pdf_to_xlsx(inputs[0], output_path)]
         if tool == "pdf-to-excel-ocr":
             if not inputs:
                 raise ValueError("PDF file is required")
-            xlsx_path = temp / "output.xlsx"
-            return [pdf_to_xlsx_ocr(inputs[0], xlsx_path, config.get("lang"))]
+            return [pdf_to_xlsx_ocr(inputs[0], output_path, config.get("lang"))]
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:
