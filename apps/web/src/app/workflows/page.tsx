@@ -966,7 +966,7 @@ export default function WorkflowsPage() {
                             className="flex flex-wrap items-center justify-between gap-3 rounded-[16px] border border-ink-900/10 bg-paper-50 px-3 py-2 text-xs text-ink-600"
                           >
                             <span>
-                              {member.name ?? member.email ?? member.userId} 1 {member.role}
+                              {member.name ?? member.email ?? member.userId} - {member.role}
                             </span>
                             {team.isOwner && member.role !== "owner" && (
                               <button

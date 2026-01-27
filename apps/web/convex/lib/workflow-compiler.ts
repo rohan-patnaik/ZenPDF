@@ -222,22 +222,29 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
   let hasPremiumTools = false;
 
   steps.forEach((step, index) => {
-    const spec = WORKFLOW_TOOL_SPECS[step.tool];
+    if (!step || typeof step !== "object" || Array.isArray(step)) {
+      throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
+    }
+
+    const toolName = (step as { tool?: unknown }).tool;
+    if (typeof toolName !== "string" || toolName.trim().length === 0) {
+      throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
+    }
+
+    const configValue = (step as { config?: unknown }).config;
+    if (configValue !== undefined && !isRecord(configValue)) {
+      throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
+    }
+
+    const spec = WORKFLOW_TOOL_SPECS[toolName];
     if (!spec) {
       throwFriendlyError("USER_INPUT_INVALID", {
         reason: "unknown_tool",
-        tool: step.tool,
+        tool: toolName,
       });
     }
 
-    if (step.config !== undefined && !isRecord(step.config)) {
-      throwFriendlyError("USER_INPUT_INVALID", {
-        reason: "invalid_config",
-        tool: step.tool,
-      });
-    }
-
-    const config = isRecord(step.config) ? step.config : undefined;
+    const config = isRecord(configValue) ? configValue : undefined;
 
     if (spec.requiredConfig && spec.requiredConfig.length > 0) {
       const missing = spec.requiredConfig.filter((key) =>
@@ -246,7 +253,7 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
       if (missing.length > 0) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "missing_config",
-          tool: step.tool,
+          tool: toolName,
           fields: missing.join(","),
         });
       }
@@ -258,13 +265,13 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
       if (spec.multiInput) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "multi_input_step",
-          tool: step.tool,
+          tool: toolName,
         });
       }
       if (outputKind && spec.input !== outputKind) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "incompatible_chain",
-          tool: step.tool,
+          tool: toolName,
           expected: outputKind,
           received: spec.input,
         });
@@ -274,7 +281,7 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
     if (index < steps.length - 1 && spec.output !== "pdf") {
       throwFriendlyError("USER_INPUT_INVALID", {
         reason: "non_pdf_mid_chain",
-        tool: step.tool,
+        tool: toolName,
       });
     }
 

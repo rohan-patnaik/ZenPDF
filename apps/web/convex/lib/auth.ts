@@ -6,6 +6,8 @@ import type {
 } from "convex/server";
 import type { Id } from "convex/values";
 
+import { normalizeOptionalEmail } from "./email";
+
 type MutationCtx = GenericMutationCtx<GenericDataModel>;
 type QueryCtx = GenericQueryCtx<GenericDataModel>;
 type Ctx = MutationCtx | QueryCtx;
@@ -33,7 +35,7 @@ const resolveTier = (identity: UserIdentity | null, storedTier?: ResolvedUser["t
   );
   const premiumClerkIds = parseEnvList(process.env.ZENPDF_PREMIUM_CLERK_IDS);
   const hasAllowlist = premiumEmails.length > 0 || premiumClerkIds.length > 0;
-  const email = identity.email?.toLowerCase();
+  const email = normalizeOptionalEmail(identity.email);
   const isPremium =
     (email ? premiumEmails.includes(email) : false) ||
     premiumClerkIds.includes(identity.subject);
@@ -84,7 +86,7 @@ export const resolveOrCreateUser = async (
   if (!resolved.userId) {
     const userId = await ctx.db.insert("users", {
       clerkUserId: resolved.identity.subject,
-      email: resolved.identity.email,
+      email: normalizeOptionalEmail(resolved.identity.email),
       name: resolved.identity.name ?? resolved.identity.nickname,
       tier: resolved.tier,
       adsFree: resolved.adsFree,

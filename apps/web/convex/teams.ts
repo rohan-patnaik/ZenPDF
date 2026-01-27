@@ -3,6 +3,7 @@ import { mutation, query } from "convex/server";
 import { v, type Id } from "convex/values";
 
 import { resolveUser } from "./lib/auth";
+import { normalizeEmail } from "./lib/email";
 import { throwFriendlyError } from "./lib/errors";
 
 type QueryCtx = GenericQueryCtx<GenericDataModel>;
@@ -33,8 +34,6 @@ const requireTeamOwner = async (ctx: Ctx, teamId: Id<"teams">, userId: Id<"users
   }
   return membership;
 };
-
-const normalizeEmail = (value: string) => value.trim().toLowerCase();
 
 type TeamMemberSummary = {
   _id: Id<"teamMembers">;
