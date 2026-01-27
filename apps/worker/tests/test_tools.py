@@ -7,6 +7,7 @@ import subprocess
 from unittest.mock import patch
 
 import pytest
+import fitz
 from docx import Document
 from fpdf import FPDF
 from openpyxl import load_workbook
@@ -17,6 +18,7 @@ from zenpdf_worker.tools import (
     MAX_WEB_BYTES,
     compare_pdfs,
     crop_pdf,
+    highlight_pdf,
     html_to_pdf,
     image_to_pdf,
     merge_pdfs,
@@ -25,6 +27,7 @@ from zenpdf_worker.tools import (
     pdf_to_pdfa,
     pdf_to_docx,
     pdf_to_docx_ocr,
+    pdf_to_text,
     pdf_to_xlsx,
     pdf_to_xlsx_ocr,
     pdf_to_jpg,
@@ -62,6 +65,15 @@ def _make_text_pdf(path: Path, text: str) -> None:
     pdf.set_font("Helvetica", size=14)
     pdf.text(10, 20, text)
     pdf.output(str(path))
+
+
+def _make_pdf_with_metadata(path: Path, title: str) -> None:
+    """Create a PDF with a Title metadata value."""
+    writer = PdfWriter()
+    writer.add_blank_page(width=300, height=300)
+    writer.add_metadata({"/Title": title})
+    with path.open("wb") as handle:
+        writer.write(handle)
 
 
 def test_merge_pdfs() -> None:
@@ -117,6 +129,17 @@ def test_watermark_and_page_numbers() -> None:
         assert "3" in (numbered_reader.pages[0].extract_text() or "")
 
 
+def test_watermark_rejects_invalid_pages() -> None:
+    """Reject invalid page selections when watermarking."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+
+        with pytest.raises(ValueError):
+            watermark_pdf(source, temp_path / "watermarked.pdf", "NOTE", "nope")
+
+
 def test_crop_pdf() -> None:
     """Crop a PDF using point margins."""
     with TemporaryDirectory() as temp:
@@ -138,7 +161,7 @@ def test_crop_pdf_rejects_invalid_margins() -> None:
         source = temp_path / "source.pdf"
         _make_pdf(source, 1)
 
-        for index, margins in enumerate(["bad", "10,10"], start=1):
+        for index, margins in enumerate(["bad", "10,10", "-5"], start=1):
             with pytest.raises(ValueError):
                 crop_pdf(
                     source,
@@ -193,6 +216,28 @@ def test_repair_pdf() -> None:
         assert len(reader.pages) == 2
 
 
+def test_watermark_preserves_metadata() -> None:
+    """Keep PDF metadata after watermarking, numbering, and rotating."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf_with_metadata(source, "ZenPDF")
+
+        watermarked = watermark_pdf(source, temp_path / "watermarked.pdf", "NOTE", None)
+        numbered = page_numbers_pdf(source, temp_path / "numbered.pdf", 1, None)
+        rotated = rotate_pdf(source, temp_path / "rotated.pdf", 90, None)
+
+        watermarked_reader = PdfReader(str(watermarked))
+        numbered_reader = PdfReader(str(numbered))
+        rotated_reader = PdfReader(str(rotated))
+        watermarked_metadata = watermarked_reader.metadata or {}
+        numbered_metadata = numbered_reader.metadata or {}
+        rotated_metadata = rotated_reader.metadata or {}
+        assert watermarked_metadata.get("/Title") == "ZenPDF"
+        assert numbered_metadata.get("/Title") == "ZenPDF"
+        assert rotated_metadata.get("/Title") == "ZenPDF"
+
+
 def test_redact_pdf() -> None:
     """Redact matching text in a PDF."""
     with TemporaryDirectory() as temp:
@@ -203,6 +248,21 @@ def test_redact_pdf() -> None:
         redacted = redact_pdf(source, temp_path / "redacted.pdf", "CONFIDENTIAL", None)
         reader = PdfReader(str(redacted))
         assert "CONFIDENTIAL" not in (reader.pages[0].extract_text() or "")
+
+
+def test_highlight_pdf() -> None:
+    """Highlight matching text in a PDF."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_text_pdf(source, "CONFIDENTIAL")
+
+        highlighted = highlight_pdf(source, temp_path / "highlighted.pdf", "CONFIDENTIAL", None)
+        document = fitz.open(str(highlighted))
+        page = document.load_page(0)
+        annotations = list(page.annots() or [])
+        document.close()
+        assert annotations
 
 
 def test_compare_pdfs() -> None:
@@ -217,6 +277,17 @@ def test_compare_pdfs() -> None:
         report = compare_pdfs(first, second, temp_path / "report.txt")
         report_text = report.read_text(encoding="utf-8")
         assert "text differs" in report_text
+
+
+def test_pdf_to_text() -> None:
+    """Extract PDF text into a TXT file."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_text_pdf(source, "Hello")
+
+        output = pdf_to_text(source, temp_path / "output.txt")
+        assert "Hello" in output.read_text(encoding="utf-8")
 
 
 def test_html_to_pdf() -> None:

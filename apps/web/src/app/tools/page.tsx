@@ -23,12 +23,14 @@ type ToolId =
   | "protect"
   | "repair"
   | "redact"
+  | "highlight"
   | "compare"
   | "image-to-pdf"
   | "pdf-to-jpg"
   | "web-to-pdf"
   | "office-to-pdf"
   | "pdfa"
+  | "pdf-to-text"
   | "pdf-to-word"
   | "pdf-to-excel"
   | "pdf-to-word-ocr"
@@ -39,7 +41,7 @@ type ToolField = {
   label: string;
   placeholder: string;
   helper?: string;
-  type?: "text" | "number";
+  type?: "text" | "number" | "password";
   required?: boolean;
 };
 
@@ -223,6 +225,28 @@ const TOOLS: ToolDefinition[] = [
     ],
   },
   {
+    id: "highlight",
+    label: "Highlight text",
+    description: "Highlight matching text across the PDF.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "text",
+        label: "Text to highlight",
+        placeholder: "CONFIDENTIAL",
+        helper: "Case-sensitive match.",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to scan every page.",
+      },
+    ],
+  },
+  {
     id: "compare",
     label: "Compare PDFs",
     description: "Generate a text report comparing two PDFs.",
@@ -240,6 +264,7 @@ const TOOLS: ToolDefinition[] = [
         key: "password",
         label: "Current password",
         placeholder: "Enter current password",
+        type: "password",
         required: true,
       },
     ],
@@ -255,6 +280,7 @@ const TOOLS: ToolDefinition[] = [
         key: "password",
         label: "New password",
         placeholder: "Create a password",
+        type: "password",
         required: true,
       },
     ],
@@ -310,6 +336,13 @@ const TOOLS: ToolDefinition[] = [
     accept: ".pdf",
     multiple: false,
     tier: "Premium",
+  },
+  {
+    id: "pdf-to-text",
+    label: "PDF → Text",
+    description: "Extract raw text into a plain TXT file.",
+    accept: ".pdf",
+    multiple: false,
   },
   {
     id: "pdf-to-word",
@@ -436,8 +469,8 @@ export default function ToolsPage() {
       return;
     }
     const needsFiles = tool.requiresFiles ?? true;
-    if (tool.id === "compare" && files.length < 2) {
-      setStatus("Upload two PDFs to compare.");
+    if (tool.id === "compare" && files.length !== 2) {
+      setStatus("Upload exactly two PDFs to compare.");
       return;
     }
     if (needsFiles && files.length === 0) {

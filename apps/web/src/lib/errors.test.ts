@@ -12,6 +12,7 @@ describe("friendly error catalog", () => {
       "USER_LIMIT_CONCURRENT_JOBS",
       "USER_SESSION_REQUIRED",
       "USER_LIMIT_SIZE_REQUIRED",
+      "USER_INPUT_INVALID",
       "SERVICE_CAPACITY_TEMPORARY",
       "SERVICE_CAPACITY_MONTHLY_BUDGET",
     ];
