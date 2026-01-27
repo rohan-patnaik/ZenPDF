@@ -27,9 +27,9 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 3.3 PDF to office (non-OCR)
 
 ## Epic 4 — Editor & Utilities
-- [ ] 4.1 Watermark, page numbers, crop
-- [ ] 4.2 Unlock, protect
-- [ ] 4.3 Redact, compare
+- [x] 4.1 Watermark, page numbers, crop
+- [x] 4.2 Unlock, protect
+- [x] 4.3 Redact, compare
 
 ## Epic 5 — Tiers Polish
 - [ ] 5.1 ANON/FREE/PREMIUM UX clarity

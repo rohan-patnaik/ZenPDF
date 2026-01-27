@@ -17,6 +17,13 @@ type ToolId =
   | "rotate"
   | "remove-pages"
   | "reorder-pages"
+  | "watermark"
+  | "page-numbers"
+  | "crop"
+  | "unlock"
+  | "protect"
+  | "redact"
+  | "compare"
   | "image-to-pdf"
   | "pdf-to-jpg"
   | "web-to-pdf"
@@ -30,6 +37,7 @@ type ToolField = {
   placeholder: string;
   helper?: string;
   type?: "text" | "number";
+  required?: boolean;
 };
 
 type ToolDefinition = {
@@ -124,6 +132,130 @@ const TOOLS: ToolDefinition[] = [
     ],
   },
   {
+    id: "watermark",
+    label: "Watermark",
+    description: "Stamp a light text watermark onto each page.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "text",
+        label: "Watermark text",
+        placeholder: "CONFIDENTIAL",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to watermark every page.",
+      },
+    ],
+  },
+  {
+    id: "page-numbers",
+    label: "Page numbers",
+    description: "Add page numbers to the footer of each page.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "start",
+        label: "Start number",
+        placeholder: "1",
+        helper: "Leave blank to start at 1.",
+        type: "number",
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to number every page.",
+      },
+    ],
+  },
+  {
+    id: "crop",
+    label: "Crop pages",
+    description: "Trim margins from each page.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "margins",
+        label: "Margins (pt)",
+        placeholder: "10,10,10,10",
+        helper: "Top,right,bottom,left in points (72 = 1 inch).",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to crop every page.",
+      },
+    ],
+  },
+  {
+    id: "redact",
+    label: "Redact text",
+    description: "Find and black out matching text in the PDF.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "text",
+        label: "Text to redact",
+        placeholder: "CONFIDENTIAL",
+        helper: "Case-sensitive match.",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to scan every page.",
+      },
+    ],
+  },
+  {
+    id: "compare",
+    label: "Compare PDFs",
+    description: "Generate a text report comparing two PDFs.",
+    accept: ".pdf",
+    multiple: true,
+  },
+  {
+    id: "unlock",
+    label: "Unlock PDF",
+    description: "Remove a password so the file opens freely.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "password",
+        label: "Current password",
+        placeholder: "Enter current password",
+        required: true,
+      },
+    ],
+  },
+  {
+    id: "protect",
+    label: "Protect PDF",
+    description: "Encrypt a PDF with a new password.",
+    accept: ".pdf",
+    multiple: false,
+    fields: [
+      {
+        key: "password",
+        label: "New password",
+        placeholder: "Create a password",
+        required: true,
+      },
+    ],
+  },
+  {
     id: "image-to-pdf",
     label: "Image → PDF",
     description: "Convert JPG or PNG images into a PDF.",
@@ -149,6 +281,7 @@ const TOOLS: ToolDefinition[] = [
         key: "url",
         label: "Web address",
         placeholder: "https://example.com",
+        required: true,
       },
     ],
   },
@@ -241,12 +374,25 @@ export default function ToolsPage() {
   };
 
   const buildConfig = () => {
+    if (!tool) {
+      return undefined;
+    }
     const config: Record<string, string | number> = {};
+    const numberKeys = new Set(
+      tool.fields
+        ?.filter((field) => field.type === "number")
+        .map((field) => field.key) ?? [],
+    );
     for (const [key, value] of Object.entries(configValues)) {
       if (!value.trim()) {
         continue;
       }
-      config[key] = key === "angle" ? Number(value) : value.trim();
+      if (numberKeys.has(key)) {
+        const numericValue = Number(value);
+        config[key] = Number.isNaN(numericValue) ? value.trim() : numericValue;
+      } else {
+        config[key] = value.trim();
+      }
     }
     return Object.keys(config).length ? config : undefined;
   };
@@ -259,6 +405,10 @@ export default function ToolsPage() {
       return;
     }
     const needsFiles = tool.requiresFiles ?? true;
+    if (tool.id === "compare" && files.length < 2) {
+      setStatus("Upload two PDFs to compare.");
+      return;
+    }
     if (needsFiles && files.length === 0) {
       setStatus("Add at least one file to continue.");
       return;
@@ -278,6 +428,14 @@ export default function ToolsPage() {
         setStatus("Enter a valid URL.");
         return;
       }
+    }
+
+    const missingField = tool.fields?.find(
+      (field) => field.required && !configValues[field.key]?.trim(),
+    );
+    if (missingField) {
+      setStatus(`Enter ${missingField.label.toLowerCase()}.`);
+      return;
     }
 
     setIsSubmitting(true);

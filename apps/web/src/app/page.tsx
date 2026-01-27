@@ -17,14 +17,14 @@ const toolShelves = [
   },
   {
     title: "Protect & Repair",
-    description: "Lock, unlock, and repair files with a gentle pass that keeps text intact.",
-    items: ["Protect & unlock", "Repair damaged PDFs", "Remove pages"],
+    description: "Lock, unlock, and compare versions while keeping text intact.",
+    items: ["Protect & unlock", "Compare versions", "Remove pages"],
     badge: "Standard",
   },
   {
     title: "Annotate & Redact",
     description: "Mark up, crop, watermark, and redact with clarity-first controls.",
-    items: ["Watermark", "Page numbers", "Redaction"],
+    items: ["Watermark", "Page numbers", "Crop & redact"],
     badge: "Standard",
   },
   {
@@ -173,7 +173,7 @@ export default function Home() {
                   <div className="flex items-center justify-between text-sm text-ink-700">
                     <span className="ink-label">Active tools</span>
                     <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      14 standard
+                      19 standard
                     </span>
                   </div>
                   <p className="mt-3 text-sm text-ink-700">
