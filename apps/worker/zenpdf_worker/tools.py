@@ -288,6 +288,7 @@ def rotate_pdf(
         if target_pages is None or index in target_pages:
             _rotate_page(page, angle)
         writer.add_page(page)
+    _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
         writer.write(handle)
     return output_path
@@ -582,23 +583,22 @@ def redact_pdf(
     Returns:
         Path: The `output_path` of the saved redacted PDF.
     """
-    document = fitz.open(str(input_path))
-    _assert_fitz_unencrypted(document)
-    total_pages = document.page_count
-    target_pages = _resolve_page_selection(pages, total_pages)
-    for index in range(total_pages):
-        page_number = index + 1
-        if target_pages is not None and page_number not in target_pages:
-            continue
-        page = document.load_page(index)
-        rectangles = page.search_for(text)
-        if not rectangles:
-            continue
-        for rect in rectangles:
-            page.add_redact_annot(rect, fill=(0, 0, 0))
-        page.apply_redactions()
-    document.save(str(output_path), deflate=True)
-    document.close()
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        total_pages = document.page_count
+        target_pages = _resolve_page_selection(pages, total_pages)
+        for index in range(total_pages):
+            page_number = index + 1
+            if target_pages is not None and page_number not in target_pages:
+                continue
+            page = document.load_page(index)
+            rectangles = page.search_for(text)
+            if not rectangles:
+                continue
+            for rect in rectangles:
+                page.add_redact_annot(rect, fill=(0, 0, 0))
+            page.apply_redactions()
+        document.save(str(output_path), deflate=True)
     return output_path
 
 
@@ -622,22 +622,21 @@ def highlight_pdf(
     Returns:
         Path: The `output_path` of the saved highlighted PDF.
     """
-    document = fitz.open(str(input_path))
-    _assert_fitz_unencrypted(document)
-    total_pages = document.page_count
-    target_pages = _resolve_page_selection(pages, total_pages)
-    for index in range(total_pages):
-        page_number = index + 1
-        if target_pages is not None and page_number not in target_pages:
-            continue
-        page = document.load_page(index)
-        rectangles = page.search_for(text)
-        if not rectangles:
-            continue
-        for rect in rectangles:
-            page.add_highlight_annot(rect)
-    document.save(str(output_path), deflate=True)
-    document.close()
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        total_pages = document.page_count
+        target_pages = _resolve_page_selection(pages, total_pages)
+        for index in range(total_pages):
+            page_number = index + 1
+            if target_pages is not None and page_number not in target_pages:
+                continue
+            page = document.load_page(index)
+            rectangles = page.search_for(text)
+            if not rectangles:
+                continue
+            for rect in rectangles:
+                page.add_highlight_annot(rect)
+        document.save(str(output_path), deflate=True)
     return output_path
 
 
@@ -711,24 +710,24 @@ def image_to_pdf(inputs: Sequence[Path], output_path: Path) -> Path:
 
 def pdf_to_jpg(input_path: Path, output_dir: Path, dpi: int = 150) -> List[Path]:
     """Render each PDF page to a JPG image."""
-    document = fitz.open(str(input_path))
-    scale = dpi / 72
-    matrix = fitz.Matrix(scale, scale)
-    outputs: List[Path] = []
-    for index in range(document.page_count):
-        page = document.load_page(index)
-        render = getattr(page, "get_pixmap", None)
-        if not callable(render):
-            raise ValueError("PDF renderer unavailable")
-        pix = render(matrix=matrix)
-        output_path = output_dir / f"page_{index + 1}.jpg"
-        saver = getattr(pix, "save", None)
-        if not callable(saver):
-            raise ValueError("Rendered page cannot be saved")
-        saver(str(output_path))
-        outputs.append(output_path)
-    document.close()
-    return outputs
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        scale = dpi / 72
+        matrix = fitz.Matrix(scale, scale)
+        outputs: List[Path] = []
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            render = getattr(page, "get_pixmap", None)
+            if not callable(render):
+                raise ValueError("PDF renderer unavailable")
+            pix = render(matrix=matrix)
+            output_path = output_dir / f"page_{index + 1}.jpg"
+            saver = getattr(pix, "save", None)
+            if not callable(saver):
+                raise ValueError("Rendered page cannot be saved")
+            saver(str(output_path))
+            outputs.append(output_path)
+        return outputs
 
 
 def zip_outputs(outputs: Iterable[Path], zip_path: Path) -> Path:

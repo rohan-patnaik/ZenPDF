@@ -217,7 +217,7 @@ def test_repair_pdf() -> None:
 
 
 def test_watermark_preserves_metadata() -> None:
-    """Keep PDF metadata after watermarking or numbering."""
+    """Keep PDF metadata after watermarking, numbering, and rotating."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
@@ -225,13 +225,17 @@ def test_watermark_preserves_metadata() -> None:
 
         watermarked = watermark_pdf(source, temp_path / "watermarked.pdf", "NOTE", None)
         numbered = page_numbers_pdf(source, temp_path / "numbered.pdf", 1, None)
+        rotated = rotate_pdf(source, temp_path / "rotated.pdf", 90, None)
 
         watermarked_reader = PdfReader(str(watermarked))
         numbered_reader = PdfReader(str(numbered))
+        rotated_reader = PdfReader(str(rotated))
         watermarked_metadata = watermarked_reader.metadata or {}
         numbered_metadata = numbered_reader.metadata or {}
+        rotated_metadata = rotated_reader.metadata or {}
         assert watermarked_metadata.get("/Title") == "ZenPDF"
         assert numbered_metadata.get("/Title") == "ZenPDF"
+        assert rotated_metadata.get("/Title") == "ZenPDF"
 
 
 def test_redact_pdf() -> None:
