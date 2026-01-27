@@ -264,6 +264,10 @@ export default function ToolsPage() {
     }
     if (!needsFiles && tool.id === "web-to-pdf") {
       const urlValue = configValues.url?.trim() ?? "";
+      if (!urlValue) {
+        setStatus("Enter a valid URL.");
+        return;
+      }
       try {
         const parsed = new URL(urlValue);
         if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {

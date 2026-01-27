@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import shutil
 import socket
 import subprocess
@@ -211,6 +212,24 @@ def zip_outputs(outputs: Iterable[Path], zip_path: Path) -> Path:
 
 
 MAX_WEB_BYTES = 2 * 1024 * 1024
+UNICODE_FONT_PATHS = (
+    Path(__file__).resolve().parent / "assets" / "DejaVuSans.ttf",
+    Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
+    Path("/usr/share/fonts/DejaVuSans.ttf"),
+)
+
+
+def _resolve_unicode_font_path() -> Path | None:
+    """Return a path to a Unicode-compatible font if available."""
+    env_path = os.getenv("ZENPDF_TTF_PATH")
+    if env_path:
+        candidate = Path(env_path)
+        if candidate.is_file():
+            return candidate
+    for candidate in UNICODE_FONT_PATHS:
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 class _HTMLTextExtractor(HTMLParser):
@@ -242,7 +261,18 @@ def html_to_pdf(html: str, output_path: Path) -> Path:
     pdf.set_margins(15, 15, 15)
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Helvetica", size=12)
+    font_path = _resolve_unicode_font_path()
+    if font_path:
+        pdf.add_font("DejaVuSans", fname=str(font_path), uni=True)
+        pdf.set_font("DejaVuSans", size=12)
+    else:
+        try:
+            text.encode("latin-1")
+        except UnicodeEncodeError as error:
+            raise RuntimeError(
+                "Unicode font unavailable. Set ZENPDF_TTF_PATH to a DejaVuSans.ttf path."
+            ) from error
+        pdf.set_font("Helvetica", size=12)
     max_width = pdf.w - pdf.l_margin - pdf.r_margin
     for line in text.splitlines():
         if line.strip():
@@ -275,28 +305,28 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
         host_header = f"{host_header}:{parsed.port}"
     target_url = parsed._replace(netloc=netloc).geturl()
 
-    session = requests.Session()
-    if parsed.scheme == "https":
-        session.mount("https://", HostHeaderSSLAdapter())
-
     body = bytearray()
-    with session.get(
-        target_url,
-        timeout=20,
-        allow_redirects=False,
-        stream=True,
-        headers={"Host": host_header},
-    ) as response:
-        if 300 <= response.status_code < 400:
-            raise ValueError("Redirects are not allowed")
-        response.raise_for_status()
-        for chunk in response.iter_content(chunk_size=64 * 1024):
-            if not chunk:
-                continue
-            body.extend(chunk)
-            if len(body) > MAX_WEB_BYTES:
-                raise ValueError("Web response too large")
-        encoding = response.encoding or "utf-8"
+    with requests.Session() as session:
+        if parsed.scheme == "https":
+            session.mount("https://", HostHeaderSSLAdapter())
+
+        with session.get(
+            target_url,
+            timeout=20,
+            allow_redirects=False,
+            stream=True,
+            headers={"Host": host_header},
+        ) as response:
+            if 300 <= response.status_code < 400:
+                raise ValueError("Redirects are not allowed")
+            response.raise_for_status()
+            for chunk in response.iter_content(chunk_size=64 * 1024):
+                if not chunk:
+                    continue
+                body.extend(chunk)
+                if len(body) > MAX_WEB_BYTES:
+                    raise ValueError("Web response too large")
+            encoding = response.encoding or "utf-8"
 
     html = body.decode(encoding, errors="replace")
     return html_to_pdf(html, output_path)
@@ -307,6 +337,8 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if not soffice:
         raise RuntimeError("LibreOffice is required for office-to-pdf")
+
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
         result = subprocess.run(

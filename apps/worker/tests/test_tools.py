@@ -223,6 +223,15 @@ class _DummySession:
     def __init__(self, response: _DummyResponse) -> None:
         self._response = response
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def close(self):
+        return None
+
     def mount(self, *_args, **_kwargs):
         return None
 
