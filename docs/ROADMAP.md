@@ -43,8 +43,8 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 6.3 Premium limits + ads-free flag
 
 ## Epic 7 — Workflows + Teams
-- [ ] 7.1 Workflow compiler + presets
-- [ ] 7.2 Teams with shared templates
+- [x] 7.1 Workflow compiler + presets
+- [x] 7.2 Teams with shared templates
 
 ## Epic 8 — Hardening
 - [ ] 8.1 Security doc + logging/metrics

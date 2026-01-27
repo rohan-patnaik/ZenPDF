@@ -281,6 +281,9 @@ export default function Home() {
                   </div>
                 ))}
               </div>
+              <Link className="paper-button--ghost text-sm" href="/workflows">
+                Open workflow studio
+              </Link>
               <div className="mt-auto rounded-[20px] border border-forest-600/30 bg-sage-200/70 p-4 text-sm text-forest-700">
                 Supporter mode hides the banner and expands batch limits.
               </div>

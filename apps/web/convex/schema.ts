@@ -24,7 +24,9 @@ export default defineSchema({
     adsFree: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_clerk_id", ["clerkUserId"]),
+  })
+    .index("by_clerk_id", ["clerkUserId"])
+    .index("by_email", ["email"]),
 
   jobs: defineTable({
     userId: v.optional(v.id("users")),
@@ -141,12 +143,14 @@ export default defineSchema({
     steps: v.array(
       v.object({
         tool: v.string(),
-        config: v.any(),
+        config: v.optional(v.any()),
       }),
     ),
     createdAt: v.number(),
     updatedAt: v.number(),
-  }).index("by_owner", ["ownerId", "createdAt"]),
+  })
+    .index("by_owner", ["ownerId", "createdAt"])
+    .index("by_team", ["teamId", "createdAt"]),
 
   teams: defineTable({
     name: v.string(),
@@ -161,5 +165,6 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_team", ["teamId"])
-    .index("by_user", ["userId"]),
+    .index("by_user", ["userId"])
+    .index("by_team_user", ["teamId", "userId"]),
 });
