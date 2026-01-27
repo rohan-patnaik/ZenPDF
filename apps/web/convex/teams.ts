@@ -2,7 +2,7 @@ import type { GenericDataModel, GenericMutationCtx, GenericQueryCtx } from "conv
 import { mutation, query } from "convex/server";
 import { v, type Id } from "convex/values";
 
-import { resolveUser } from "./lib/auth";
+import { resolveOrCreateUser, resolveUser } from "./lib/auth";
 import { normalizeEmail } from "./lib/email";
 import { throwFriendlyError } from "./lib/errors";
 
@@ -12,6 +12,17 @@ type Ctx = QueryCtx | MutationCtx;
 
 const requirePremiumUser = async (ctx: Ctx) => {
   const { userId, tier } = await resolveUser(ctx);
+  if (!userId) {
+    throwFriendlyError("USER_SESSION_REQUIRED");
+  }
+  if (tier !== "PREMIUM") {
+    throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
+  }
+  return userId;
+};
+
+const requirePremiumUserForMutation = async (ctx: MutationCtx) => {
+  const { userId, tier } = await resolveOrCreateUser(ctx);
   if (!userId) {
     throwFriendlyError("USER_SESSION_REQUIRED");
   }
@@ -128,7 +139,7 @@ export const listTeams = query({
 export const createTeam = mutation({
   args: { name: v.string() },
   handler: async (ctx, args) => {
-    const userId = await requirePremiumUser(ctx);
+    const userId = await requirePremiumUserForMutation(ctx);
     const name = args.name.trim();
     if (!name) {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "missing_name" });
@@ -154,7 +165,7 @@ export const createTeam = mutation({
 export const addTeamMember = mutation({
   args: { teamId: v.id("teams"), email: v.string() },
   handler: async (ctx, args) => {
-    const userId = await requirePremiumUser(ctx);
+    const userId = await requirePremiumUserForMutation(ctx);
     await requireTeamOwner(ctx, args.teamId, userId);
     const email = normalizeEmail(args.email);
     if (!email) {
@@ -189,7 +200,7 @@ export const addTeamMember = mutation({
 export const removeTeamMember = mutation({
   args: { teamId: v.id("teams"), memberId: v.id("teamMembers") },
   handler: async (ctx, args) => {
-    const userId = await requirePremiumUser(ctx);
+    const userId = await requirePremiumUserForMutation(ctx);
     await requireTeamOwner(ctx, args.teamId, userId);
     const member = await ctx.db.get(args.memberId);
     if (!member || member.teamId !== args.teamId) {

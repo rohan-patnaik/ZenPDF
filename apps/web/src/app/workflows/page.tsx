@@ -5,9 +5,13 @@ import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
 
 import SiteHeader from "@/components/SiteHeader";
-import { api } from "@/lib/convex";
-
-type WorkflowAssetKind = "pdf" | "image" | "office" | "url" | "text" | "docx" | "xlsx";
+import { api, type WorkflowSummary } from "@/lib/convex";
+import {
+  MAX_WORKFLOW_STEPS,
+  WORKFLOW_TOOL_SPECS,
+  type WorkflowAssetKind,
+  type WorkflowToolSpec,
+} from "../../../convex/lib/workflow-spec";
 
 type ToolField = {
   key: string;
@@ -33,39 +37,26 @@ type WorkflowStepDraft = {
   config: Record<string, string>;
 };
 
-type WorkflowSummary = {
-  _id: string;
-  name: string;
-  description?: string;
-  steps: Array<{ tool: string; config?: Record<string, unknown> }>;
-  teamId?: string;
-  teamName?: string;
-  ownerName?: string;
-  ownerEmail?: string;
-  createdAt: number;
-  updatedAt: number;
-  inputKind: WorkflowAssetKind;
-  outputKind: WorkflowAssetKind;
-  canManage: boolean;
-};
-
-const MAX_WORKFLOW_STEPS = 6;
+const buildToolDefinition = (
+  spec: WorkflowToolSpec,
+  details: { description: string; fields?: ToolField[] },
+): WorkflowToolDefinition => ({
+  id: spec.id,
+  label: spec.label,
+  description: details.description,
+  input: spec.input,
+  output: spec.output,
+  multiInput: spec.multiInput,
+  tier: spec.premium ? "Premium" : "Standard",
+  fields: details.fields,
+});
 
 const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
-  {
-    id: "merge",
-    label: "Merge PDFs",
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.merge, {
     description: "Combine multiple PDFs into a single dossier.",
-    input: "pdf",
-    output: "pdf",
-    multiInput: true,
-  },
-  {
-    id: "split",
-    label: "Split PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.split, {
     description: "Split by ranges or into individual pages.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "ranges",
@@ -74,20 +65,12 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         helper: "Leave blank to split every page.",
       },
     ],
-  },
-  {
-    id: "compress",
-    label: "Compress PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.compress, {
     description: "Reduce file size while preserving readability.",
-    input: "pdf",
-    output: "pdf",
-  },
-  {
-    id: "rotate",
-    label: "Rotate pages",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.rotate, {
     description: "Rotate pages by 90, 180, or 270 degrees.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "pages",
@@ -103,13 +86,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         type: "number",
       },
     ],
-  },
-  {
-    id: "remove-pages",
-    label: "Remove pages",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["remove-pages"], {
     description: "Drop specific pages from a PDF.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "pages",
@@ -117,13 +96,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "2,5-6",
       },
     ],
-  },
-  {
-    id: "reorder-pages",
-    label: "Reorder pages",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["reorder-pages"], {
     description: "Reorder by listing the new page order.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "order",
@@ -132,13 +107,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         helper: "Pages not listed are removed.",
       },
     ],
-  },
-  {
-    id: "watermark",
-    label: "Watermark",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.watermark, {
     description: "Stamp a light text watermark onto each page.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "text",
@@ -151,13 +122,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "1-3,6",
       },
     ],
-  },
-  {
-    id: "page-numbers",
-    label: "Page numbers",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["page-numbers"], {
     description: "Add page numbers to the footer of each page.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "start",
@@ -172,13 +139,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "1-3,6",
       },
     ],
-  },
-  {
-    id: "crop",
-    label: "Crop pages",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.crop, {
     description: "Trim margins from each page.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "margins",
@@ -192,13 +155,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "1-3,6",
       },
     ],
-  },
-  {
-    id: "redact",
-    label: "Redact text",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.redact, {
     description: "Find and black out matching text in the PDF.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "text",
@@ -211,13 +170,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "1-3,6",
       },
     ],
-  },
-  {
-    id: "highlight",
-    label: "Highlight text",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.highlight, {
     description: "Highlight matching text across the PDF.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "text",
@@ -230,21 +185,12 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "1-3,6",
       },
     ],
-  },
-  {
-    id: "compare",
-    label: "Compare PDFs",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.compare, {
     description: "Generate a text report comparing two PDFs.",
-    input: "pdf",
-    output: "text",
-    multiInput: true,
-  },
-  {
-    id: "unlock",
-    label: "Unlock PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.unlock, {
     description: "Remove a password so the file opens freely.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "password",
@@ -252,13 +198,9 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "Enter current password",
       },
     ],
-  },
-  {
-    id: "protect",
-    label: "Protect PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.protect, {
     description: "Encrypt a PDF with a new password.",
-    input: "pdf",
-    output: "pdf",
     fields: [
       {
         key: "password",
@@ -266,35 +208,18 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "Create a password",
       },
     ],
-  },
-  {
-    id: "repair",
-    label: "Repair PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.repair, {
     description: "Rebuild a PDF file to fix structural issues.",
-    input: "pdf",
-    output: "pdf",
-  },
-  {
-    id: "image-to-pdf",
-    label: "Image to PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["image-to-pdf"], {
     description: "Convert JPG or PNG images into a PDF.",
-    input: "image",
-    output: "pdf",
-    multiInput: true,
-  },
-  {
-    id: "pdf-to-jpg",
-    label: "PDF to JPG",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-jpg"], {
     description: "Export each page as a JPG.",
-    input: "pdf",
-    output: "image",
-  },
-  {
-    id: "web-to-pdf",
-    label: "Web to PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["web-to-pdf"], {
     description: "Capture a URL into a printable PDF snapshot.",
-    input: "url",
-    output: "pdf",
     fields: [
       {
         key: "url",
@@ -302,59 +227,28 @@ const WORKFLOW_TOOLS: WorkflowToolDefinition[] = [
         placeholder: "https://example.com",
       },
     ],
-  },
-  {
-    id: "office-to-pdf",
-    label: "Office to PDF",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["office-to-pdf"], {
     description: "Convert Word, Excel, or PowerPoint files to PDF.",
-    input: "office",
-    output: "pdf",
-  },
-  {
-    id: "pdfa",
-    label: "PDF to PDF/A",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS.pdfa, {
     description: "Convert PDFs into archival PDF/A-2b output.",
-    input: "pdf",
-    output: "pdf",
-    tier: "Premium",
-  },
-  {
-    id: "pdf-to-text",
-    label: "PDF to Text",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-text"], {
     description: "Extract raw text into a plain TXT file.",
-    input: "pdf",
-    output: "text",
-  },
-  {
-    id: "pdf-to-word",
-    label: "PDF to Word",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-word"], {
     description: "Extract text from digital PDFs into DOCX.",
-    input: "pdf",
-    output: "docx",
-  },
-  {
-    id: "pdf-to-excel",
-    label: "PDF to Excel",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-excel"], {
     description: "Extract text into a simple XLSX worksheet.",
-    input: "pdf",
-    output: "xlsx",
-  },
-  {
-    id: "pdf-to-word-ocr",
-    label: "PDF to Word (OCR)",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-word-ocr"], {
     description: "OCR scanned PDFs into a Word document.",
-    input: "pdf",
-    output: "docx",
-    tier: "Premium",
-  },
-  {
-    id: "pdf-to-excel-ocr",
-    label: "PDF to Excel (OCR)",
+  }),
+  buildToolDefinition(WORKFLOW_TOOL_SPECS["pdf-to-excel-ocr"], {
     description: "OCR scanned PDFs into a simple XLSX worksheet.",
-    input: "pdf",
-    output: "xlsx",
-    tier: "Premium",
-  },
+  }),
 ];
 
 const WORKFLOW_TOOL_MAP = new Map(WORKFLOW_TOOLS.map((tool) => [tool.id, tool]));

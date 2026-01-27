@@ -1,6 +1,7 @@
 import { makeFunctionReference } from "convex/server";
 
 import type { BudgetSnapshot } from "../../convex/lib/budget";
+import type { WorkflowStep } from "../../convex/lib/workflow-spec";
 import type { PlanLimits, PlanTier } from "./limits";
 
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };
@@ -26,12 +27,7 @@ type ViewerSnapshot = {
   signedIn: boolean;
 };
 
-type WorkflowStep = {
-  tool: string;
-  config?: Record<string, unknown>;
-};
-
-type WorkflowSummary = {
+export type WorkflowSummary = {
   _id: string;
   name: string;
   description?: string;
@@ -47,7 +43,7 @@ type WorkflowSummary = {
   canManage: boolean;
 };
 
-type TeamMemberSummary = {
+export type TeamMemberSummary = {
   _id: string;
   userId: string;
   role: string;
@@ -55,7 +51,7 @@ type TeamMemberSummary = {
   email?: string;
 };
 
-type TeamSummary = {
+export type TeamSummary = {
   _id: string;
   name: string;
   ownerId: string;
