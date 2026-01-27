@@ -19,6 +19,9 @@ export default function SiteHeader() {
           </div>
         </Link>
         <div className="flex items-center gap-3 text-sm">
+          <Link className="paper-button--ghost" href="/tools">
+            Tools
+          </Link>
           <Link className="paper-button--ghost" href="/usage-capacity">
             Usage & Capacity
           </Link>

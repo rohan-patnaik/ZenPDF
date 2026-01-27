@@ -67,6 +67,7 @@ describe("job system", () => {
       await t.mutation(createJob, {
         tool: "merge",
         inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5000 }],
+        anonId: "anon-test",
       });
     } catch (error: unknown) {
       const formatted = error as { data?: { code?: string } };

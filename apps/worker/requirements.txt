@@ -1,0 +1,6 @@
+img2pdf==0.5.1
+Pillow==10.4.0
+pymupdf==1.24.9
+pypdf==4.2.0
+pytest==8.3.3
+requests==2.32.3

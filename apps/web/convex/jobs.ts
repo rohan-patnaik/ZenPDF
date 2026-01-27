@@ -1,8 +1,8 @@
 import type { GenericDataModel, GenericMutationCtx } from "convex/server";
 import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
-import { v } from "convex/values";
+import { v, type Id } from "convex/values";
 
-import { resolveOrCreateUser } from "./lib/auth";
+import { resolveOrCreateUser, resolveUser } from "./lib/auth";
 import { resolveBudgetState } from "./lib/budget";
 import { throwFriendlyError } from "./lib/errors";
 import { assertTransition } from "./lib/job-state";
@@ -38,7 +38,11 @@ type MutationCtx = GenericMutationCtx<GenericDataModel>;
 
 const countJobs = async (
   ctx: MutationCtx,
-  filter: { userId?: string; status: "queued" | "running" },
+  filter: {
+    userId?: Id<"users">;
+    anonId?: string;
+    status: "queued" | "running";
+  },
   limit: number,
 ) => {
   if (filter.userId) {
@@ -46,6 +50,16 @@ const countJobs = async (
       .query("jobs")
       .withIndex("by_user_status", (q) =>
         q.eq("userId", filter.userId).eq("status", filter.status),
+      )
+      .take(limit + 1);
+    return results.length;
+  }
+
+  if (filter.anonId) {
+    const results = await ctx.db
+      .query("jobs")
+      .withIndex("by_anon_status", (q) =>
+        q.eq("anonId", filter.anonId).eq("status", filter.status),
       )
       .take(limit + 1);
     return results.length;
@@ -63,10 +77,21 @@ export const createJob = mutation({
     tool: v.string(),
     inputs: v.array(jobInput),
     config: v.optional(v.any()),
+    anonId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
     const { userId, tier } = await resolveOrCreateUser(ctx);
+    const anonId = args.anonId?.trim() || undefined;
+    const storedAnonId = userId ? undefined : anonId;
+    if (!userId && !storedAnonId) {
+      throwFriendlyError("USER_SESSION_REQUIRED");
+    }
+    const resolvedAnonId = storedAnonId;
+    const safeConfig =
+      args.config && typeof args.config === "object" && !Array.isArray(args.config)
+        ? args.config
+        : undefined;
     const planLimits = await resolvePlanLimits(ctx, tier);
     const globalLimits = await resolveGlobalLimits(ctx);
     const budget = await resolveBudgetState(ctx, now);
@@ -79,12 +104,26 @@ export const createJob = mutation({
       throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
     }
 
-    const { counter: usageCounter } = await resolveUsageCounter(ctx, userId, now);
+    const { counter: usageCounter } = await resolveUsageCounter(
+      ctx,
+      userId,
+      resolvedAnonId,
+      now,
+    );
     const { counter: globalUsage } = await resolveGlobalUsageCounter(ctx, now);
 
+    const identityFilter = userId ? { userId } : { anonId: resolvedAnonId };
     const activeUserJobs =
-      (await countJobs(ctx, { userId, status: "queued" }, planLimits.maxConcurrentJobs)) +
-      (await countJobs(ctx, { userId, status: "running" }, planLimits.maxConcurrentJobs));
+      (await countJobs(
+        ctx,
+        { ...identityFilter, status: "queued" },
+        planLimits.maxConcurrentJobs,
+      )) +
+      (await countJobs(
+        ctx,
+        { ...identityFilter, status: "running" },
+        planLimits.maxConcurrentJobs,
+      ));
     const activeGlobalJobs =
       (await countJobs(ctx, { status: "queued" }, globalLimits.maxConcurrentJobs)) +
       (await countJobs(ctx, { status: "running" }, globalLimits.maxConcurrentJobs));
@@ -118,12 +157,14 @@ export const createJob = mutation({
 
     const jobId = await ctx.db.insert("jobs", {
       userId,
+      anonId: resolvedAnonId,
       tier,
       tool: args.tool,
       status: "queued",
       progress: 0,
       errorCode: undefined,
       errorMessage: undefined,
+      config: safeConfig,
       claimedBy: undefined,
       claimExpiresAt: undefined,
       attempts: 0,
@@ -137,10 +178,10 @@ export const createJob = mutation({
       updatedAt: now,
     });
 
-    await incrementUsage(ctx, userId, tier, now, { jobs: 1 });
+    await incrementUsage(ctx, userId, resolvedAnonId, tier, now, { jobs: 1 });
     await incrementGlobalUsage(ctx, now, { jobs: 1 });
 
-    return { jobId };
+    return { jobId, anonId: resolvedAnonId };
   },
 });
 
@@ -158,21 +199,21 @@ export const claimNextJob = mutation({
       .order("asc")
       .first();
 
-    const stale =
-      queued ??
-      (await ctx.db
-        .query("jobs")
-        .withIndex("by_status_lock", (q) => q.eq("status", "running"))
-        .filter((q) => q.lt(q.field("claimExpiresAt"), now))
-        .order("asc")
-        .first());
+    const staleRunning = await ctx.db
+      .query("jobs")
+      .withIndex("by_status_lock", (q) => q.eq("status", "running"))
+      .filter((q) => q.lt(q.field("claimExpiresAt"), now))
+      .order("asc")
+      .first();
 
-    if (!stale) {
+    const jobToClaim = queued ?? staleRunning;
+
+    if (!jobToClaim) {
       return null;
     }
 
-    if (stale.attempts >= stale.maxAttempts) {
-      await ctx.db.patch(stale._id, {
+    if (jobToClaim.attempts >= jobToClaim.maxAttempts) {
+      await ctx.db.patch(jobToClaim._id, {
         status: "failed",
         errorCode: "SERVICE_CAPACITY_TEMPORARY",
         errorMessage: "Job exceeded retry attempts.",
@@ -182,19 +223,19 @@ export const claimNextJob = mutation({
       return null;
     }
 
-    assertTransition(stale.status, "running");
+    assertTransition(jobToClaim.status, "running");
 
-    await ctx.db.patch(stale._id, {
+    await ctx.db.patch(jobToClaim._id, {
       status: "running",
       claimedBy: args.workerId,
       claimExpiresAt: now + globalLimits.leaseDurationMs,
-      attempts: stale.attempts + 1,
-      startedAt: stale.startedAt ?? now,
+      attempts: jobToClaim.attempts + 1,
+      startedAt: jobToClaim.startedAt ?? now,
       lastHeartbeatAt: now,
       updatedAt: now,
     });
 
-    return await ctx.db.get(stale._id);
+    return await ctx.db.get(jobToClaim._id);
   },
 });
 
@@ -278,7 +319,7 @@ export const completeJob = mutation({
     const minutesUsed = args.minutesUsed ?? 0;
     const bytesProcessed = args.bytesProcessed ?? 0;
 
-    await incrementUsage(ctx, job.userId, job.tier, now, {
+    await incrementUsage(ctx, job.userId, job.anonId, job.tier, now, {
       minutes: minutesUsed,
       bytes: bytesProcessed,
     });
@@ -327,4 +368,28 @@ export const failJob = mutation({
 export const getJob = query({
   args: { jobId: v.id("jobs") },
   handler: async (ctx, args) => ctx.db.get(args.jobId),
+});
+
+export const listJobs = query({
+  args: { anonId: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const { userId } = await resolveUser(ctx);
+    if (userId) {
+      return await ctx.db
+        .query("jobs")
+        .withIndex("by_user", (q) => q.eq("userId", userId))
+        .order("desc")
+        .take(20);
+    }
+
+    if (args.anonId) {
+      return await ctx.db
+        .query("jobs")
+        .withIndex("by_anon", (q) => q.eq("anonId", args.anonId))
+        .order("desc")
+        .take(20);
+    }
+
+    return [];
+  },
 });

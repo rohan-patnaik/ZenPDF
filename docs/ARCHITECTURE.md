@@ -8,6 +8,7 @@
 
 ## Repo Layout
 - `apps/web`: Next.js app (Vercel root directory).
+- `apps/worker`: Cloud Run worker for PDF processing.
 - `docs`: product and architecture docs.
 
 ## Local Self-Hosted

@@ -143,9 +143,9 @@ export default function Home() {
               app stays light.
             </p>
             <div className="flex flex-wrap gap-3">
-              <button className="paper-button" type="button">
+              <Link className="paper-button" href="/tools">
                 Start with a file
-              </button>
+              </Link>
               <Link className="paper-button--ghost" href="/usage-capacity">
                 See usage & capacity
               </Link>
@@ -203,8 +203,8 @@ export default function Home() {
                 <span className="ink-label">Tool shelf</span>
                 <h2 className="text-3xl">Everyday PDF work, layered and calm.</h2>
               </div>
-              <Link className="paper-button--ghost" href="/usage-capacity">
-                Tool availability
+              <Link className="paper-button--ghost" href="/tools">
+                Open tool desk
               </Link>
             </div>
             <div className="ink-divider" />

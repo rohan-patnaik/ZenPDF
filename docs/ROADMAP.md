@@ -17,9 +17,9 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 1.3 Per-user and global caps with friendly errors
 
 ## Epic 2 — Standard Tools v1
-- [ ] 2.1 Merge, split, compress
-- [ ] 2.2 Rotate, remove, reorder
-- [ ] 2.3 Image <-> PDF, PDF <-> JPG
+- [x] 2.1 Merge, split, compress
+- [x] 2.2 Rotate, remove, reorder
+- [x] 2.3 Image <-> PDF, PDF <-> JPG
 
 ## Epic 3 — Conversions v1
 - [ ] 3.1 Web to PDF

@@ -14,13 +14,25 @@ type Ctx =
 export const resolveUsageCounter = async (
   ctx: Ctx,
   userId: Id<"users"> | undefined,
+  anonId: string | undefined,
   timestamp: number,
 ) => {
   const periodStart = startOfDayUtc(timestamp);
-  const counter = await ctx.db
-    .query("usageCounters")
-    .withIndex("by_user", (q) => q.eq("userId", userId).eq("periodStart", periodStart))
-    .unique();
+  const counter = userId
+    ? await ctx.db
+        .query("usageCounters")
+        .withIndex("by_user", (q) =>
+          q.eq("userId", userId).eq("periodStart", periodStart),
+        )
+        .unique()
+    : anonId
+      ? await ctx.db
+          .query("usageCounters")
+          .withIndex("by_anon", (q) =>
+            q.eq("anonId", anonId).eq("periodStart", periodStart),
+          )
+          .unique()
+      : null;
 
   return { counter, periodStart };
 };
@@ -28,6 +40,7 @@ export const resolveUsageCounter = async (
 export const incrementUsage = async (
   ctx: GenericMutationCtx<GenericDataModel>,
   userId: Id<"users"> | undefined,
+  anonId: string | undefined,
   tier: string,
   timestamp: number,
   updates: { jobs?: number; minutes?: number; bytes?: number },
@@ -35,6 +48,7 @@ export const incrementUsage = async (
   const { counter, periodStart } = await resolveUsageCounter(
     ctx,
     userId,
+    anonId,
     timestamp,
   );
 
@@ -51,6 +65,7 @@ export const incrementUsage = async (
   } else {
     await ctx.db.insert("usageCounters", {
       userId,
+      anonId,
       tier,
       periodStart,
       jobsUsed: jobsDelta,
