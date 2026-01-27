@@ -1,4 +1,4 @@
-"""Test configuration for the ZenPDF worker."""
+"""Pytest configuration for worker tests."""
 
 import sys
 from pathlib import Path

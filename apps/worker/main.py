@@ -1,4 +1,4 @@
-"""Entrypoint for the ZenPDF worker container."""
+"""Console entrypoint for the ZenPDF worker."""
 
 from zenpdf_worker.worker import main
 

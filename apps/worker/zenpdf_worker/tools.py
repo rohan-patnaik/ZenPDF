@@ -1,3 +1,5 @@
+"""Conversion utilities for the worker process."""
+
 from __future__ import annotations
 
 import ipaddress
@@ -404,20 +406,6 @@ def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
         row += 1
     workbook.save(str(output_path))
     return output_path
-
-
-def _is_public_host(hostname: str) -> bool:
-    """Return False if the hostname resolves to a private address."""
-    try:
-        infos = socket.getaddrinfo(hostname, None)
-    except socket.gaierror:
-        return False
-
-    for info in infos:
-        address = str(info[4][0])
-        if not _is_public_ip(address):
-            return False
-    return True
 
 
 def _resolve_public_ip(hostname: str) -> str:

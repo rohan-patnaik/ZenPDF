@@ -1,7 +1,9 @@
+"""Tests for worker conversion utilities."""
+
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from docx import Document
@@ -178,62 +180,77 @@ def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
 class _DummySocket:
     """Mock socket for response peer IP retrieval."""
     def __init__(self, ip: str) -> None:
+        """Initialize the mock socket with an IP."""
         self._ip = ip
 
     def getpeername(self):
+        """Return the mock socket peer tuple."""
         return (self._ip, 443)
 
 
 class _DummyConnection:
     """Mock connection wrapper."""
     def __init__(self, ip: str) -> None:
+        """Initialize the dummy connection with the socket."""
         self.sock = _DummySocket(ip)
 
 
 class _DummyRaw:
     """Mock raw response wrapper."""
     def __init__(self, ip: str) -> None:
+        """Initialize the raw wrapper with a connection."""
         self._connection = _DummyConnection(ip)
 
 
 class _DummyResponse:
     """Mock response used for web-to-pdf tests."""
     def __init__(self, body: bytes, status_code: int = 200, ip: str = "93.184.216.34") -> None:
+        """Initialize the dummy response payload."""
         self._body = body
         self.status_code = status_code
         self.encoding = "utf-8"
         self.raw = _DummyRaw(ip)
 
-    def iter_content(self, chunk_size: int = 1024):
+    def iter_content(self, _chunk_size: int = 1024, **_kwargs):
+        """Yield the body payload as a single chunk."""
         yield self._body
 
     def raise_for_status(self) -> None:
+        """Raise when the status indicates an error."""
         if self.status_code >= 400:
             raise RuntimeError("Bad response")
 
     def __enter__(self):
+        """Enter the response context manager."""
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        """Exit the response context manager."""
         return False
 
 
 class _DummySession:
     """Mock requests session wrapper."""
     def __init__(self, response: _DummyResponse) -> None:
+        """Initialize the dummy session."""
         self._response = response
 
     def __enter__(self):
+        """Enter the session context manager."""
         return self
 
     def __exit__(self, exc_type, exc, tb):
+        """Exit the session context manager."""
         return False
 
     def close(self):
+        """Close the dummy session."""
         return None
 
     def mount(self, *_args, **_kwargs):
+        """Ignore adapter mounting for the mock session."""
         return None
 
     def get(self, *_args, **_kwargs):
+        """Return the prepared response."""
         return self._response

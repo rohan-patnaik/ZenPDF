@@ -1,3 +1,5 @@
+"""Convex HTTP client helpers for the worker."""
+
 import json
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -13,6 +15,7 @@ class ConvexError(Exception):
     data: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
+        """Initialize the base exception with the message."""
         super().__init__(self.message)
 
 

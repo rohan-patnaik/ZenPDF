@@ -1,3 +1,5 @@
+"""Worker runtime for executing PDF tools."""
+
 import os
 import threading
 import time

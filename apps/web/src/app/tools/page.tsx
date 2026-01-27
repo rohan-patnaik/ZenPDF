@@ -189,6 +189,7 @@ type JobRecord = {
 export default function ToolsPage() {
   const [activeTool, setActiveTool] = useState<ToolId>("merge");
   const [files, setFiles] = useState<File[]>([]);
+  const [fileInputKey, setFileInputKey] = useState(0);
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
@@ -313,8 +314,10 @@ export default function ToolsPage() {
       setLastJobId(response.jobId as string);
       setStatus("Job queued. Results will appear below.");
       setFiles([]);
+      setFileInputKey((value) => value + 1);
       setConfigValues({});
-    } catch {
+    } catch (error) {
+      console.error("Job creation failed:", error);
       setStatus("Unable to create job. Check limits or try again.");
     } finally {
       setIsSubmitting(false);
@@ -390,6 +393,7 @@ export default function ToolsPage() {
                     Files
                   </label>
                   <input
+                    key={fileInputKey}
                     type="file"
                     className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
                     accept={tool?.accept}
