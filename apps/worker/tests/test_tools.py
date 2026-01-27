@@ -35,7 +35,13 @@ from zenpdf_worker.tools import (
 
 
 def _make_pdf(path: Path, pages: int) -> None:
-    """Create a blank PDF with the given number of pages."""
+    """
+    Create a blank PDF at the given path containing the specified number of pages.
+    
+    Parameters:
+        path (Path): Destination file path for the generated PDF.
+        pages (int): Number of blank pages to include (must be greater than or equal to 0).
+    """
     writer = PdfWriter()
     for _ in range(pages):
         writer.add_blank_page(width=300, height=300)

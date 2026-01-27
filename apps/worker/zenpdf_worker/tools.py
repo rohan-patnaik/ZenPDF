@@ -46,7 +46,17 @@ def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
 
 
 def _parse_page_list(value: str, total_pages: int) -> List[int]:
-    """Expand a range string into an ordered page list."""
+    """
+    Expand a comma-separated page range string into an ordered list of page numbers.
+    
+    Parameters:
+        value (str): A comma-separated string of page numbers and ranges (e.g. "1,3-5,7").
+        total_pages (int): Total number of pages in the document; results are clamped to 1..total_pages.
+    
+    Returns:
+        list[int]: Ordered list of page numbers produced by expanding the ranges in `value`.
+                   Each page is within 1 and `total_pages` inclusive; overlapping ranges may produce duplicates.
+    """
     pages: List[int] = []
     for start, end in _parse_ranges(value, total_pages):
         pages.extend(range(start, end + 1))
@@ -54,7 +64,20 @@ def _parse_page_list(value: str, total_pages: int) -> List[int]:
 
 
 def _parse_margins(value: str) -> Tuple[float, float, float, float]:
-    """Parse margin values as top, right, bottom, left points."""
+    """
+    Parse a comma-separated margin string into top, right, bottom, and left values in points.
+    
+    The input may be a single numeric value (applied to all four margins) or four comma-separated numeric values in the order top, right, bottom, left. Whitespace around values is ignored.
+    
+    Parameters:
+        value (str): Margin specification as "N" or "T,R,B,L".
+    
+    Returns:
+        tuple[float, float, float, float]: (top, right, bottom, left) in points.
+    
+    Raises:
+        ValueError: If any component is not numeric or if the input does not contain 1 or 4 values.
+    """
     parts = [part.strip() for part in value.split(",") if part.strip()]
     try:
         numbers = [float(part) for part in parts]
@@ -70,7 +93,13 @@ def _parse_margins(value: str) -> Tuple[float, float, float, float]:
 
 
 def _rotate_page(page, angle: int) -> None:
-    """Rotate a PDF page using whichever API is available."""
+    """
+    Rotate the given PDF page object by the specified angle in degrees, modifying the page in place.
+    
+    Parameters:
+        page: PDF page object that provides a rotation method (one of `rotate_clockwise`, `rotateClockwise`, or `rotate`).
+        angle (int): Rotation angle in degrees clockwise.
+    """
     if hasattr(page, "rotate_clockwise"):
         page.rotate_clockwise(angle)
     elif hasattr(page, "rotateClockwise"):
@@ -80,7 +109,12 @@ def _rotate_page(page, angle: int) -> None:
 
 
 def _points_to_mm(points: float) -> float:
-    """Convert PDF points to millimeters."""
+    """
+    Convert a length in PDF points to millimeters.
+    
+    Returns:
+        millimeters (float): The length converted from points to millimeters.
+    """
     return points * 25.4 / 72
 
 
@@ -89,7 +123,17 @@ def _build_overlay_page(
     height_points: float,
     draw_fn: Callable[[FPDF, float, float], None],
 ):
-    """Create a single-page PDF overlay for merging text."""
+    """
+    Create a single-page PDF overlay sized to the given page dimensions and rendered by the provided draw callback.
+    
+    Parameters:
+        width_points (float): Page width in PDF points.
+        height_points (float): Page height in PDF points.
+        draw_fn (Callable[[FPDF, float, float], None]): Callback that draws onto an FPDF instance; called with the FPDF object and the page width and height in millimeters.
+    
+    Returns:
+        page: A single page object from a PdfReader representing the generated overlay.
+    """
     width_mm = _points_to_mm(width_points)
     height_mm = _points_to_mm(height_points)
     orientation = "L" if width_mm > height_mm else "P"
@@ -108,7 +152,16 @@ def _build_overlay_page(
 
 
 def merge_pdfs(inputs: Sequence[Path], output_path: Path) -> Path:
-    """Merge multiple PDFs into a single file."""
+    """
+    Merge multiple PDF files into a single PDF.
+    
+    Parameters:
+        inputs (Sequence[Path]): Paths to source PDF files, merged in the given order.
+        output_path (Path): Destination path for the merged PDF.
+    
+    Returns:
+        Path: The path to the written merged PDF (same as `output_path`).
+    """
     writer = PdfWriter()
     for path in inputs:
         reader = PdfReader(str(path))
@@ -205,7 +258,17 @@ def reorder_pages(
     output_path: Path,
     order: str,
 ) -> Path:
-    """Reorder pages based on the provided order list."""
+    """
+    Reorder pages of a PDF file according to a page-order specification.
+    
+    The `order` string specifies individual pages and ranges (for example, "1,3-5"); page numbers are 1-indexed. If the parsed order is empty, the original page order is preserved. The reordered PDF is written to `output_path`.
+    
+    Parameters:
+        order (str): A comma-separated page list and ranges defining the desired page order.
+    
+    Returns:
+        Path: The path to the written output PDF.
+    """
     reader = PdfReader(str(input_path))
     total_pages = len(reader.pages)
     order_list = _parse_page_list(order, total_pages) or list(
@@ -225,7 +288,19 @@ def watermark_pdf(
     text: str,
     pages: str | None,
 ) -> Path:
-    """Apply a centered text watermark to selected pages."""
+    """
+    Apply a centered text watermark to selected pages of a PDF.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF.
+        output_path (Path): Path where the watermarked PDF will be written.
+        text (str): Watermark text to place centered on each target page.
+        pages (str | None): Page selection expressed as a range string (e.g. "1-3,5"); pages are 1-based.
+            If None, the watermark is applied to every page.
+    
+    Returns:
+        Path: The same as `output_path` after the watermarked PDF has been written.
+    """
     reader = PdfReader(str(input_path))
     writer = PdfWriter()
     total_pages = len(reader.pages)
@@ -236,6 +311,16 @@ def watermark_pdf(
             height = float(page.mediabox.height)
 
             def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
+                """
+                Render centered overlay text onto the provided PDF page area.
+                
+                Calculates a font size from the smaller of the page width and height (clamped to the range 18–48), configures a unicode-capable font if required, sets a medium-gray text color, and writes the overlay text centered horizontally at the vertical midpoint of the page.
+                
+                Parameters:
+                    pdf (FPDF): The FPDF instance representing the overlay page to draw on.
+                    width_mm (float): Page width in millimeters.
+                    height_mm (float): Page height in millimeters.
+                """
                 font_size = min(max(int(min(width_mm, height_mm) * 0.12), 18), 48)
                 _set_overlay_font(pdf, text, font_size)
                 pdf.set_text_color(160, 160, 160)
@@ -256,7 +341,18 @@ def page_numbers_pdf(
     start: int,
     pages: str | None,
 ) -> Path:
-    """Add page numbers to the footer of each page."""
+    """
+    Add sequential page numbers as footers to selected pages of a PDF.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF file.
+        output_path (Path): Path where the resulting PDF will be written.
+        start (int): Starting page number to apply to the first page (incremented per page).
+        pages (str | None): Optional page selection string (e.g., "1-3,5") determining which pages receive numbers; if None, all pages are numbered.
+    
+    Returns:
+        Path: The path to the written PDF file (same as output_path).
+    """
     reader = PdfReader(str(input_path))
     writer = PdfWriter()
     total_pages = len(reader.pages)
@@ -268,6 +364,19 @@ def page_numbers_pdf(
             number = start + index - 1
 
             def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
+                """
+                Draws a right-aligned numeric footer near the bottom edge of the overlay page.
+                
+                Positions and renders the page number (captured from the surrounding scope) as a footer using a font size chosen to fit the page: the size is proportional to the smaller page dimension and clamped to the range 8–16 points. The rendered text is right-aligned with a 10 mm right/bottom margin and uses a muted gray color.
+                
+                Parameters:
+                    pdf (FPDF): The FPDF instance used to draw on the overlay page.
+                    width_mm (float): Page width in millimeters.
+                    height_mm (float): Page height in millimeters.
+                
+                Returns:
+                    None
+                """
                 font_size = min(max(int(min(width_mm, height_mm) * 0.04), 8), 16)
                 _set_overlay_font(pdf, str(number), font_size)
                 pdf.set_text_color(60, 60, 60)
@@ -289,7 +398,21 @@ def crop_pdf(
     margins: str,
     pages: str | None,
 ) -> Path:
-    """Crop PDF pages by the given margins in points."""
+    """
+    Crop selected pages of a PDF by the specified margins (measured in PDF points).
+    
+    Parameters:
+        input_path (Path): Path to the source PDF.
+        output_path (Path): Path where the cropped PDF will be written.
+        margins (str): Margin specification in points; either a single numeric value applied to all sides or four comma-separated values in the order top,right,bottom,left.
+        pages (str | None): Optional page selection string (e.g., "1-3,5") specifying which pages to crop; when None, all pages are processed.
+    
+    Returns:
+        Path: The path to the written cropped PDF.
+    
+    Raises:
+        ValueError: If the provided margins would remove an entire page or if margin parsing fails.
+    """
     reader = PdfReader(str(input_path))
     writer = PdfWriter()
     total_pages = len(reader.pages)
@@ -316,7 +439,22 @@ def crop_pdf(
 
 
 def unlock_pdf(input_path: Path, output_path: Path, password: str) -> Path:
-    """Remove password protection from a PDF."""
+    """
+    Remove password protection from the PDF at input_path and write the unlocked PDF to output_path.
+    
+    Preserves document pages and metadata. Raises ValueError if the PDF is encrypted and the provided password fails to decrypt it.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF (may be encrypted).
+        output_path (Path): Path where the unlocked PDF will be written.
+        password (str): Password to use for decryption.
+    
+    Returns:
+        output_path (Path): The path to the written unlocked PDF.
+    
+    Raises:
+        ValueError: If the PDF is encrypted and the provided password does not unlock it.
+    """
     reader = PdfReader(str(input_path))
     if reader.is_encrypted:
         result = reader.decrypt(password)
@@ -332,7 +470,22 @@ def unlock_pdf(input_path: Path, output_path: Path, password: str) -> Path:
 
 
 def protect_pdf(input_path: Path, output_path: Path, password: str) -> Path:
-    """Encrypt a PDF with a new password."""
+    """
+    Encrypts an unencrypted PDF file with the specified password.
+    
+    Sets the same value as both the user and owner password and enables 128-bit encryption; preserves the input PDF's metadata.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF file (must be unencrypted).
+        output_path (Path): Path where the encrypted PDF will be written.
+        password (str): Password to apply as both the user and owner password.
+    
+    Returns:
+        Path: The path to the written encrypted PDF (the provided output_path).
+    
+    Raises:
+        ValueError: If the input PDF is already encrypted.
+    """
     reader = PdfReader(str(input_path))
     if reader.is_encrypted:
         raise ValueError("PDF is already encrypted")
@@ -352,7 +505,20 @@ def redact_pdf(
     text: str,
     pages: str | None,
 ) -> Path:
-    """Redact matching text from a PDF."""
+    """
+    Redact all occurrences of a given text in a PDF, optionally restricted to specific pages.
+    
+    Searches each targeted page for exact occurrences of `text`, adds black redact annotations over matches, applies the redactions, and writes the modified PDF to `output_path`.
+    
+    Parameters:
+        input_path (Path): Path to the source PDF.
+        output_path (Path): Path where the redacted PDF will be written.
+        text (str): Text to search for and redact; matches are searched as exact occurrences.
+        pages (str | None): Optional page selection string (e.g., "1-3,5") restricting which pages to process; if `None`, all pages are searched.
+    
+    Returns:
+        Path: The `output_path` of the saved redacted PDF.
+    """
     document = fitz.open(str(input_path))
     total_pages = document.page_count
     target_pages = set(_parse_page_list(pages, total_pages)) if pages else None
@@ -373,7 +539,19 @@ def redact_pdf(
 
 
 def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path:
-    """Generate a text report comparing two PDFs."""
+    """
+    Produce a plain-text comparison report summarizing page counts and per-page text differences between two PDFs.
+    
+    The report includes the input filenames, their page counts, and entries for pages that are missing from one file or whose extracted text differs; if no differences are found the report records that fact. The report is written to output_path using UTF-8.
+    
+    Parameters:
+        first_path (Path): Path to the first PDF file (File A).
+        second_path (Path): Path to the second PDF file (File B).
+        output_path (Path): Destination path for the generated text report.
+    
+    Returns:
+        Path: The path to the written report (output_path).
+    """
     reader_a = PdfReader(str(first_path))
     reader_b = PdfReader(str(second_path))
     pages_a = len(reader_a.pages)
@@ -408,7 +586,19 @@ def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path
 
 
 def image_to_pdf(inputs: Sequence[Path], output_path: Path) -> Path:
-    """Convert images to a single PDF."""
+    """
+    Combine one or more image files into a single PDF file.
+    
+    Parameters:
+        inputs (Sequence[Path]): Paths to image files to include, in order.
+        output_path (Path): Destination path for the generated PDF.
+    
+    Returns:
+        Path: The path to the written PDF (same object as `output_path`).
+    
+    Raises:
+        ValueError: If image rendering to PDF fails.
+    """
     pdf_bytes = img2pdf.convert([str(path) for path in inputs])
     if pdf_bytes is None:
         raise ValueError("Failed to render images to PDF")
@@ -455,7 +645,14 @@ UNICODE_FONT_PATHS = (
 
 
 def _resolve_unicode_font_path() -> Path | None:
-    """Return a path to a Unicode-compatible font if available."""
+    """
+    Locate a Unicode-compatible TrueType font file if one is available.
+    
+    Checks the ZENPDF_TTF_PATH environment variable first, then falls back to known candidate paths.
+    
+    Returns:
+        Path | None: Path to the font file if found, `None` otherwise.
+    """
     env_path = os.getenv("ZENPDF_TTF_PATH")
     if env_path:
         candidate = Path(env_path)
@@ -468,7 +665,19 @@ def _resolve_unicode_font_path() -> Path | None:
 
 
 def _set_overlay_font(pdf: FPDF, text: str, size: int) -> None:
-    """Select an available font for overlay text."""
+    """
+    Selects and configures an appropriate font on the given FPDF instance for rendering overlay text.
+    
+    Attempts to load a Unicode-capable DejaVu Sans from the environment or known paths; if unavailable, verifies whether the provided text can be encoded in Latin-1 and falls back to Helvetica. If the text requires Unicode and no Unicode font is available, raises RuntimeError.
+    
+    Parameters:
+        pdf (FPDF): The FPDF instance to configure.
+        text (str): Sample text to test whether a Unicode font is required.
+        size (int): Font size to set on the PDF.
+    
+    Raises:
+        RuntimeError: If the text contains characters that require a Unicode font but no Unicode font path is available.
+    """
     font_path = _resolve_unicode_font_path()
     if font_path:
         pdf.add_font("DejaVuSans", fname=str(font_path), uni=True)
