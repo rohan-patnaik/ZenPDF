@@ -21,6 +21,7 @@ export default defineSchema({
     email: v.optional(v.string()),
     name: v.optional(v.string()),
     tier,
+    adsFree: v.optional(v.boolean()),
     createdAt: v.number(),
     updatedAt: v.number(),
   }).index("by_clerk_id", ["clerkUserId"]),

@@ -17,7 +17,7 @@
 - Desktop installers are out of scope.
 
 ## Data Model (Convex)
-- Users: tier, auth metadata, org membership.
+- Users: tier, ads-free flag, auth metadata, org membership.
 - Jobs: tool type, status, progress, inputs, outputs, error codes.
 - Artifacts: file metadata, storageId, TTL.
 - Usage counters: per-user, per-anon, and global limits.
@@ -43,6 +43,7 @@
 - Enforce per-user and global caps server-side.
 - Heavy tools disabled first during budget pressure.
 - Friendly errors returned for capacity or budget limits.
+- Premium tier access is allowlisted via ZENPDF_PREMIUM_EMAILS / ZENPDF_PREMIUM_CLERK_IDS.
 
 ## Error Mapping
 Stable error codes are mapped to friendly UI messages:

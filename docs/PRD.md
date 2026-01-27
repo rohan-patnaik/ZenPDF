@@ -35,6 +35,8 @@ Premium (feature-flagged, no billing yet):
 - Higher limits and concurrency
 - Ads-free flag (hide supporter banner)
 
+Premium access is currently enabled through environment allowlists (no billing yet).
+
 ## Plans & Limits
 - Tiers: ANON, FREE_ACCOUNT, PREMIUM.
 - Limits are config-driven via Convex tables and env overrides.
