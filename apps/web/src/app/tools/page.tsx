@@ -7,6 +7,7 @@ import { useMutation, useQuery } from "convex/react";
 import SiteHeader from "@/components/SiteHeader";
 import { ANON_STORAGE_KEY, getOrCreateAnonId } from "@/lib/anon-id";
 import { api } from "@/lib/convex";
+import { formatBytes } from "@/lib/formatters";
 import { uploadFile } from "@/lib/uploads";
 
 type ToolId =
@@ -64,21 +65,6 @@ const OFFICE_ACCEPT =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx";
 
 const DEV_BYPASS_STORAGE_KEY = "zenpdf-dev-bypass";
-
-const formatBytes = (value: number) => {
-  if (value < 1024) {
-    return `${value} B`;
-  }
-  const units = ["KB", "MB", "GB"] as const;
-  let size = value / 1024;
-  let unitIndex = 0;
-  while (size >= 1024 && unitIndex < units.length - 1) {
-    size /= 1024;
-    unitIndex += 1;
-  }
-  const rounded = size >= 10 ? size.toFixed(0) : size.toFixed(1);
-  return `${rounded} ${units[unitIndex]}`;
-};
 
 const TOOLS: ToolDefinition[] = [
   {
@@ -410,6 +396,87 @@ type JobRecord = {
   errorCode?: string;
   errorMessage?: string;
   createdAt: number;
+};
+
+const JobCard = ({
+  job,
+  onDownload,
+}: {
+  job: JobRecord;
+  onDownload: (jobId: string, storageId: string, filename: string) => void;
+}) => {
+  const inputSize =
+    job.inputs && job.inputs.length === 1 ? job.inputs[0]?.sizeBytes : undefined;
+
+  return (
+    <div className="paper-card p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <div className="text-lg font-display text-ink-900">{job.tool}</div>
+          <div className="text-xs text-ink-500">
+            Status: {job.status}
+            {job.progress !== undefined && ` (${job.progress}%)`}
+          </div>
+          {job.errorCode && (
+            <div className="text-xs text-ink-500">
+              {job.errorCode} {job.errorMessage ? `— ${job.errorMessage}` : ""}
+            </div>
+          )}
+          {(job.status === "queued" || job.status === "running") && (
+            <div className="mt-2 flex items-center gap-2 text-xs text-ink-500">
+              <span className="h-2 w-2 animate-pulse rounded-full bg-forest-500" />
+              <span>{job.status === "queued" ? "Queued" : "Processing"}</span>
+            </div>
+          )}
+          {(job.status === "queued" || job.status === "running") && (
+            <div className="mt-2 h-1 w-full rounded-full bg-ink-900/10">
+              <div
+                className="h-full rounded-full bg-forest-500"
+                style={{
+                  width: `${Math.min(
+                    Math.max(
+                      job.progress ?? (job.status === "queued" ? 5 : 35),
+                      0,
+                    ),
+                    100,
+                  )}%`,
+                }}
+              />
+            </div>
+          )}
+        </div>
+        <div className="flex flex-col gap-2">
+          {(job.outputs ?? []).map((output) => (
+            <div
+              key={output.storageId}
+              className="flex items-center justify-between gap-3"
+            >
+              <div className="min-w-0">
+                <div className="truncate text-xs text-ink-700">
+                  {output.filename}
+                </div>
+                {output.sizeBytes !== undefined && (
+                  <div className="text-[0.65rem] text-ink-500">
+                    {formatBytes(output.sizeBytes)}
+                    {inputSize !== undefined && ` · from ${formatBytes(inputSize)}`}
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                className="paper-button--ghost text-[0.6rem] uppercase tracking-[0.2em]"
+                onClick={() =>
+                  onDownload(job._id, output.storageId, output.filename)
+                }
+              >
+                Download
+              </button>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
 };
 
 /**
@@ -853,86 +920,7 @@ export default function ToolsPage() {
               </div>
             )}
             {(jobs ?? []).map((job) => (
-              <div key={job._id} className="paper-card p-5">
-                {(() => {
-                  const inputSize =
-                    job.inputs && job.inputs.length === 1
-                      ? job.inputs[0]?.sizeBytes
-                      : undefined;
-                  return (
-                <div className="flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <div className="text-lg font-display text-ink-900">
-                      {job.tool}
-                    </div>
-                    <div className="text-xs text-ink-500">
-                      Status: {job.status}
-                      {job.progress !== undefined && ` (${job.progress}%)`}
-                    </div>
-                    {job.errorCode && (
-                      <div className="text-xs text-ink-500">
-                        {job.errorCode} {job.errorMessage ? `— ${job.errorMessage}` : ""}
-                      </div>
-                    )}
-                    {(job.status === "queued" || job.status === "running") && (
-                      <div className="mt-2 flex items-center gap-2 text-xs text-ink-500">
-                        <span className="h-2 w-2 animate-pulse rounded-full bg-forest-500" />
-                        <span>
-                          {job.status === "queued" ? "Queued" : "Processing"}
-                        </span>
-                      </div>
-                    )}
-                    {(job.status === "queued" || job.status === "running") && (
-                      <div className="mt-2 h-1 w-full rounded-full bg-ink-900/10">
-                        <div
-                          className="h-full rounded-full bg-forest-500"
-                          style={{
-                            width: `${Math.min(
-                              Math.max(
-                                job.progress ?? (job.status === "queued" ? 5 : 35),
-                                0,
-                              ),
-                              100,
-                            )}%`,
-                          }}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className="flex flex-col gap-2">
-                    {(job.outputs ?? []).map((output) => (
-                      <div
-                        key={output.storageId}
-                        className="flex items-center justify-between gap-3"
-                      >
-                        <div className="min-w-0">
-                          <div className="truncate text-xs text-ink-700">
-                            {output.filename}
-                          </div>
-                          {output.sizeBytes !== undefined && (
-                            <div className="text-[0.65rem] text-ink-500">
-                              {formatBytes(output.sizeBytes)}
-                              {inputSize !== undefined &&
-                                ` · from ${formatBytes(inputSize)}`}
-                            </div>
-                          )}
-                        </div>
-                        <button
-                          type="button"
-                          className="paper-button--ghost text-[0.6rem] uppercase tracking-[0.2em]"
-                          onClick={() =>
-                            handleDownload(job._id, output.storageId, output.filename)
-                          }
-                        >
-                          Download
-                        </button>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                  );
-                })()}
-              </div>
+              <JobCard key={job._id} job={job} onDownload={handleDownload} />
             ))}
           </div>
         </section>

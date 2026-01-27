@@ -40,6 +40,7 @@ from .tools import (
 )
 
 TOOL_OUTPUT_SUFFIXES = {
+    "merge": ("merged", None),
     "compress": ("compressed", None),
     "repair": ("repaired", None),
     "rotate": ("rotated", None),
@@ -69,7 +70,7 @@ def _strip_input_prefix(path: Path) -> Path:
     name = path.name
     if "_" in name:
         prefix, remainder = name.split("_", 1)
-        if prefix.isdigit():
+        if prefix.isdigit() and len(prefix) == 2:
             name = remainder
     return Path(name)
 

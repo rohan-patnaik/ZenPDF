@@ -283,6 +283,11 @@ def compress_pdf(input_path: Path, output_path: Path) -> Path:
             raise RuntimeError("Compression timed out") from error
         if result.returncode == 0 and output_path.exists():
             return output_path
+        if result.returncode != 0:
+            print(
+                "Ghostscript compression failed:",
+                (result.stderr or result.stdout or "unknown error"),
+            )
 
     writer = PdfWriter()
     for page in reader.pages:

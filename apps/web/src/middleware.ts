@@ -9,8 +9,7 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
 ]);
 
-const shouldBypassAuth = () =>
-  process.env.NEXT_PUBLIC_ZENPDF_DISABLE_AUTH === "1";
+const shouldBypassAuth = () => process.env.ZENPDF_DISABLE_AUTH === "1";
 
 const clerkHandler = clerkMiddleware((auth, req) => {
   if (!isPublicRoute(req)) {

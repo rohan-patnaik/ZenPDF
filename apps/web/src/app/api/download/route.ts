@@ -38,7 +38,7 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? "http://localhost:3210";
   const convex = new ConvexHttpClient(convexUrl);
-  const disableAuth = process.env.NEXT_PUBLIC_ZENPDF_DISABLE_AUTH === "1";
+  const disableAuth = process.env.ZENPDF_DISABLE_AUTH === "1";
   if (!disableAuth) {
     try {
       const { getToken } = getAuth(request);
@@ -49,7 +49,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         }
       }
     } catch (error) {
-      console.warn("Skipping Clerk auth for download.");
+      console.warn("Skipping Clerk auth for download.", error);
     }
   }
 
