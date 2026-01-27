@@ -5,6 +5,7 @@
 - Tool selection, validation, upload, and job queueing succeed.
 - Job status updates and progress indicators refresh correctly.
 - Output downloads stream with the expected filename and size.
+- Unauthorized or expired download requests are rejected; authorized downloads succeed.
 - Usage & Capacity reflects real usage and limits.
 
 ## Premium + teams

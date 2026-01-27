@@ -30,8 +30,8 @@ docker compose up --build
 ```
 
 ## Access the app
-- Web UI: http://localhost:3000
-- Convex dashboard: http://localhost:3210
+- Web UI: <http://localhost:3000>
+- Convex dashboard: <http://localhost:3210>
 
 ## Notes
 - Premium access is allowlisted with `ZENPDF_PREMIUM_EMAILS` or `ZENPDF_PREMIUM_CLERK_IDS`.

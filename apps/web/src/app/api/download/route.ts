@@ -6,6 +6,9 @@ import { api } from "@/lib/convex";
 
 export const dynamic = "force-dynamic";
 
+/**
+ * Sanitize filenames for safe Content-Disposition headers.
+ */
 const sanitizeFilename = (filename: string) => {
   const cleaned = filename
     .replace(/[\r\n]/g, " ")
@@ -15,6 +18,9 @@ const sanitizeFilename = (filename: string) => {
   return cleaned || "zenpdf-output";
 };
 
+/**
+ * Proxy download requests while enforcing access checks.
+ */
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const jobId = searchParams.get("jobId");
@@ -34,17 +40,29 @@ export async function GET(request: NextRequest) {
     convex.setAuth(token);
   }
 
-  const downloadUrl = await convex.query(api.files.getOutputDownloadUrl, {
-    jobId,
-    storageId,
-    anonId,
-  });
+  let downloadUrl: string | null = null;
+  try {
+    downloadUrl = await convex.query(api.files.getOutputDownloadUrl, {
+      jobId,
+      storageId,
+      anonId,
+    });
+  } catch (error) {
+    console.error("Download URL query failed:", error);
+    return new Response("Unable to stream the download.", { status: 502 });
+  }
 
   if (!downloadUrl) {
     return new Response("Unable to locate the requested file.", { status: 404 });
   }
 
-  const upstream = await fetch(downloadUrl);
+  let upstream: Response;
+  try {
+    upstream = await fetch(downloadUrl);
+  } catch (error) {
+    console.error("Download fetch failed:", error);
+    return new Response("Unable to stream the download.", { status: 502 });
+  }
   if (!upstream.ok || !upstream.body) {
     return new Response("Unable to stream the download.", { status: 502 });
   }
