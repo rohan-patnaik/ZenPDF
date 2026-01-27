@@ -32,8 +32,8 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 4.3 Redact, compare
 
 ## Epic 5 — Tiers Polish
-- [ ] 5.1 ANON/FREE/PREMIUM UX clarity
-- [ ] 5.2 Usage & Capacity page fully implemented
+- [x] 5.1 ANON/FREE/PREMIUM UX clarity
+- [x] 5.2 Usage & Capacity page fully implemented
 
 ## Epic 6 — Premium
 - [ ] 6.1 OCR conversions to Word/Excel

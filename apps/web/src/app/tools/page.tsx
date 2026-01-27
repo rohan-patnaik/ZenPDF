@@ -5,10 +5,9 @@ import Link from "next/link";
 import { useConvex, useMutation, useQuery } from "convex/react";
 
 import SiteHeader from "@/components/SiteHeader";
+import { ANON_STORAGE_KEY, getOrCreateAnonId } from "@/lib/anon-id";
 import { api } from "@/lib/convex";
 import { uploadFile } from "@/lib/uploads";
-
-const ANON_STORAGE_KEY = "zenpdf_anon_id";
 
 type ToolId =
   | "merge"
@@ -326,21 +325,7 @@ export default function ToolsPage() {
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
-  const [anonId, setAnonId] = useState<string | null>(() => {
-    if (typeof window === "undefined") {
-      return null;
-    }
-    const existing = window.localStorage.getItem(ANON_STORAGE_KEY);
-    const fallback =
-      typeof crypto !== "undefined" && "randomUUID" in crypto
-        ? crypto.randomUUID()
-        : `anon-${Math.random().toString(36).slice(2, 10)}`;
-    const resolved = existing ?? fallback;
-    if (!existing) {
-      window.localStorage.setItem(ANON_STORAGE_KEY, resolved);
-    }
-    return resolved;
-  });
+  const [anonId, setAnonId] = useState<string | null>(() => getOrCreateAnonId());
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   const convex = useConvex();

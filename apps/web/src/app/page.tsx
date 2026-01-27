@@ -1,6 +1,8 @@
 import Link from "next/link";
 
 import SiteHeader from "@/components/SiteHeader";
+import { formatBytes } from "@/lib/formatters";
+import { DEFAULT_LIMITS } from "@/lib/limits";
 
 const toolShelves = [
   {
@@ -41,21 +43,35 @@ const toolShelves = [
   },
 ];
 
+const { ANON, FREE_ACCOUNT, PREMIUM } = DEFAULT_LIMITS;
+
 const planSnapshots = [
   {
     tier: "ANON",
-    description: "Quick one-off tasks with slim file and daily limits.",
-    details: ["1 file per job", "10 MB per file", "3 jobs per day"],
+    description: "No sign-in required for quick one-off work.",
+    details: [
+      `${ANON.maxFilesPerJob} ${ANON.maxFilesPerJob === 1 ? "file" : "files"} per job`,
+      `${formatBytes(ANON.maxMbPerFile * 1024 * 1024)} per file`,
+      `${ANON.maxJobsPerDay} jobs per day`,
+    ],
   },
   {
     tier: "FREE ACCOUNT",
-    description: "Signed-in users get more room plus saved job history.",
-    details: ["3 files per job", "50 MB per file", "25 jobs per day"],
+    description: "Google sign-in adds history and higher daily limits.",
+    details: [
+      `${FREE_ACCOUNT.maxFilesPerJob} files per job`,
+      `${formatBytes(FREE_ACCOUNT.maxMbPerFile * 1024 * 1024)} per file`,
+      `${FREE_ACCOUNT.maxJobsPerDay} jobs per day`,
+    ],
   },
   {
     tier: "PREMIUM",
-    description: "Supporter mode unlocks higher limits and advanced tools.",
-    details: ["10 files per job", "250 MB per file", "OCR conversions"],
+    description: "Supporter mode unlocks OCR workflows and larger batches.",
+    details: [
+      `${PREMIUM.maxFilesPerJob} files per job`,
+      `${formatBytes(PREMIUM.maxMbPerFile * 1024 * 1024)} per file`,
+      "OCR + PDF/A when enabled",
+    ],
   },
 ];
 

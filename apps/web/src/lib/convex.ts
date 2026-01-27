@@ -1,6 +1,24 @@
 import { makeFunctionReference } from "convex/server";
 
+import type { BudgetSnapshot } from "../../convex/lib/budget";
+import type { PlanLimits, PlanTier } from "./limits";
+
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };
+
+type UsageCounter = {
+  periodStart: number;
+  jobsUsed: number;
+  minutesUsed: number;
+  bytesProcessed: number;
+};
+
+type UsageSnapshot = {
+  tier: PlanTier;
+  planLimits: PlanLimits;
+  plans: Record<PlanTier, PlanLimits>;
+  usage: UsageCounter;
+  budget: BudgetSnapshot;
+};
 
 export const api = {
   files: {
@@ -26,5 +44,12 @@ export const api = {
       { anonId?: string },
       unknown[]
     >("jobs:listJobs"),
+  },
+  capacity: {
+    getUsageSnapshot: makeFunctionReference<
+      "query",
+      { anonId?: string },
+      UsageSnapshot
+    >("capacity:getUsageSnapshot"),
   },
 };
