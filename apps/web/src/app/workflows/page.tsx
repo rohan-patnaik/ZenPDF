@@ -303,8 +303,19 @@ const validateDraft = (steps: WorkflowStepDraft[]) => {
   for (let index = 0; index < steps.length; index += 1) {
     const step = steps[index];
     const tool = WORKFLOW_TOOL_MAP.get(step.tool);
+    const spec = WORKFLOW_TOOL_SPECS[step.tool];
     if (!tool) {
       return { ok: false, message: "Select a valid tool for each step." };
+    }
+
+    if (spec?.requiredConfig?.length) {
+      const missing = spec.requiredConfig.filter((key) => !(step.config[key] ?? "").trim());
+      if (missing.length > 0) {
+        return {
+          ok: false,
+          message: `Provide ${missing.join(", ")} for ${tool.label}.`,
+        };
+      }
     }
 
     if (index === 0) {
@@ -519,15 +530,15 @@ export default function WorkflowsPage() {
     if (isTeamAction) {
       return;
     }
-    const email = memberEmails[teamId] ?? "";
-    if (!email.trim()) {
+    const trimmedEmail = (memberEmails[teamId] ?? "").trim();
+    if (!trimmedEmail) {
       setTeamStatus("Enter a member email.");
       return;
     }
     setIsTeamAction(true);
     setTeamStatus("Adding member...");
     try {
-      await addTeamMember({ teamId, email });
+      await addTeamMember({ teamId, email: trimmedEmail });
       setMemberEmails((prev) => ({ ...prev, [teamId]: "" }));
       setTeamStatus("Member added.");
     } catch (error) {
