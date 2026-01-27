@@ -1,5 +1,6 @@
-import { queryGeneric as query } from "convex/server";
 import { v } from "convex/values";
+
+import { query } from "./_generated/server";
 
 import { resolveUser } from "./lib/auth";
 import { resolveBudgetState } from "./lib/budget";

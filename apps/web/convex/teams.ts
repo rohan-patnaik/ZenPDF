@@ -1,16 +1,16 @@
-import type { GenericDataModel, GenericMutationCtx, GenericQueryCtx } from "convex/server";
-import { mutation, query } from "convex/server";
-import { v, type Id } from "convex/values";
+import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 import { resolveOrCreateUser, resolveUser } from "./lib/auth";
 import { normalizeEmail } from "./lib/email";
 import { throwFriendlyError } from "./lib/errors";
 
-type QueryCtx = GenericQueryCtx<GenericDataModel>;
-type MutationCtx = GenericMutationCtx<GenericDataModel>;
 type Ctx = QueryCtx | MutationCtx;
 
-const requirePremiumUser = async (ctx: Ctx) => {
+const requirePremiumUser = async (ctx: Ctx): Promise<Id<"users">> => {
   const { userId, tier } = await resolveUser(ctx);
   if (!userId) {
     throwFriendlyError("USER_SESSION_REQUIRED");
@@ -18,10 +18,12 @@ const requirePremiumUser = async (ctx: Ctx) => {
   if (tier !== "PREMIUM") {
     throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
   }
-  return userId;
+  return userId as Id<"users">;
 };
 
-const requirePremiumUserForMutation = async (ctx: MutationCtx) => {
+const requirePremiumUserForMutation = async (
+  ctx: MutationCtx,
+): Promise<Id<"users">> => {
   const { userId, tier } = await resolveOrCreateUser(ctx);
   if (!userId) {
     throwFriendlyError("USER_SESSION_REQUIRED");
@@ -29,7 +31,7 @@ const requirePremiumUserForMutation = async (ctx: MutationCtx) => {
   if (tier !== "PREMIUM") {
     throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
   }
-  return userId;
+  return userId as Id<"users">;
 };
 
 const resolveTeamMembership = async (ctx: Ctx, teamId: Id<"teams">, userId: Id<"users">) =>
@@ -180,7 +182,8 @@ export const addTeamMember = mutation({
       throwFriendlyError("USER_INPUT_INVALID", { reason: "unknown_user" });
     }
 
-    const existing = await resolveTeamMembership(ctx, args.teamId, user._id);
+    const userRecord = user as NonNullable<typeof user>;
+    const existing = await resolveTeamMembership(ctx, args.teamId, userRecord._id);
     if (existing) {
       return { memberId: existing._id, alreadyMember: true };
     }
@@ -188,7 +191,7 @@ export const addTeamMember = mutation({
     const now = Date.now();
     const memberId = await ctx.db.insert("teamMembers", {
       teamId: args.teamId,
-      userId: user._id,
+      userId: userRecord._id,
       role: "member",
       createdAt: now,
     });
@@ -206,7 +209,8 @@ export const removeTeamMember = mutation({
     if (!member || member.teamId !== args.teamId) {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "member_not_found" });
     }
-    if (member.role === "owner") {
+    const memberRecord = member as NonNullable<typeof member>;
+    if (memberRecord.role === "owner") {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "owner_remove" });
     }
 

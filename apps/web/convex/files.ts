@@ -1,9 +1,11 @@
-import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
 import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
 
 import { resolveUser } from "./lib/auth";
 import { throwFriendlyError } from "./lib/errors";
-import { assertWorkerToken } from "./lib/worker-auth";
+import { assertWorkerToken } from "./lib/worker_auth";
 
 export const generateUploadUrl = mutation({
   args: { anonId: v.optional(v.string()), workerToken: v.optional(v.string()) },
@@ -51,7 +53,7 @@ export const getOutputDownloadUrl = query({
       }
     }
     const allowed = (job.outputs ?? []).some(
-      (output) => output.storageId === args.storageId,
+      (output: { storageId: Id<"_storage"> }) => output.storageId === args.storageId,
     );
     if (!allowed) {
       return null;

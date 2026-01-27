@@ -1,15 +1,10 @@
-import type {
-  GenericDataModel,
-  GenericMutationCtx,
-  GenericQueryCtx,
-} from "convex/server";
-import type { Id } from "convex/values";
+import type { Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
+import type { PlanTier } from "./limits";
 
 import { startOfDayUtc } from "./time";
 
-type Ctx =
-  | GenericMutationCtx<GenericDataModel>
-  | GenericQueryCtx<GenericDataModel>;
+type Ctx = MutationCtx | QueryCtx;
 
 export const resolveUsageCounter = async (
   ctx: Ctx,
@@ -38,10 +33,10 @@ export const resolveUsageCounter = async (
 };
 
 export const incrementUsage = async (
-  ctx: GenericMutationCtx<GenericDataModel>,
+  ctx: MutationCtx,
   userId: Id<"users"> | undefined,
   anonId: string | undefined,
-  tier: string,
+  tier: PlanTier,
   timestamp: number,
   updates: { jobs?: number; minutes?: number; bytes?: number },
 ) => {
@@ -86,7 +81,7 @@ export const resolveGlobalUsageCounter = async (ctx: Ctx, timestamp: number) => 
 };
 
 export const incrementGlobalUsage = async (
-  ctx: GenericMutationCtx<GenericDataModel>,
+  ctx: MutationCtx,
   timestamp: number,
   updates: { jobs?: number; minutes?: number; bytes?: number },
 ) => {

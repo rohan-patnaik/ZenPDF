@@ -1,5 +1,6 @@
-import { mutationGeneric as mutation } from "convex/server";
 import { v } from "convex/values";
+
+import { mutation } from "./_generated/server";
 
 export const cleanupExpiredArtifacts = mutation({
   args: {

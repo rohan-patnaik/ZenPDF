@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   checkGlobalLimits,
   checkPlanLimits,
-} from "../../convex/lib/limit-checks";
+} from "../../convex/lib/limit_checks";
 
 describe("limit checks", () => {
   it("flags files that exceed plan limits", () => {

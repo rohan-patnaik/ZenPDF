@@ -1,12 +1,14 @@
-import type { GenericDataModel, GenericMutationCtx } from "convex/server";
-import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
-import { v, type Id } from "convex/values";
+import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import type { MutationCtx } from "./_generated/server";
 
 import { resolveOrCreateUser, resolveUser } from "./lib/auth";
 import { resolveBudgetState } from "./lib/budget";
 import { throwFriendlyError } from "./lib/errors";
-import { assertTransition } from "./lib/job-state";
-import { checkGlobalLimits, checkPlanLimits } from "./lib/limit-checks";
+import { assertTransition } from "./lib/job_state";
+import { checkGlobalLimits, checkPlanLimits } from "./lib/limit_checks";
 import { resolveGlobalLimits, resolvePlanLimits } from "./lib/limits";
 import {
   incrementGlobalUsage,
@@ -14,7 +16,7 @@ import {
   resolveGlobalUsageCounter,
   resolveUsageCounter,
 } from "./lib/usage";
-import { assertWorkerToken } from "./lib/worker-auth";
+import { assertWorkerToken } from "./lib/worker_auth";
 
 const jobInput = v.object({
   storageId: v.id("_storage"),
@@ -40,8 +42,6 @@ const PREMIUM_ONLY_TOOLS = new Set([
   "pdf-to-excel-ocr",
   "pdfa",
 ]);
-
-type MutationCtx = GenericMutationCtx<GenericDataModel>;
 
 const countJobs = async (
   ctx: MutationCtx,

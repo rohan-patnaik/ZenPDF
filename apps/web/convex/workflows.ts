@@ -1,6 +1,8 @@
-import type { GenericDataModel, GenericMutationCtx, GenericQueryCtx } from "convex/server";
-import { mutation, query } from "convex/server";
-import { v, type Id } from "convex/values";
+import { v } from "convex/values";
+
+import type { Id } from "./_generated/dataModel";
+import { mutation, query } from "./_generated/server";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 
 import { resolveUser } from "./lib/auth";
 import { throwFriendlyError } from "./lib/errors";
@@ -8,18 +10,16 @@ import {
   compileWorkflow,
   type WorkflowStep,
   type WorkflowAssetKind,
-} from "./lib/workflow-compiler";
+} from "./lib/workflow_compiler";
 
 const workflowStep = v.object({
   tool: v.string(),
   config: v.optional(v.any()),
 });
 
-type QueryCtx = GenericQueryCtx<GenericDataModel>;
-type MutationCtx = GenericMutationCtx<GenericDataModel>;
 type Ctx = QueryCtx | MutationCtx;
 
-const requirePremiumUser = async (ctx: Ctx) => {
+const requirePremiumUser = async (ctx: Ctx): Promise<Id<"users">> => {
   const { userId, tier } = await resolveUser(ctx);
   if (!userId) {
     throwFriendlyError("USER_SESSION_REQUIRED");
@@ -27,7 +27,7 @@ const requirePremiumUser = async (ctx: Ctx) => {
   if (tier !== "PREMIUM") {
     throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
   }
-  return userId;
+  return userId as Id<"users">;
 };
 
 const resolveTeamMembership = async (ctx: Ctx, teamId: Id<"teams">, userId: Id<"users">) =>
@@ -202,7 +202,10 @@ export const deleteWorkflow = mutation({
       if (!membership) {
         throwFriendlyError("USER_INPUT_INVALID", { reason: "team_access" });
       }
-      if (membership.role !== "owner" && workflow.ownerId !== userId) {
+      const membershipRecord = membership as NonNullable<typeof membership>;
+      const canDelete =
+        membershipRecord.role === "owner" || workflow.ownerId === userId;
+      if (!canDelete) {
         throwFriendlyError("USER_INPUT_INVALID", { reason: "not_owner" });
       }
     } else if (workflow.ownerId !== userId) {

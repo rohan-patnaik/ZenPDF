@@ -1,15 +1,10 @@
-import type {
-  GenericDataModel,
-  GenericMutationCtx,
-  GenericQueryCtx,
-  UserIdentity,
-} from "convex/server";
-import type { Id } from "convex/values";
+import type { UserIdentity } from "convex/server";
+
+import type { Id } from "../_generated/dataModel";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 import { normalizeOptionalEmail } from "./email";
 
-type MutationCtx = GenericMutationCtx<GenericDataModel>;
-type QueryCtx = GenericQueryCtx<GenericDataModel>;
 type Ctx = MutationCtx | QueryCtx;
 
 export type ResolvedUser = {

@@ -5,7 +5,7 @@ import {
   type WorkflowAssetKind,
   type WorkflowStep,
   type WorkflowToolSpec,
-} from "./workflow-spec";
+} from "./workflow_spec";
 
 export { MAX_WORKFLOW_STEPS, WORKFLOW_TOOL_SPECS };
 export type { WorkflowAssetKind, WorkflowStep, WorkflowToolSpec };
@@ -23,7 +23,13 @@ const isMissingConfigValue = (value: unknown) => {
   return false;
 };
 
-export const compileWorkflow = (steps: WorkflowStep[]) => {
+export const compileWorkflow = (
+  steps: WorkflowStep[],
+): {
+  inputKind: WorkflowAssetKind;
+  outputKind: WorkflowAssetKind;
+  hasPremiumTools: boolean;
+} => {
   if (!Array.isArray(steps) || steps.length === 0) {
     throwFriendlyError("USER_INPUT_INVALID", { reason: "missing_steps" });
   }
@@ -35,8 +41,8 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
     });
   }
 
-  let inputKind: WorkflowAssetKind | null = null;
-  let outputKind: WorkflowAssetKind | null = null;
+  let inputKind: WorkflowAssetKind | undefined;
+  let outputKind: WorkflowAssetKind | undefined;
   let hasPremiumTools = false;
 
   steps.forEach((step, index) => {
@@ -44,34 +50,35 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
     }
 
-    const toolName = (step as { tool?: unknown }).tool;
+    const toolName = step.tool;
     if (typeof toolName !== "string" || toolName.trim().length === 0) {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
     }
 
+    const toolId = toolName;
     const configValue = (step as { config?: unknown }).config;
     if (configValue !== undefined && !isRecord(configValue)) {
       throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_step_shape", index });
     }
 
-    const spec = WORKFLOW_TOOL_SPECS[toolName];
+    const spec = WORKFLOW_TOOL_SPECS[toolId];
     if (!spec) {
       throwFriendlyError("USER_INPUT_INVALID", {
         reason: "unknown_tool",
-        tool: toolName,
+        tool: toolId,
       });
     }
 
     const config = isRecord(configValue) ? configValue : undefined;
 
     if (spec.requiredConfig && spec.requiredConfig.length > 0) {
-      const missing = spec.requiredConfig.filter((key) =>
+      const missing = spec.requiredConfig.filter((key: string) =>
         isMissingConfigValue(config?.[key]),
       );
       if (missing.length > 0) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "missing_config",
-          tool: toolName,
+          tool: toolId,
           fields: missing.join(","),
         });
       }
@@ -83,13 +90,13 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
       if (spec.multiInput) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "multi_input_step",
-          tool: toolName,
+          tool: toolId,
         });
       }
       if (outputKind && spec.input !== outputKind) {
         throwFriendlyError("USER_INPUT_INVALID", {
           reason: "incompatible_chain",
-          tool: toolName,
+          tool: toolId,
           expected: outputKind,
           received: spec.input,
         });
@@ -99,7 +106,7 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
     if (index < steps.length - 1 && spec.output !== "pdf") {
       throwFriendlyError("USER_INPUT_INVALID", {
         reason: "non_pdf_mid_chain",
-        tool: toolName,
+        tool: toolId,
       });
     }
 
@@ -109,13 +116,16 @@ export const compileWorkflow = (steps: WorkflowStep[]) => {
     }
   });
 
-  if (!inputKind || !outputKind) {
+  if (inputKind === undefined) {
+    throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_steps" });
+  }
+  if (outputKind === undefined) {
     throwFriendlyError("USER_INPUT_INVALID", { reason: "invalid_steps" });
   }
 
   return {
-    inputKind,
-    outputKind,
+    inputKind: inputKind as WorkflowAssetKind,
+    outputKind: outputKind as WorkflowAssetKind,
     hasPremiumTools,
   };
 };

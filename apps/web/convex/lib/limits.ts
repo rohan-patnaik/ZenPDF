@@ -1,8 +1,4 @@
-import type {
-  GenericDataModel,
-  GenericMutationCtx,
-  GenericQueryCtx,
-} from "convex/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 export type PlanTier = "ANON" | "FREE_ACCOUNT" | "PREMIUM";
 
@@ -56,9 +52,7 @@ const DEFAULT_GLOBAL_LIMITS: GlobalLimits = {
   artifactTtlHours: 24,
 };
 
-type Ctx =
-  | GenericMutationCtx<GenericDataModel>
-  | GenericQueryCtx<GenericDataModel>;
+type Ctx = MutationCtx | QueryCtx;
 
 const parseEnvNumber = (value: string | undefined, fallback: number) => {
   if (!value) {

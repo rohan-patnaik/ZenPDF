@@ -1,7 +1,7 @@
 import { makeFunctionReference } from "convex/server";
 
 import type { BudgetSnapshot } from "../../convex/lib/budget";
-import type { WorkflowStep } from "../../convex/lib/workflow-spec";
+import type { WorkflowStep } from "../../convex/lib/workflow_spec";
 import type { PlanLimits, PlanTier } from "./limits";
 
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };

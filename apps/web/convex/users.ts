@@ -1,4 +1,4 @@
-import { query } from "convex/server";
+import { query } from "./_generated/server";
 
 import { resolveUser } from "./lib/auth";
 

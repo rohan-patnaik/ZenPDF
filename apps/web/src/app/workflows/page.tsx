@@ -11,7 +11,7 @@ import {
   WORKFLOW_TOOL_SPECS,
   type WorkflowAssetKind,
   type WorkflowToolSpec,
-} from "../../../convex/lib/workflow-spec";
+} from "../../../convex/lib/workflow_spec";
 
 type ToolField = {
   key: string;

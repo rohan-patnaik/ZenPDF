@@ -1,16 +1,10 @@
-import type {
-  GenericDataModel,
-  GenericMutationCtx,
-  GenericQueryCtx,
-} from "convex/server";
+import type { MutationCtx, QueryCtx } from "../_generated/server";
 
 import { monthKey } from "./time";
 
 export type CapacityStatus = "available" | "limited" | "at_capacity";
 
-type Ctx =
-  | GenericMutationCtx<GenericDataModel>
-  | GenericQueryCtx<GenericDataModel>;
+type Ctx = MutationCtx | QueryCtx;
 
 export type BudgetSnapshot = {
   monthlyBudgetUsage: number;
