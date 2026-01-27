@@ -8,6 +8,7 @@
 
 ## Repo Layout
 - `apps/web`: Next.js app (Vercel root directory).
+- `apps/worker`: Cloud Run worker for PDF processing.
 - `docs`: product and architecture docs.
 
 ## Local Self-Hosted
@@ -19,7 +20,7 @@
 - Users: tier, auth metadata, org membership.
 - Jobs: tool type, status, progress, inputs, outputs, error codes.
 - Artifacts: file metadata, storageId, TTL.
-- Usage counters: per-user and global limits.
+- Usage counters: per-user, per-anon, and global limits.
 - Budget state: monthly cap, capacity status, heavy tool flags.
 - Plan limits: config-driven tier caps with env overrides.
 - Global limits: system-wide concurrency and job caps.

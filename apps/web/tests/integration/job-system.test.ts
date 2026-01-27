@@ -13,8 +13,9 @@ const createJob = makeFunctionReference<
     tool: string;
     inputs: Array<{ storageId: string; filename: string; sizeBytes?: number }>;
     config?: unknown;
+    anonId?: string;
   },
-  { jobId: string }
+  { jobId: string; anonId?: string }
 >("jobs:createJob");
 
 type ClaimedJob = {
@@ -67,6 +68,7 @@ describe("job system", () => {
       await t.mutation(createJob, {
         tool: "merge",
         inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5000 }],
+        anonId: "anon-test",
       });
     } catch (error: unknown) {
       const formatted = error as { data?: { code?: string } };

@@ -21,6 +21,14 @@ export const FRIENDLY_ERRORS = {
     message: "You already have the maximum number of active jobs.",
     next: "Wait for existing jobs to finish, then retry.",
   },
+  USER_SESSION_REQUIRED: {
+    message: "We could not confirm your session for this job.",
+    next: "Refresh the page or sign in, then retry.",
+  },
+  USER_LIMIT_SIZE_REQUIRED: {
+    message: "We could not verify the file size for this upload.",
+    next: "Try uploading the file again or use a smaller file.",
+  },
   SERVICE_CAPACITY_TEMPORARY: {
     message: "ZenPDF is temporarily at capacity.",
     next: "Retry in a few minutes or run the local stack.",

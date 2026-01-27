@@ -23,7 +23,14 @@ export const checkPlanLimits = (
   }
 
   for (const input of inputs) {
-    const sizeMb = (input.sizeBytes ?? 0) / (1024 * 1024);
+    if (input.sizeBytes === undefined) {
+      return {
+        ok: false,
+        code: "USER_LIMIT_SIZE_REQUIRED",
+        details: { limitMb: limits.maxMbPerFile },
+      };
+    }
+    const sizeMb = input.sizeBytes / (1024 * 1024);
     if (sizeMb > limits.maxMbPerFile) {
       return {
         ok: false,

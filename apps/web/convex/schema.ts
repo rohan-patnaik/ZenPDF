@@ -27,12 +27,14 @@ export default defineSchema({
 
   jobs: defineTable({
     userId: v.optional(v.id("users")),
+    anonId: v.optional(v.string()),
     tier,
     tool: v.string(),
     status: jobStatus,
     progress: v.optional(v.number()),
     errorCode: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    config: v.optional(v.any()),
     claimedBy: v.optional(v.string()),
     claimExpiresAt: v.optional(v.number()),
     attempts: v.number(),
@@ -64,6 +66,8 @@ export default defineSchema({
     .index("by_status_lock", ["status", "claimExpiresAt"])
     .index("by_user", ["userId", "createdAt"])
     .index("by_user_status", ["userId", "status"])
+    .index("by_anon", ["anonId", "createdAt"])
+    .index("by_anon_status", ["anonId", "status"])
     .index("by_updated", ["updatedAt"]),
 
   artifacts: defineTable({
@@ -83,12 +87,15 @@ export default defineSchema({
 
   usageCounters: defineTable({
     userId: v.optional(v.id("users")),
+    anonId: v.optional(v.string()),
     tier,
     periodStart: v.number(),
     jobsUsed: v.number(),
     minutesUsed: v.number(),
     bytesProcessed: v.number(),
-  }).index("by_user", ["userId", "periodStart"]),
+  })
+    .index("by_user", ["userId", "periodStart"])
+    .index("by_anon", ["anonId", "periodStart"]),
 
   globalUsageCounters: defineTable({
     periodStart: v.number(),
