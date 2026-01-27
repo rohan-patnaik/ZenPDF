@@ -347,6 +347,8 @@ def test_pdfa_conversion_runs_ghostscript(monkeypatch: pytest.MonkeyPatch) -> No
         monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: "/usr/bin/gs")
 
         def fake_run(command, **_kwargs):
+            if "--version" in command:
+                return subprocess.CompletedProcess(command, 0, stdout="10.03.1", stderr="")
             output.write_bytes(b"%PDF-1.7\n")
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
@@ -354,6 +356,21 @@ def test_pdfa_conversion_runs_ghostscript(monkeypatch: pytest.MonkeyPatch) -> No
 
         result = pdf_to_pdfa(source, output)
         assert result.exists()
+
+
+def test_pdfa_rejects_encrypted_pdf() -> None:
+    """Reject encrypted PDFs before invoking Ghostscript."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "encrypted.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=300, height=300)
+        writer.encrypt("secret")
+        with source.open("wb") as handle:
+            writer.write(handle)
+
+        with pytest.raises(ValueError):
+            pdf_to_pdfa(source, temp_path / "output.pdf")
 
 
 def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:

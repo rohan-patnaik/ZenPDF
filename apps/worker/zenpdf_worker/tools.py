@@ -848,6 +848,24 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
 
 
 PDF_A_TIMEOUT_SEC = 120
+PDF_A_VERSION_TIMEOUT_SEC = 10
+PDF_A_MIN_VERSION = (10, 3, 1)
+
+
+def _parse_version_tuple(raw: str) -> Tuple[int, int, int]:
+    """Parse a version string into a comparable tuple."""
+    token = raw.strip().split()[0] if raw.strip() else ""
+    parts = [part for part in token.split(".") if part]
+    numbers: List[int] = []
+    for part in parts:
+        if not part.isdigit():
+            break
+        numbers.append(int(part))
+    if not numbers:
+        raise ValueError("Unable to parse version")
+    while len(numbers) < 3:
+        numbers.append(0)
+    return (numbers[0], numbers[1], numbers[2])
 
 
 def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
@@ -873,10 +891,28 @@ def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
     if not ghostscript:
         raise RuntimeError("Ghostscript is required for PDF/A conversion")
 
+    version_result = subprocess.run(
+        [ghostscript, "--version"],
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=PDF_A_VERSION_TIMEOUT_SEC,
+    )
+    if version_result.returncode != 0:
+        raise RuntimeError("Ghostscript version check failed")
+    version_output = (version_result.stdout or version_result.stderr or "").strip()
+    try:
+        version = _parse_version_tuple(version_output)
+    except ValueError as error:
+        raise RuntimeError("Ghostscript >= 10.03.1 is required for PDF/A conversion") from error
+    if version < PDF_A_MIN_VERSION:
+        raise RuntimeError("Ghostscript >= 10.03.1 is required for PDF/A conversion")
+
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     command = [
         ghostscript,
+        "-dSAFER",
         "-dPDFA=2",
         "-dBATCH",
         "-dNOPAUSE",
