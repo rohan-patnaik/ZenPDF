@@ -43,20 +43,22 @@ export const getOutputDownloadUrl = query({
     const allowAnonFallback = args.allowAnonAccess === true;
     const job = await ctx.db.get(args.jobId);
     if (!job) {
+      if (allowAnonFallback) {
+        return ctx.storage.getUrl(args.storageId);
+      }
       return null;
     }
-    if (!allowAnonFallback) {
-      if (job.userId) {
-        if (job.userId !== userId) {
-          return null;
-        }
-      } else {
-        if (!job.anonId || job.anonId !== args.anonId) {
-          return null;
-        }
+    if (allowAnonFallback) {
+      return ctx.storage.getUrl(args.storageId);
+    }
+    if (job.userId) {
+      if (job.userId !== userId) {
+        return null;
       }
-    } else if (!args.anonId) {
-      return null;
+    } else {
+      if (!job.anonId || job.anonId !== args.anonId) {
+        return null;
+      }
     }
     const allowed = (job.outputs ?? []).some(
       (output: { storageId: Id<"_storage"> }) => output.storageId === args.storageId,
