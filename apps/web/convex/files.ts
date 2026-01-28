@@ -39,12 +39,19 @@ export const getOutputDownloadUrl = query({
   },
   handler: async (ctx, args) => {
     const { userId } = await resolveUser(ctx);
+    const allowAnonFallback =
+      process.env.ZENPDF_DISABLE_AUTH === "1" &&
+      process.env.NODE_ENV !== "production";
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
     }
     if (job.userId) {
-      if (job.userId !== userId) {
+      const hasUserAccess = Boolean(userId && job.userId === userId);
+      const hasAnonAccess =
+        allowAnonFallback &&
+        Boolean(args.anonId && job.anonId && job.anonId === args.anonId);
+      if (!hasUserAccess && !hasAnonAccess) {
         return null;
       }
     } else {
