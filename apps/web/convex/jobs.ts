@@ -85,6 +85,7 @@ export const createJob = mutation({
     inputs: v.array(jobInput),
     config: v.optional(v.any()),
     anonId: v.optional(v.string()),
+    devBypass: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -99,71 +100,77 @@ export const createJob = mutation({
       args.config && typeof args.config === "object" && !Array.isArray(args.config)
         ? args.config
         : undefined;
+    const devBypass =
+      args.devBypass === true &&
+      process.env.ZENPDF_DEV_MODE === "1" &&
+      process.env.NODE_ENV === "development";
     const planLimits = await resolvePlanLimits(ctx, tier);
     const globalLimits = await resolveGlobalLimits(ctx);
     const budget = await resolveBudgetState(ctx, now);
 
-    if (budget.monthlyBudgetUsage >= 1) {
-      throwFriendlyError("SERVICE_CAPACITY_MONTHLY_BUDGET");
-    }
+    if (!devBypass) {
+      if (budget.monthlyBudgetUsage >= 1) {
+        throwFriendlyError("SERVICE_CAPACITY_MONTHLY_BUDGET");
+      }
 
-    if (!budget.heavyToolsEnabled && HEAVY_TOOLS.has(args.tool)) {
-      throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
-    }
+      if (!budget.heavyToolsEnabled && HEAVY_TOOLS.has(args.tool)) {
+        throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
+      }
 
-    if (tier !== "PREMIUM" && PREMIUM_ONLY_TOOLS.has(args.tool)) {
-      throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
-    }
+      if (tier !== "PREMIUM" && PREMIUM_ONLY_TOOLS.has(args.tool)) {
+        throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
+      }
 
-    const { counter: usageCounter } = await resolveUsageCounter(
-      ctx,
-      userId,
-      resolvedAnonId,
-      now,
-    );
-    const { counter: globalUsage } = await resolveGlobalUsageCounter(ctx, now);
-
-    const identityFilter = userId ? { userId } : { anonId: resolvedAnonId };
-    const activeUserJobs =
-      (await countJobs(
+      const { counter: usageCounter } = await resolveUsageCounter(
         ctx,
-        { ...identityFilter, status: "queued" },
-        planLimits.maxConcurrentJobs,
-      )) +
-      (await countJobs(
-        ctx,
-        { ...identityFilter, status: "running" },
-        planLimits.maxConcurrentJobs,
-      ));
-    const activeGlobalJobs =
-      (await countJobs(ctx, { status: "queued" }, globalLimits.maxConcurrentJobs)) +
-      (await countJobs(ctx, { status: "running" }, globalLimits.maxConcurrentJobs));
+        userId,
+        resolvedAnonId,
+        now,
+      );
+      const { counter: globalUsage } = await resolveGlobalUsageCounter(ctx, now);
 
-    const planCheck = checkPlanLimits(
-      args.inputs,
-      planLimits,
-      {
-        jobsUsed: usageCounter?.jobsUsed ?? 0,
-        minutesUsed: usageCounter?.minutesUsed ?? 0,
-      },
-      activeUserJobs,
-    );
+      const identityFilter = userId ? { userId } : { anonId: resolvedAnonId };
+      const activeUserJobs =
+        (await countJobs(
+          ctx,
+          { ...identityFilter, status: "queued" },
+          planLimits.maxConcurrentJobs,
+        )) +
+        (await countJobs(
+          ctx,
+          { ...identityFilter, status: "running" },
+          planLimits.maxConcurrentJobs,
+        ));
+      const activeGlobalJobs =
+        (await countJobs(ctx, { status: "queued" }, globalLimits.maxConcurrentJobs)) +
+        (await countJobs(ctx, { status: "running" }, globalLimits.maxConcurrentJobs));
 
-    if (!planCheck.ok) {
-      throwFriendlyError(planCheck.code, planCheck.details);
-    }
+      const planCheck = checkPlanLimits(
+        args.inputs,
+        planLimits,
+        {
+          jobsUsed: usageCounter?.jobsUsed ?? 0,
+          minutesUsed: usageCounter?.minutesUsed ?? 0,
+        },
+        activeUserJobs,
+      );
 
-    const globalCheck = checkGlobalLimits(
-      globalLimits,
-      {
-        jobsUsed: globalUsage?.jobsUsed ?? 0,
-        minutesUsed: globalUsage?.minutesUsed ?? 0,
-      },
-      activeGlobalJobs,
-    );
+      if (!planCheck.ok) {
+        throwFriendlyError(planCheck.code, planCheck.details);
+      }
 
-    if (!globalCheck.ok) {
-      throwFriendlyError(globalCheck.code, globalCheck.details);
+      const globalCheck = checkGlobalLimits(
+        globalLimits,
+        {
+          jobsUsed: globalUsage?.jobsUsed ?? 0,
+          minutesUsed: globalUsage?.minutesUsed ?? 0,
+        },
+        activeGlobalJobs,
+      );
+
+      if (!globalCheck.ok) {
+        throwFriendlyError(globalCheck.code, globalCheck.details);
+      }
     }
 
     const jobId = await ctx.db.insert("jobs", {

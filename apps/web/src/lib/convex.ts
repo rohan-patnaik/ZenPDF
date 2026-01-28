@@ -76,7 +76,13 @@ export const api = {
   jobs: {
     createJob: makeFunctionReference<
       "mutation",
-      { tool: string; inputs: JobInput[]; config?: unknown; anonId?: string },
+      {
+        tool: string;
+        inputs: JobInput[];
+        config?: unknown;
+        anonId?: string;
+        devBypass?: boolean;
+      },
       { jobId: string; anonId?: string }
     >("jobs:createJob"),
     listJobs: makeFunctionReference<

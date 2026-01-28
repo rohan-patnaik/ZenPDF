@@ -1,4 +1,4 @@
-import { auth } from "@clerk/nextjs/server";
+import { getAuth } from "@clerk/nextjs/server";
 import { ConvexHttpClient } from "convex/browser";
 import type { NextRequest } from "next/server";
 
@@ -38,10 +38,21 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? "http://localhost:3210";
   const convex = new ConvexHttpClient(convexUrl);
-  const { getToken } = auth();
-  const token = await getToken({ template: "convex" });
-  if (token) {
-    convex.setAuth(token);
+  const disableAuth =
+    process.env.ZENPDF_DISABLE_AUTH === "1" &&
+    process.env.NODE_ENV !== "production";
+  if (!disableAuth) {
+    try {
+      const { getToken } = getAuth(request);
+      if (typeof getToken === "function") {
+        const token = await getToken({ template: "convex" });
+        if (token) {
+          convex.setAuth(token);
+        }
+      }
+    } catch (error) {
+      console.warn("Skipping Clerk auth for download.", error);
+    }
   }
 
   let downloadUrl: string | null = null;
