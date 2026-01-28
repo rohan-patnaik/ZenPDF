@@ -69,7 +69,7 @@ export const api = {
     >("files:generateUploadUrl"),
     getOutputDownloadUrl: makeFunctionReference<
       "query",
-      { jobId: string; storageId: string; anonId?: string },
+      { jobId: string; storageId: string; anonId?: string; allowAnonAccess?: boolean },
       string | null
     >("files:getOutputDownloadUrl"),
   },
