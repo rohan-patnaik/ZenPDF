@@ -118,6 +118,7 @@ MAX_DPI = 300
 
 @dataclass
 class ToolRunResult:
+    """Return value for a tool run, including output paths and metadata."""
     outputs: List[Path]
     result: Dict[str, Any] | None = None
 
