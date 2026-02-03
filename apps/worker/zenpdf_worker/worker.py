@@ -5,6 +5,7 @@ import threading
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from dataclasses import dataclass
 from typing import Any, Dict, List
 
 import requests
@@ -115,6 +116,13 @@ def _parse_int(value: Any, default: int) -> int:
 MAX_DPI = 300
 
 
+@dataclass
+class ToolRunResult:
+    """Return value for a tool run, including output paths and metadata."""
+    outputs: List[Path]
+    result: Dict[str, Any] | None = None
+
+
 class ZenPdfWorker:
     """Poll Convex for jobs and execute PDF tools."""
 
@@ -155,10 +163,10 @@ class ZenPdfWorker:
                 inputs = self._download_inputs(job["inputs"], temp_path)
                 progress["value"] = 40
                 self._report(job_id, 40)
-                outputs = self._run_tool(job, inputs, temp_path)
+                run_result = self._run_tool(job, inputs, temp_path)
                 progress["value"] = 75
                 self._report(job_id, 75)
-                output_payload = self._upload_outputs(outputs)
+                output_payload = self._upload_outputs(run_result.outputs)
             elapsed_minutes = max((time.time() - started) / 60, 0.01)
             bytes_processed = sum(item.get("sizeBytes", 0) for item in job["inputs"])
             self._mutation(
@@ -167,6 +175,7 @@ class ZenPdfWorker:
                     "jobId": job_id,
                     "workerId": self.worker_id,
                     "outputs": output_payload,
+                    "toolResult": run_result.result,
                     "minutesUsed": elapsed_minutes,
                     "bytesProcessed": bytes_processed,
                     "workerToken": self.worker_token,
@@ -270,14 +279,16 @@ class ZenPdfWorker:
             paths.append(target)
         return paths
 
-    def _run_tool(self, job: Dict[str, Any], inputs: List[Path], temp: Path) -> List[Path]:
+    def _run_tool(
+        self, job: Dict[str, Any], inputs: List[Path], temp: Path
+    ) -> ToolRunResult:
         """
-        Dispatches and executes the PDF tool specified by a job and returns the generated output file paths.
+        Dispatch and execute the PDF tool specified by a job.
         
-        The function reads tool and config from `job`, validates required config fields for each tool, invokes the corresponding PDF helper, and returns a list of filesystem Paths pointing to produced output files (single files or archive files for multi-file outputs).
+        The function reads tool and config from `job`, validates required config fields for each tool, invokes the corresponding PDF helper, and returns a ToolRunResult containing produced output file paths plus any tool-specific result metadata.
         
         Returns:
-            List[Path]: Paths to the generated output file(s).
+            ToolRunResult: Output paths and optional tool metadata.
         
         Raises:
             ValueError: When required configuration or inputs for a specific tool are missing or invalid (e.g., missing watermark text, password, URL, or insufficient input files).
@@ -289,119 +300,136 @@ class ZenPdfWorker:
             config = {}
         output_path = _build_output_path(tool, inputs, temp)
         if tool == "merge":
-            return [merge_pdfs(inputs, output_path)]
+            return ToolRunResult([merge_pdfs(inputs, output_path)])
         if tool == "split":
             outputs = split_pdf(inputs[0], temp, config.get("ranges"))
             zip_path = temp / "split_output.zip"
-            return [zip_outputs(outputs, zip_path)]
+            return ToolRunResult([zip_outputs(outputs, zip_path)])
         if tool == "compress":
-            return [compress_pdf(inputs[0], output_path)]
+            compressed_path, result = compress_pdf(inputs[0], output_path)
+            return ToolRunResult([compressed_path], result)
         if tool == "repair":
-            return [repair_pdf(inputs[0], output_path)]
+            return ToolRunResult([repair_pdf(inputs[0], output_path)])
         if tool == "rotate":
             angle = _parse_int(config.get("angle"), 90)
             if angle not in (90, 180, 270):
                 angle = 90
-            return [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
+            return ToolRunResult(
+                [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
+            )
         if tool == "remove-pages":
             pages = config.get("pages") or ""
             if not pages.strip():
-                return [merge_pdfs([inputs[0]], output_path)]
-            return [remove_pages(inputs[0], output_path, pages)]
+                return ToolRunResult([merge_pdfs([inputs[0]], output_path)])
+            return ToolRunResult([remove_pages(inputs[0], output_path, pages)])
         if tool == "reorder-pages":
             order = config.get("order") or ""
             if not order.strip():
-                return [merge_pdfs([inputs[0]], output_path)]
-            return [reorder_pages(inputs[0], output_path, order)]
+                return ToolRunResult([merge_pdfs([inputs[0]], output_path)])
+            return ToolRunResult([reorder_pages(inputs[0], output_path, order)])
         if tool == "watermark":
             text = config.get("text") or ""
             if not str(text).strip():
                 raise ValueError("Watermark text is required")
-            return [
-                watermark_pdf(inputs[0], output_path, str(text), config.get("pages"))
-            ]
+            return ToolRunResult(
+                [
+                    watermark_pdf(
+                        inputs[0], output_path, str(text), config.get("pages")
+                    )
+                ]
+            )
         if tool == "page-numbers":
             start = _parse_int(config.get("start"), 1)
-            return [
-                page_numbers_pdf(inputs[0], output_path, start, config.get("pages"))
-            ]
+            return ToolRunResult(
+                [page_numbers_pdf(inputs[0], output_path, start, config.get("pages"))]
+            )
         if tool == "crop":
             margins = config.get("margins") or ""
             if not str(margins).strip():
                 raise ValueError("Margins are required")
-            return [crop_pdf(inputs[0], output_path, str(margins), config.get("pages"))]
+            return ToolRunResult(
+                [crop_pdf(inputs[0], output_path, str(margins), config.get("pages"))]
+            )
         if tool == "redact":
             text = config.get("text") or ""
             if not str(text).strip():
                 raise ValueError("Text to redact is required")
-            return [
-                redact_pdf(inputs[0], output_path, str(text), config.get("pages"))
-            ]
+            return ToolRunResult(
+                [redact_pdf(inputs[0], output_path, str(text), config.get("pages"))]
+            )
         if tool == "compare":
             if len(inputs) != 2:
                 raise ValueError("Two PDF files are required")
-            return [compare_pdfs(inputs[0], inputs[1], output_path)]
+            return ToolRunResult([compare_pdfs(inputs[0], inputs[1], output_path)])
         if tool == "highlight":
             if not inputs:
                 raise ValueError("PDF file is required")
             text = config.get("text") or ""
             if not str(text).strip():
                 raise ValueError("Text to highlight is required")
-            return [
-                highlight_pdf(inputs[0], output_path, str(text), config.get("pages"))
-            ]
+            return ToolRunResult(
+                [
+                    highlight_pdf(
+                        inputs[0], output_path, str(text), config.get("pages")
+                    )
+                ]
+            )
         if tool == "unlock":
             password = config.get("password") or ""
             if not str(password).strip():
                 raise ValueError("Password is required")
-            return [unlock_pdf(inputs[0], output_path, str(password))]
+            return ToolRunResult([unlock_pdf(inputs[0], output_path, str(password))])
         if tool == "protect":
             password = config.get("password") or ""
             if not str(password).strip():
                 raise ValueError("Password is required")
-            return [protect_pdf(inputs[0], output_path, str(password))]
+            return ToolRunResult([protect_pdf(inputs[0], output_path, str(password))])
         if tool == "image-to-pdf":
-            return [image_to_pdf(inputs, output_path)]
+            return ToolRunResult([image_to_pdf(inputs, output_path)])
         if tool == "pdf-to-jpg":
             dpi = _parse_int(config.get("dpi"), 150)
             dpi = min(max(dpi, 72), MAX_DPI)
             images = pdf_to_jpg(inputs[0], temp, dpi)
             zip_path = temp / "pdf_pages.zip"
-            return [zip_outputs(images, zip_path)]
+            return ToolRunResult([zip_outputs(images, zip_path)])
         if tool == "web-to-pdf":
             url = config.get("url")
             if not url:
                 raise ValueError("URL is required")
-            return [web_to_pdf(str(url), output_path)]
+            return ToolRunResult([web_to_pdf(str(url), output_path)])
         if tool == "office-to-pdf":
             if not inputs:
                 raise ValueError("Office file is required")
             converted = office_to_pdf(inputs[0], temp)
-            return [_rename_output(converted, output_path)]
+            return ToolRunResult([_rename_output(converted, output_path)])
         if tool == "pdfa":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_pdfa(inputs[0], output_path)]
+            return ToolRunResult([pdf_to_pdfa(inputs[0], output_path)])
         if tool == "pdf-to-word":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_docx(inputs[0], output_path)]
+            return ToolRunResult([pdf_to_docx(inputs[0], output_path)])
         if tool == "pdf-to-text":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_text(inputs[0], output_path)]
+            return ToolRunResult([pdf_to_text(inputs[0], output_path)])
         if tool == "pdf-to-word-ocr":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_docx_ocr(inputs[0], output_path, config.get("lang"))]
+            return ToolRunResult(
+                [pdf_to_docx_ocr(inputs[0], output_path, config.get("lang"))]
+            )
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_xlsx(inputs[0], output_path)]
+            return ToolRunResult([pdf_to_xlsx(inputs[0], output_path)])
         if tool == "pdf-to-excel-ocr":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return [pdf_to_xlsx_ocr(inputs[0], output_path, config.get("lang"))]
+            return ToolRunResult(
+                [pdf_to_xlsx_ocr(inputs[0], output_path, config.get("lang"))]
+            )
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:

@@ -61,6 +61,7 @@ export async function GET(request: NextRequest): Promise<Response> {
       jobId,
       storageId,
       anonId,
+      allowAnonAccess: disableAuth,
     });
   } catch (error) {
     console.error("Download URL query failed:", error);

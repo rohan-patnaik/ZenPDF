@@ -37,6 +37,7 @@ export default defineSchema({
     progress: v.optional(v.number()),
     errorCode: v.optional(v.string()),
     errorMessage: v.optional(v.string()),
+    toolResult: v.optional(v.any()),
     config: v.optional(v.any()),
     claimedBy: v.optional(v.string()),
     claimExpiresAt: v.optional(v.number()),

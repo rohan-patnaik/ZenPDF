@@ -395,18 +395,102 @@ type JobRecord = {
   outputs?: Array<{ storageId: string; filename: string; sizeBytes?: number }> | null;
   errorCode?: string;
   errorMessage?: string;
+  toolResult?: {
+    status: "success" | "no_change" | "failed";
+    method: string;
+    original_bytes: number;
+    output_bytes: number;
+    savings_bytes: number;
+    savings_percent: number;
+    steps?: Array<{ name: string; ok: boolean; ms: number; notes?: string }>;
+    warnings?: string[];
+  } | null;
   createdAt: number;
+  startedAt?: number;
 };
+
+const parseEnvFloat = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseFloat(value ?? "");
+  return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const estimateCompressTimeoutSeconds = (sizeBytes?: number) => {
+  const override = parseEnvFloat(
+    process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_SECONDS,
+    0,
+  );
+  if (override > 0) {
+    return override;
+  }
+  const base = parseEnvFloat(
+    process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_BASE_SECONDS,
+    120,
+  );
+  const perMb = parseEnvFloat(
+    process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_PER_MB_SECONDS,
+    3,
+  );
+  const maxTimeout = parseEnvFloat(
+    process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_MAX_SECONDS,
+    900,
+  );
+  const sizeMb =
+    sizeBytes === undefined
+      ? 1
+      : Math.max(1, Math.ceil(sizeBytes / (1024 * 1024)));
+  return Math.min(maxTimeout, base + sizeMb * perMb);
+};
+
+const formatMinutesSeconds = (seconds: number) => {
+  const total = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(total / 60);
+  const secs = total % 60;
+  return `${minutes}:${secs.toString().padStart(2, "0")}`;
+};
+
+const formatSavingsPercent = (value: number) => {
+  if (!Number.isFinite(value)) {
+    return "0%";
+  }
+  return `${value.toFixed(1)}%`;
+};
+
+const formatJobTimestamp = (value: number) =>
+  new Date(value).toLocaleString(undefined, {
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 const JobCard = ({
   job,
   onDownload,
+  now,
 }: {
   job: JobRecord;
   onDownload: (jobId: string, storageId: string, filename: string) => void;
+  now: number;
 }) => {
   const inputSize =
     job.inputs && job.inputs.length === 1 ? job.inputs[0]?.sizeBytes : undefined;
+  const compressionResult =
+    job.tool === "compress" ? job.toolResult ?? undefined : undefined;
+  const noChange = compressionResult?.status === "no_change";
+  const hasSavings =
+    compressionResult?.status === "success" &&
+    (compressionResult.savings_bytes ?? 0) > 0;
+  const showCompressTimer =
+    job.tool === "compress" &&
+    (job.status === "queued" || job.status === "running");
+  const timeoutSeconds = showCompressTimer
+    ? estimateCompressTimeoutSeconds(inputSize)
+    : 0;
+  const elapsedSeconds =
+    job.status === "running" && job.startedAt
+      ? Math.floor((now - job.startedAt) / 1000)
+      : 0;
+  const remainingSeconds = Math.max(timeoutSeconds - elapsedSeconds, 0);
 
   return (
     <div className="paper-card p-5">
@@ -416,7 +500,28 @@ const JobCard = ({
           <div className="text-xs text-ink-500">
             Status: {job.status}
             {job.progress !== undefined && ` (${job.progress}%)`}
+            <span className="ml-2 text-[0.65rem]" title={new Date(job.createdAt).toISOString()}>
+              {formatJobTimestamp(job.createdAt)}
+            </span>
+            {noChange && (
+              <span className="ml-2 rounded-full bg-ink-900/10 px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.2em] text-ink-600">
+                No change
+              </span>
+            )}
           </div>
+          {showCompressTimer && (
+            <div className="text-xs text-ink-500">
+              {job.status === "running" && job.startedAt
+                ? `Timeout in ${formatMinutesSeconds(remainingSeconds)}`
+                : `Timeout budget ${formatMinutesSeconds(timeoutSeconds)}`}
+              {" · Based on file size"}
+            </div>
+          )}
+          {noChange && (
+            <div className="text-xs text-ink-500">
+              No meaningful size reduction possible (already optimized or image-heavy).
+            </div>
+          )}
           {job.errorCode && (
             <div className="text-xs text-ink-500">
               {job.errorCode} {job.errorMessage ? `— ${job.errorMessage}` : ""}
@@ -461,6 +566,12 @@ const JobCard = ({
                     {inputSize !== undefined && ` · from ${formatBytes(inputSize)}`}
                   </div>
                 )}
+                {hasSavings && compressionResult && (
+                  <div className="text-[0.65rem] text-ink-500">
+                    Saved {formatSavingsPercent(compressionResult.savings_percent)} (
+                    {formatBytes(compressionResult.savings_bytes)})
+                  </div>
+                )}
               </div>
               <button
                 type="button"
@@ -499,6 +610,7 @@ export default function ToolsPage() {
   const [anonId, setAnonId] = useState<string | null>(() => getOrCreateAnonId());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [devBypass, setDevBypass] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const devModeAvailable = process.env.NODE_ENV === "development";
 
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -508,6 +620,15 @@ export default function ToolsPage() {
     [anonId],
   );
   const jobs = useQuery(api.jobs.listJobs, jobsArgs) as JobRecord[] | undefined;
+
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setNow(Date.now());
+    }, 1000);
+    return () => {
+      window.clearInterval(timer);
+    };
+  }, []);
 
   const tool = useMemo(
     () => TOOLS.find((item) => item.id === activeTool),
@@ -882,6 +1003,26 @@ export default function ToolsPage() {
                   {activeJob.status === "queued" ? "Queued" : "Running"}
                   {activeJob.progress !== undefined && ` • ${activeJob.progress}%`}
                 </div>
+                {activeJob.tool === "compress" && (
+                  <div className="mt-2 text-xs text-ink-500">
+                    {activeJob.status === "running" && activeJob.startedAt
+                      ? `Timeout in ${formatMinutesSeconds(
+                          Math.max(
+                            estimateCompressTimeoutSeconds(
+                              activeJob.inputs?.[0]?.sizeBytes,
+                            ) -
+                              Math.floor((now - activeJob.startedAt) / 1000),
+                            0,
+                          ),
+                        )}`
+                      : `Timeout budget ${formatMinutesSeconds(
+                          estimateCompressTimeoutSeconds(
+                            activeJob.inputs?.[0]?.sizeBytes,
+                          ),
+                        )}`}
+                    {" · Based on file size"}
+                  </div>
+                )}
                 <div className="mt-2 h-2 w-full rounded-full bg-ink-900/10">
                   <div
                     className="h-full rounded-full bg-forest-500"
@@ -920,7 +1061,12 @@ export default function ToolsPage() {
               </div>
             )}
             {(jobs ?? []).map((job) => (
-              <JobCard key={job._id} job={job} onDownload={handleDownload} />
+              <JobCard
+                key={job._id}
+                job={job}
+                onDownload={handleDownload}
+                now={now}
+              />
             ))}
           </div>
         </section>

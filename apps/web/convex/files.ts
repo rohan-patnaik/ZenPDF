@@ -36,9 +36,22 @@ export const getOutputDownloadUrl = query({
     jobId: v.id("jobs"),
     storageId: v.id("_storage"),
     anonId: v.optional(v.string()),
+    allowAnonAccess: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { userId } = await resolveUser(ctx);
+    const allowAnonFallback = args.allowAnonAccess === true;
+    if (allowAnonFallback) {
+      const artifact = await ctx.db
+        .query("artifacts")
+        .withIndex("by_job", (q) => q.eq("jobId", args.jobId))
+        .filter((q) => q.eq(q.field("storageId"), args.storageId))
+        .first();
+      if (!artifact) {
+        return null;
+      }
+      return ctx.storage.getUrl(args.storageId);
+    }
     const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
@@ -56,6 +69,14 @@ export const getOutputDownloadUrl = query({
       (output: { storageId: Id<"_storage"> }) => output.storageId === args.storageId,
     );
     if (!allowed) {
+      return null;
+    }
+    const artifact = await ctx.db
+      .query("artifacts")
+      .withIndex("by_job", (q) => q.eq("jobId", args.jobId))
+      .filter((q) => q.eq(q.field("storageId"), args.storageId))
+      .first();
+    if (!artifact) {
       return null;
     }
     return ctx.storage.getUrl(args.storageId);
