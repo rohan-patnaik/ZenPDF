@@ -7,6 +7,7 @@ import subprocess
 from unittest.mock import patch
 
 import pytest
+import requests
 import fitz
 from docx import Document
 from fpdf import FPDF
@@ -335,6 +336,36 @@ def test_web_to_pdf_blocks_redirects() -> None:
         ):
             with pytest.raises(ValueError):
                 web_to_pdf("https://example.com", temp_path / "redirect.pdf")
+
+
+def test_web_to_pdf_fallbacks_to_hostname() -> None:
+    """Retry HTTPS requests via hostname when IP handshake fails."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"<p>Example</p>")
+
+        class _FailingSession(_DummySession):
+            def get(self, *_args, **_kwargs):
+                raise requests.exceptions.SSLError("handshake failed")
+
+        class _SessionFactory:
+            def __init__(self):
+                self.calls = 0
+
+            def __call__(self):
+                self.calls += 1
+                if self.calls == 1:
+                    return _FailingSession(response)
+                return _DummySession(response)
+
+        factory = _SessionFactory()
+
+        with patch("zenpdf_worker.tools.requests.Session", side_effect=factory), patch(
+            "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
+        ), patch.dict("os.environ", {"ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK": "1"}):
+            output = web_to_pdf("https://example.com", temp_path / "site.pdf")
+
+        assert output.exists()
 
 
 def test_web_to_pdf_limits_body_size() -> None:

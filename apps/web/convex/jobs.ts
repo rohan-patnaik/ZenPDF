@@ -182,6 +182,7 @@ export const createJob = mutation({
       progress: 0,
       errorCode: undefined,
       errorMessage: undefined,
+      toolResult: undefined,
       config: safeConfig,
       claimedBy: undefined,
       claimExpiresAt: undefined,
@@ -296,6 +297,7 @@ export const completeJob = mutation({
     jobId: v.id("jobs"),
     workerId: v.string(),
     outputs: v.array(jobOutput),
+    toolResult: v.optional(v.any()),
     minutesUsed: v.optional(v.number()),
     bytesProcessed: v.optional(v.number()),
     workerToken: v.optional(v.string()),
@@ -318,6 +320,7 @@ export const completeJob = mutation({
       status: "succeeded",
       progress: 100,
       outputs: args.outputs,
+      toolResult: args.toolResult,
       finishedAt: now,
       updatedAt: now,
       errorCode: undefined,
@@ -397,25 +400,54 @@ export const getJob = query({
 });
 
 export const listJobs = query({
-  args: { anonId: v.optional(v.string()) },
+  args: { anonId: v.optional(v.string()), refreshKey: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const { userId } = await resolveUser(ctx);
-    if (userId) {
-      return await ctx.db
-        .query("jobs")
-        .withIndex("by_user", (q) => q.eq("userId", userId))
-        .order("desc")
-        .take(20);
+    const jobs = userId
+      ? await ctx.db
+          .query("jobs")
+          .withIndex("by_user", (q) => q.eq("userId", userId))
+          .order("desc")
+          .take(20)
+      : args.anonId
+        ? await ctx.db
+          .query("jobs")
+          .withIndex("by_anon", (q) => q.eq("anonId", args.anonId))
+          .order("desc")
+          .take(20)
+        : [];
+
+    if (jobs.length === 0) {
+      return jobs;
     }
 
-    if (args.anonId) {
-      return await ctx.db
-        .query("jobs")
-        .withIndex("by_anon", (q) => q.eq("anonId", args.anonId))
-        .order("desc")
-        .take(20);
+    const filtered = [] as typeof jobs;
+
+    for (const job of jobs) {
+      if (job.status !== "succeeded" || !job.outputs || job.outputs.length === 0) {
+        filtered.push(job);
+        continue;
+      }
+
+      const artifacts = await ctx.db
+        .query("artifacts")
+        .withIndex("by_job", (q) => q.eq("jobId", job._id))
+        .collect();
+
+      if (artifacts.length === 0) {
+        continue;
+      }
+
+      const allowed = new Set(artifacts.map((artifact) => artifact.storageId));
+      const outputs = job.outputs.filter((output) => allowed.has(output.storageId));
+
+      if (outputs.length === 0) {
+        continue;
+      }
+
+      filtered.push({ ...job, outputs });
     }
 
-    return [];
+    return filtered;
   },
 });

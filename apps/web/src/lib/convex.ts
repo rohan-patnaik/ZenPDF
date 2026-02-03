@@ -87,7 +87,7 @@ export const api = {
     >("jobs:createJob"),
     listJobs: makeFunctionReference<
       "query",
-      { anonId?: string },
+      { anonId?: string; refreshKey?: number },
       unknown[]
     >("jobs:listJobs"),
   },
