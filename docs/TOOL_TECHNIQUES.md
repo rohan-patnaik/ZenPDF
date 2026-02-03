@@ -84,6 +84,7 @@ Trade-offs:
 - The compression pipeline is intentionally staged to handle malformed PDFs and avoid timeouts.
 - `pdfsizeopt` and `jbig2enc` are optional due to heavier dependencies and more aggressive (lossy) behavior.
 - Ghostscript is guarded by a probe run and skips full compression if the estimate is too slow.
+- `ZENPDF_COMPRESS_PARALLELISM` can run optional heavy steps concurrently (default 1); higher values reduce wall-clock time but increase CPU/memory usage.
 - The worker returns a structured compression result to the UI: status, method, savings, and step timings.
 
 ## Relevant configuration (worker env)
