@@ -11,6 +11,7 @@ import socket
 import subprocess
 import time
 import zipfile
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
@@ -322,11 +323,13 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
                 "ms": elapsed_ms,
             }
 
-    def _record_step(name: str, result: dict | None, notes: str | None = None) -> None:
+    def _make_step_entry(
+        name: str, result: dict | None, notes: str | None = None
+    ) -> dict:
         if result is None:
-            steps.append({"name": name, "ok": False, "ms": 0, "notes": notes or ""})
-            return
+            return {"name": name, "ok": False, "ms": 0, "notes": notes or ""}
         entry = {"name": name, "ok": bool(result["ok"]), "ms": int(result["ms"])}
+
         def _truncate(value: str, limit: int = 300) -> str:
             if len(value) <= limit:
                 return value
@@ -340,7 +343,10 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
             entry["notes"] = _truncate(
                 (result["stderr"] or result.get("stdout") or "").strip()
             )
-        steps.append(entry)
+        return entry
+
+    def _record_step(name: str, result: dict | None, notes: str | None = None) -> None:
+        steps.append(_make_step_entry(name, result, notes))
 
     def _is_valid_pdf(path: Path) -> bool:
         try:
@@ -414,6 +420,7 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
     pdfsizeopt_args = shlex.split(
         os.environ.get("ZENPDF_COMPRESS_PDFSIZEOPT_ARGS", "").strip()
     )
+    parallelism = max(1, _env_int("ZENPDF_COMPRESS_PARALLELISM", 1))
 
     steps: list[dict] = []
     warnings: list[str] = []
@@ -515,8 +522,35 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
     else:
         _record_step("optimize_mutool", None, "skipped: mutool not available")
 
-    image_opt_path = output_path.with_name(f"{output_path.stem}_image_opt.pdf")
-    if enable_image_opt and qpdf:
+    def _current_best_savings_percent() -> float:
+        if not candidates:
+            return 0.0
+        best = min(candidates, key=lambda item: item["size"])
+        if size_bytes == 0:
+            return 0.0
+        return max((size_bytes - best["size"]) / size_bytes * 100, 0.0)
+
+    def _should_run_heavy_steps() -> bool:
+        return _current_best_savings_percent() < min_savings_percent
+
+    def _empty_outcome() -> dict:
+        return {"steps": [], "candidates": [], "temp_paths": [], "warnings": []}
+
+    def _run_image_opt_task() -> dict:
+        outcome = _empty_outcome()
+        image_opt_path = output_path.with_name(
+            f"{output_path.stem}_image_opt.pdf"
+        )
+        outcome["temp_paths"].append(image_opt_path)
+        if not enable_image_opt:
+            return outcome
+        if not qpdf:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "optimize_images_qpdf", None, "skipped: qpdf not available"
+                )
+            )
+            return outcome
         quality = _env_int("ZENPDF_QPDF_OI_QUALITY", 75)
         min_width = _env_int("ZENPDF_QPDF_OI_MIN_WIDTH", 128)
         min_height = _env_int("ZENPDF_QPDF_OI_MIN_HEIGHT", 128)
@@ -536,124 +570,205 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
         if qpdf_keep_inline:
             cmd.insert(3, "--keep-inline-images")
         result = _run_cmd(cmd, timeout_seconds)
-        _record_step("optimize_images_qpdf", result)
+        outcome["steps"].append(_make_step_entry("optimize_images_qpdf", result))
         if result["ok"]:
-            _add_candidate(image_opt_path, "qpdf_optimize_images", "image_opt")
-    elif enable_image_opt:
-        _record_step("optimize_images_qpdf", None, "skipped: qpdf not available")
-
-    def _current_best_savings_percent() -> float:
-        if not candidates:
-            return 0.0
-        best = min(candidates, key=lambda item: item["size"])
-        if size_bytes == 0:
-            return 0.0
-        return max((size_bytes - best["size"]) / size_bytes * 100, 0.0)
-
-    def _should_run_heavy_steps() -> bool:
-        return _current_best_savings_percent() < min_savings_percent
-
-    pdfsizeopt_path = output_path.with_name(f"{output_path.stem}_pdfsizeopt.pdf")
-    probe_output: Path | None = None
-    gs_output: Path | None = None
-    if enable_jbig2 and not jbig2:
-        _record_step("optimize_pdfsizeopt", None, "skipped: jbig2enc not available")
-    elif (enable_pdfsizeopt or enable_jbig2) and pdfsizeopt:
-        if _should_run_heavy_steps():
-            cmd = [pdfsizeopt]
-            if enable_jbig2:
-                cmd.append("--use-image-optimizer=jbig2")
-            if pdfsizeopt_args:
-                cmd.extend(pdfsizeopt_args)
-            cmd.extend([str(base_path), str(pdfsizeopt_path)])
-            result = _run_cmd(cmd, timeout_seconds)
-            _record_step("optimize_pdfsizeopt", result)
-            if result["ok"]:
-                method = "pdfsizeopt_jbig2" if enable_jbig2 else "pdfsizeopt"
-                _add_candidate(pdfsizeopt_path, method, "pdfsizeopt")
-        else:
-            _record_step("optimize_pdfsizeopt", None, "skipped: already reduced")
-    elif enable_pdfsizeopt or enable_jbig2:
-        _record_step("optimize_pdfsizeopt", None, "skipped: pdfsizeopt not available")
-
-    if ghostscript and size_mb >= gs_min_size_mb:
-        if _current_best_savings_percent() < min_savings_percent:
-            pdfsettings = "/screen" if gs_preset == "screen" else "/ebook"
-            gs_flags = [
-                "-dSAFER",
-                "-dBATCH",
-                "-dNOPAUSE",
-                "-sDEVICE=pdfwrite",
-                "-dCompatibilityLevel=1.4",
-                f"-dPDFSETTINGS={pdfsettings}",
-            ]
-            if gs_extra_flags:
-                gs_flags += [
-                    "-dDetectDuplicateImages=true",
-                    "-dDownsampleColorImages=true",
-                    "-dDownsampleGrayImages=true",
-                    "-dDownsampleMonoImages=true",
-                    "-dColorImageResolution=120",
-                    "-dGrayImageResolution=120",
-                    "-dMonoImageResolution=300",
-                ]
-
-            def _gs_cmd(
-                source: Path,
-                target: Path,
-                first_page: int | None = None,
-                last_page: int | None = None,
-                newpdf: bool | None = None,
-            ) -> list[str]:
-                cmd = [ghostscript, *gs_flags]
-                if first_page is not None and last_page is not None:
-                    cmd.extend([f"-dFirstPage={first_page}", f"-dLastPage={last_page}"])
-                if newpdf is False:
-                    cmd.append("-dNEWPDF=false")
-                cmd.append(f"-sOutputFile={target}")
-                cmd.append(str(source))
-                return cmd
-
-            probe_output = output_path.with_name(f"{output_path.stem}_gs_probe.pdf")
-            probe_result = _run_cmd(
-                _gs_cmd(gs_input_path, probe_output, 1, probe_pages),
-                probe_timeout,
+            outcome["candidates"].append(
+                (image_opt_path, "qpdf_optimize_images", "image_opt")
             )
-            probe_ok = probe_result["ok"]
-            probe_notes = None
-            if probe_ok and probe_pages > 0:
-                estimated_ms = int((probe_result["ms"] / probe_pages) * pages)
-                if estimated_ms > timeout_seconds * 1000:
-                    probe_ok = False
-                    probe_notes = "probe too slow, skipping full run"
-            _record_step("ghostscript_probe", probe_result, probe_notes)
-            if probe_ok:
-                gs_output = output_path.with_name(f"{output_path.stem}_gs.pdf")
-                full_result = _run_cmd(
-                    _gs_cmd(gs_input_path, gs_output),
+        return outcome
+
+    def _run_pdfsizeopt_task(should_run: bool) -> dict:
+        outcome = _empty_outcome()
+        pdfsizeopt_path = output_path.with_name(
+            f"{output_path.stem}_pdfsizeopt.pdf"
+        )
+        outcome["temp_paths"].append(pdfsizeopt_path)
+        if not (enable_pdfsizeopt or enable_jbig2):
+            return outcome
+        if enable_jbig2 and not jbig2:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "optimize_pdfsizeopt", None, "skipped: jbig2enc not available"
+                )
+            )
+            return outcome
+        if not pdfsizeopt:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "optimize_pdfsizeopt", None, "skipped: pdfsizeopt not available"
+                )
+            )
+            return outcome
+        if not should_run:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "optimize_pdfsizeopt", None, "skipped: already reduced"
+                )
+            )
+            return outcome
+        cmd = [pdfsizeopt]
+        if enable_jbig2:
+            cmd.append("--use-image-optimizer=jbig2")
+        if pdfsizeopt_args:
+            cmd.extend(pdfsizeopt_args)
+        cmd.extend([str(base_path), str(pdfsizeopt_path)])
+        result = _run_cmd(cmd, timeout_seconds)
+        outcome["steps"].append(_make_step_entry("optimize_pdfsizeopt", result))
+        if result["ok"]:
+            method = "pdfsizeopt_jbig2" if enable_jbig2 else "pdfsizeopt"
+            outcome["candidates"].append((pdfsizeopt_path, method, "pdfsizeopt"))
+        return outcome
+
+    def _run_ghostscript_task(should_run: bool) -> dict:
+        outcome = _empty_outcome()
+        if not ghostscript:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "ghostscript_full", None, "skipped: ghostscript not available"
+                )
+            )
+            return outcome
+        if size_mb < gs_min_size_mb:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "ghostscript_full", None, "skipped: below size threshold"
+                )
+            )
+            return outcome
+        if not should_run:
+            outcome["steps"].append(
+                _make_step_entry(
+                    "ghostscript_full", None, "skipped: already reduced"
+                )
+            )
+            return outcome
+
+        pdfsettings = "/screen" if gs_preset == "screen" else "/ebook"
+        gs_flags = [
+            "-dSAFER",
+            "-dBATCH",
+            "-dNOPAUSE",
+            "-sDEVICE=pdfwrite",
+            "-dCompatibilityLevel=1.4",
+            f"-dPDFSETTINGS={pdfsettings}",
+        ]
+        if gs_extra_flags:
+            gs_flags += [
+                "-dDetectDuplicateImages=true",
+                "-dDownsampleColorImages=true",
+                "-dDownsampleGrayImages=true",
+                "-dDownsampleMonoImages=true",
+                "-dColorImageResolution=120",
+                "-dGrayImageResolution=120",
+                "-dMonoImageResolution=300",
+            ]
+
+        def _gs_cmd(
+            source: Path,
+            target: Path,
+            first_page: int | None = None,
+            last_page: int | None = None,
+            newpdf: bool | None = None,
+        ) -> list[str]:
+            cmd = [ghostscript, *gs_flags]
+            if first_page is not None and last_page is not None:
+                cmd.extend([f"-dFirstPage={first_page}", f"-dLastPage={last_page}"])
+            if newpdf is False:
+                cmd.append("-dNEWPDF=false")
+            cmd.append(f"-sOutputFile={target}")
+            cmd.append(str(source))
+            return cmd
+
+        probe_output = output_path.with_name(f"{output_path.stem}_gs_probe.pdf")
+        gs_output = output_path.with_name(f"{output_path.stem}_gs.pdf")
+        outcome["temp_paths"].extend([probe_output, gs_output])
+
+        probe_result = _run_cmd(
+            _gs_cmd(gs_input_path, probe_output, 1, probe_pages),
+            probe_timeout,
+        )
+        probe_ok = probe_result["ok"]
+        probe_notes = None
+        if probe_ok and probe_pages > 0:
+            estimated_ms = int((probe_result["ms"] / probe_pages) * pages)
+            if estimated_ms > timeout_seconds * 1000:
+                probe_ok = False
+                probe_notes = "probe too slow, skipping full run"
+        outcome["steps"].append(
+            _make_step_entry("ghostscript_probe", probe_result, probe_notes)
+        )
+        if probe_ok:
+            full_result = _run_cmd(
+                _gs_cmd(gs_input_path, gs_output),
+                timeout_seconds,
+            )
+            outcome["steps"].append(_make_step_entry("ghostscript_full", full_result))
+            if full_result["ok"]:
+                outcome["candidates"].append((gs_output, "ghostscript", "ghostscript"))
+            else:
+                retry_result = _run_cmd(
+                    _gs_cmd(gs_input_path, gs_output, newpdf=False),
                     timeout_seconds,
                 )
-                _record_step("ghostscript_full", full_result)
-                if full_result["ok"] and _add_candidate(
-                    gs_output, "ghostscript", "ghostscript"
-                ):
-                    pass
-                else:
-                    retry_result = _run_cmd(
-                        _gs_cmd(gs_input_path, gs_output, newpdf=False),
-                        timeout_seconds,
+                outcome["steps"].append(
+                    _make_step_entry("ghostscript_retry", retry_result)
+                )
+                if retry_result["ok"]:
+                    outcome["candidates"].append(
+                        (gs_output, "ghostscript", "ghostscript_retry")
                     )
-                    _record_step("ghostscript_retry", retry_result)
-                    if retry_result["ok"]:
-                        _add_candidate(gs_output, "ghostscript", "ghostscript_retry")
-            else:
-                _record_step("ghostscript_full", None, "skipped: probe failed")
         else:
-            _record_step("ghostscript_full", None, "skipped: already reduced")
-    elif ghostscript:
-        _record_step("ghostscript_full", None, "skipped: below size threshold")
+            outcome["steps"].append(
+                _make_step_entry("ghostscript_full", None, "skipped: probe failed")
+            )
+        return outcome
+
+    should_run_heavy = _should_run_heavy_steps()
+
+    task_specs: list[tuple[str, Callable[[], dict]]] = []
+    if enable_image_opt:
+        task_specs.append(("image_opt", _run_image_opt_task))
+    if enable_pdfsizeopt or enable_jbig2:
+        task_specs.append(
+            ("pdfsizeopt", lambda: _run_pdfsizeopt_task(should_run_heavy))
+        )
+    task_specs.append(("ghostscript", lambda: _run_ghostscript_task(should_run_heavy)))
+
+    task_results: dict[str, dict] = {}
+    if parallelism > 1 and len(task_specs) > 1:
+        max_workers = min(parallelism, len(task_specs))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            future_map = {
+                executor.submit(task): name for name, task in task_specs
+            }
+            for future in as_completed(future_map):
+                name = future_map[future]
+                try:
+                    task_results[name] = future.result()
+                except Exception as error:  # noqa: BLE001
+                    task_results[name] = {
+                        "steps": [
+                            _make_step_entry(
+                                name, {"ok": False, "ms": 0, "stderr": str(error)}
+                            )
+                        ],
+                        "candidates": [],
+                        "temp_paths": [],
+                        "warnings": [f"{name} failed: {error}"],
+                    }
     else:
-        _record_step("ghostscript_full", None, "skipped: ghostscript not available")
+        for name, task in task_specs:
+            task_results[name] = task()
+
+    temp_paths: list[Path] = [normalized_path, optimized_path, mutool_opt_path]
+    for name, _ in task_specs:
+        outcome = task_results.get(name, _empty_outcome())
+        steps.extend(outcome.get("steps", []))
+        for warning in outcome.get("warnings", []):
+            warnings.append(warning)
+        for path, method, label in outcome.get("candidates", []):
+            _add_candidate(path, method, label)
+        temp_paths.extend(outcome.get("temp_paths", []))
 
     if not candidates:
         raise ValueError("PDF appears to be corrupted or unreadable.")
@@ -665,18 +780,6 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
         warnings.append("No smaller output found; preserving original content.")
     if best["path"] != output_path:
         shutil.copyfile(best["path"], output_path)
-
-    temp_paths = [
-        normalized_path,
-        optimized_path,
-        mutool_opt_path,
-        image_opt_path,
-        pdfsizeopt_path,
-    ]
-    if probe_output is not None:
-        temp_paths.append(probe_output)
-    if gs_output is not None:
-        temp_paths.append(gs_output)
 
     for path in temp_paths:
         if path in {input_path, output_path}:
