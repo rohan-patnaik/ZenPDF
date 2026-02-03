@@ -11,7 +11,12 @@ if command -v python3.11 >/dev/null 2>&1; then
 elif command -v python3 >/dev/null 2>&1; then
   PYTHON="python3"
 elif command -v python >/dev/null 2>&1; then
-  PYTHON="python"
+  if python --version 2>&1 | grep -q "Python 3"; then
+    PYTHON="python"
+  else
+    echo "Error: no Python 3 interpreter found. Install Python 3.11+ and ensure it's on PATH." >&2
+    exit 1
+  fi
 else
   echo "Error: no Python interpreter found. Install Python 3.11+ and ensure it's on PATH." >&2
   exit 1

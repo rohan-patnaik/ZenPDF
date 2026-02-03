@@ -409,28 +409,28 @@ type JobRecord = {
   startedAt?: number;
 };
 
-const parseEnvInt = (value: string | undefined, fallback: number) => {
-  const parsed = Number.parseInt(value ?? "", 10);
+const parseEnvFloat = (value: string | undefined, fallback: number) => {
+  const parsed = Number.parseFloat(value ?? "");
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
 const estimateCompressTimeoutSeconds = (sizeBytes?: number) => {
-  const override = parseEnvInt(
+  const override = parseEnvFloat(
     process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_SECONDS,
     0,
   );
   if (override > 0) {
     return override;
   }
-  const base = parseEnvInt(
+  const base = parseEnvFloat(
     process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_BASE_SECONDS,
     120,
   );
-  const perMb = parseEnvInt(
+  const perMb = parseEnvFloat(
     process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_PER_MB_SECONDS,
     3,
   );
-  const maxTimeout = parseEnvInt(
+  const maxTimeout = parseEnvFloat(
     process.env.NEXT_PUBLIC_COMPRESS_TIMEOUT_MAX_SECONDS,
     900,
   );
@@ -448,7 +448,7 @@ const formatMinutesSeconds = (seconds: number) => {
   return `${minutes}:${secs.toString().padStart(2, "0")}`;
 };
 
-const formatPercent = (value: number) => {
+const formatSavingsPercent = (value: number) => {
   if (!Number.isFinite(value)) {
     return "0%";
   }
@@ -568,7 +568,7 @@ const JobCard = ({
                 )}
                 {hasSavings && compressionResult && (
                   <div className="text-[0.65rem] text-ink-500">
-                    Saved {formatPercent(compressionResult.savings_percent)} (
+                    Saved {formatSavingsPercent(compressionResult.savings_percent)} (
                     {formatBytes(compressionResult.savings_bytes)})
                   </div>
                 )}

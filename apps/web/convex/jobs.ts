@@ -400,6 +400,7 @@ export const getJob = query({
 });
 
 export const listJobs = query({
+  // refreshKey is unused but triggers reactivity when changed
   args: { anonId: v.optional(v.string()), refreshKey: v.optional(v.number()) },
   handler: async (ctx, args) => {
     const { userId } = await resolveUser(ctx);

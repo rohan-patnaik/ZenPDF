@@ -41,7 +41,6 @@ export const getOutputDownloadUrl = query({
   handler: async (ctx, args) => {
     const { userId } = await resolveUser(ctx);
     const allowAnonFallback = args.allowAnonAccess === true;
-    const job = await ctx.db.get(args.jobId);
     if (allowAnonFallback) {
       const artifact = await ctx.db
         .query("artifacts")
@@ -53,6 +52,7 @@ export const getOutputDownloadUrl = query({
       }
       return ctx.storage.getUrl(args.storageId);
     }
+    const job = await ctx.db.get(args.jobId);
     if (!job) {
       return null;
     }

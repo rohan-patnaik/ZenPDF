@@ -52,7 +52,7 @@ Trade-offs:
 Decision Rationale:
 - Start with repairs to handle malformed PDFs before expensive compression.
 - Use lossless optimization first to avoid quality loss when possible.
-- Run heavier/losssy stages only when savings are meaningful.
+- Run heavier/lossy stages only when savings are meaningful.
 
 Trade-offs:
 - More stages increases complexity and intermediate file I/O.
