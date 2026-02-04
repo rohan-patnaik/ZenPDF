@@ -55,7 +55,10 @@ type WorkflowListItem = {
 export const listWorkflows = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await requirePremiumUser(ctx);
+    const { userId, tier } = await resolveUser(ctx);
+    if (!userId || tier !== "PREMIUM") {
+      return [] as WorkflowListItem[];
+    }
 
     const memberships = await ctx.db
       .query("teamMembers")

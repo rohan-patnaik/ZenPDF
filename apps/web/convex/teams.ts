@@ -68,7 +68,10 @@ type TeamSummary = {
 export const listTeams = query({
   args: {},
   handler: async (ctx) => {
-    const userId = await requirePremiumUser(ctx);
+    const { userId, tier } = await resolveUser(ctx);
+    if (!userId || tier !== "PREMIUM") {
+      return [] as TeamSummary[];
+    }
     const memberships = await ctx.db
       .query("teamMembers")
       .withIndex("by_user", (q) => q.eq("userId", userId))
