@@ -12,7 +12,7 @@ export default function SiteHeader() {
 
   return (
     <header className="relative z-20">
-      <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-6">
+      <div className="wood-nav mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
         <Link href="/" className="flex items-center gap-3">
           <div className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-ink-900/15 bg-paper-100 text-lg font-display text-ink-900 shadow-paper">
             Z

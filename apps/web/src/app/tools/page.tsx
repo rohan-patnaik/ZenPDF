@@ -843,7 +843,7 @@ export default function ToolsPage() {
                   type="button"
                   onClick={() => selectTool(item.id)}
                   aria-pressed={item.id === activeTool}
-                  className={`paper-card w-full p-4 text-left transition duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-500/40 hover:shadow-paper-lift active:translate-y-0.5 active:shadow-paper ${
+                  className={`paper-card tool-card w-full p-4 text-left transition duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-500/40 hover:shadow-paper-lift active:translate-y-0.5 active:shadow-paper ${
                     item.id === activeTool
                       ? "border-forest-600/60 ring-2 ring-forest-600/20"
                       : "hover:border-forest-600/30 hover:ring-1 hover:ring-forest-600/10"
