@@ -62,6 +62,7 @@ export default defineSchema({
         }),
       ),
     ),
+    toolResult: v.optional(v.any()),
     createdAt: v.number(),
     updatedAt: v.number(),
   })

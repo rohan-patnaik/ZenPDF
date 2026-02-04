@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 import requests
 
@@ -120,7 +120,7 @@ MAX_DPI = 300
 class ToolRunResult:
     """Return value for a tool run, including output paths and metadata."""
     outputs: List[Path]
-    result: Dict[str, Any] | None = None
+    tool_result: Optional[Dict[str, Any]] = None
 
 
 class ZenPdfWorker:
@@ -175,7 +175,7 @@ class ZenPdfWorker:
                     "jobId": job_id,
                     "workerId": self.worker_id,
                     "outputs": output_payload,
-                    "toolResult": run_result.result,
+                    "toolResult": run_result.tool_result,
                     "minutesUsed": elapsed_minutes,
                     "bytesProcessed": bytes_processed,
                     "workerToken": self.worker_token,
@@ -306,8 +306,8 @@ class ZenPdfWorker:
             zip_path = temp / "split_output.zip"
             return ToolRunResult([zip_outputs(outputs, zip_path)])
         if tool == "compress":
-            compressed_path, result = compress_pdf(inputs[0], output_path)
-            return ToolRunResult([compressed_path], result)
+            compressed_path, tool_result = compress_pdf(inputs[0], output_path)
+            return ToolRunResult([compressed_path], tool_result)
         if tool == "repair":
             return ToolRunResult([repair_pdf(inputs[0], output_path)])
         if tool == "rotate":

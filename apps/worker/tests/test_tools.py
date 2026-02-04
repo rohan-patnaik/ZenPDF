@@ -3,6 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
+import shutil
 import subprocess
 from unittest.mock import patch
 
@@ -18,6 +19,7 @@ from pypdf import PdfReader, PdfWriter
 from zenpdf_worker.tools import (
     MAX_WEB_BYTES,
     compare_pdfs,
+    compress_pdf,
     crop_pdf,
     highlight_pdf,
     html_to_pdf,
@@ -66,6 +68,20 @@ def _make_text_pdf(path: Path, text: str) -> None:
     pdf.set_font("Helvetica", size=14)
     pdf.text(10, 20, text)
     pdf.output(str(path))
+
+
+def _make_image_pdf(path: Path) -> None:
+    """Create a single-page PDF containing a raster image."""
+    image = Image.new("RGB", (300, 300), color=(120, 140, 180))
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        image_path = temp_path / "image.png"
+        image.save(image_path)
+        document = fitz.open()
+        page = document.new_page(width=300, height=300)
+        page.insert_image(fitz.Rect(0, 0, 300, 300), filename=str(image_path))
+        document.save(str(path))
+        document.close()
 
 
 def _make_pdf_with_metadata(path: Path, title: str) -> None:
@@ -424,6 +440,59 @@ def test_pdf_to_docx_and_xlsx_ocr() -> None:
         values = [cell.value for cell in sheet["A"] if cell.value]
         assert "First sheet" in values
         assert "Second sheet" in values
+
+
+def test_compress_pdf_detects_image_heavy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Classify an image-heavy PDF and return compression metadata."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "image.pdf"
+        output = temp_path / "output.pdf"
+        _make_image_pdf(source)
+
+        monkeypatch.setattr(shutil, "which", lambda _tool: None)
+        monkeypatch.setenv("ZENPDF_COMPRESS_SAVINGS_THRESHOLD_PCT", "0")
+        monkeypatch.setenv("ZENPDF_COMPRESS_MIN_SAVINGS_BYTES", "0")
+        monkeypatch.setenv("ZENPDF_COMPRESS_AUTO_IMAGE_HEAVY", "1")
+        monkeypatch.setenv("ZENPDF_COMPRESS_TIMEOUT_SECONDS", "5")
+
+        _, result = compress_pdf(source, output)
+        assert result["image_metrics"]["image_heavy"] is True
+
+
+def test_compress_pdf_detects_text_heavy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Classify a text-heavy PDF and return compression metadata."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "text.pdf"
+        output = temp_path / "output.pdf"
+        _make_text_pdf(source, "Hello ZenPDF")
+
+        monkeypatch.setattr(shutil, "which", lambda _tool: None)
+        monkeypatch.setenv("ZENPDF_COMPRESS_SAVINGS_THRESHOLD_PCT", "0")
+        monkeypatch.setenv("ZENPDF_COMPRESS_MIN_SAVINGS_BYTES", "0")
+        monkeypatch.setenv("ZENPDF_COMPRESS_AUTO_IMAGE_HEAVY", "1")
+        monkeypatch.setenv("ZENPDF_COMPRESS_TIMEOUT_SECONDS", "5")
+
+        _, result = compress_pdf(source, output)
+        assert result["image_metrics"]["image_heavy"] is False
+
+
+def test_compress_pdf_rejects_encrypted_pdf(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reject encrypted PDFs before compression."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "encrypted.pdf"
+        output = temp_path / "output.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=300, height=300)
+        writer.encrypt("secret")
+        with source.open("wb") as handle:
+            writer.write(handle)
+
+        monkeypatch.setattr(shutil, "which", lambda _tool: None)
+        with pytest.raises(ValueError, match="PDF is encrypted"):
+            compress_pdf(source, output)
 
 
 def test_pdfa_requires_ghostscript(monkeypatch: pytest.MonkeyPatch) -> None:
