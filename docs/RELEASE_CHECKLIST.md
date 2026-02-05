@@ -14,5 +14,5 @@
 
 ## Post-release
 - Run smoke tests on core tools and downloads.
-- Validate Usage & Capacity and workflows pages.
+- Validate Usage & Capacity and tools pages.
 - Monitor logs and metrics for 24 hours.

@@ -13,9 +13,9 @@ const shouldBypassAuth = () =>
   process.env.ZENPDF_DISABLE_AUTH === "1" &&
   process.env.NODE_ENV !== "production";
 
-const clerkHandler = clerkMiddleware((auth, req) => {
+const clerkHandler = clerkMiddleware(async (auth, req) => {
   if (!isPublicRoute(req)) {
-    return auth.protect();
+    await auth.protect();
   }
 });
 

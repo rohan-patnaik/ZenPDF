@@ -135,37 +135,4 @@ export default defineSchema({
     status: v.string(),
     updatedAt: v.number(),
   }).index("by_month", ["month"]),
-
-  workflows: defineTable({
-    ownerId: v.id("users"),
-    teamId: v.optional(v.id("teams")),
-    name: v.string(),
-    description: v.optional(v.string()),
-    steps: v.array(
-      v.object({
-        tool: v.string(),
-        config: v.optional(v.any()),
-      }),
-    ),
-    createdAt: v.number(),
-    updatedAt: v.number(),
-  })
-    .index("by_owner", ["ownerId", "createdAt"])
-    .index("by_team", ["teamId", "createdAt"]),
-
-  teams: defineTable({
-    name: v.string(),
-    ownerId: v.id("users"),
-    createdAt: v.number(),
-  }).index("by_owner", ["ownerId"]),
-
-  teamMembers: defineTable({
-    teamId: v.id("teams"),
-    userId: v.id("users"),
-    role: v.string(),
-    createdAt: v.number(),
-  })
-    .index("by_team", ["teamId"])
-    .index("by_user", ["userId"])
-    .index("by_team_user", ["teamId", "userId"]),
 });

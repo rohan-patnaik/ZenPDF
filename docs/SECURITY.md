@@ -7,11 +7,11 @@
 ## Principles
 - Least privilege and default-deny for sensitive actions.
 - Minimize data retention; expire artifacts via TTL.
-- Validate inputs server-side for every tool and workflow.
+- Validate inputs server-side for every tool.
 
 ## Identity and Access
 - Clerk handles auth; only Google sign-in enabled.
-- Convex functions enforce tier and team membership.
+- Convex functions enforce tier and job ownership.
 - Premium access allowlisted via environment variables.
 
 ## Secrets and Config

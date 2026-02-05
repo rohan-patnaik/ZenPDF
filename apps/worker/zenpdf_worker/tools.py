@@ -5,10 +5,12 @@ from __future__ import annotations
 import ipaddress
 import math
 import os
+import json
 import shlex
 import shutil
 import socket
 import subprocess
+import tempfile
 import time
 import uuid
 import zipfile
@@ -16,7 +18,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
-from typing import Callable, Iterable, List, Sequence, Tuple
+from typing import Any, Callable, Iterable, List, Sequence, Tuple
 from urllib.parse import urlparse
 
 import img2pdf
@@ -26,7 +28,7 @@ from docx import Document
 from fpdf import FPDF
 from openpyxl import Workbook
 from PIL import Image
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
 from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
 
@@ -34,6 +36,15 @@ try:
     import pytesseract
 except ImportError:  # pragma: no cover - optional dependency for OCR tools
     pytesseract = None
+
+try:
+    from pptx import Presentation
+except ImportError:  # pragma: no cover - optional dependency for PPTX output
+    Presentation = None
+
+
+OCR_DPI = 300
+DEFAULT_OCR_LANG = os.getenv("ZENPDF_OCR_LANG", "eng")
 
 
 def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
@@ -202,6 +213,31 @@ def _build_overlay_page(
         pdf_bytes = bytes(pdf_output)
     overlay_reader = PdfReader(BytesIO(pdf_bytes))
     return overlay_reader.pages[0]
+
+
+def _merge_overlay_page(
+    page: Any,
+    overlay: Any,
+    box: Any,
+) -> None:
+    """
+    Merge an overlay page onto a target PDF page, honoring crop box offsets when present.
+    
+    If the crop box origin is not at (0, 0), translates the overlay so it aligns with the visible page region.
+    Falls back to a direct merge if transformed merge is unavailable.
+    """
+    try:
+        lower_left = box.lower_left
+        tx = float(lower_left[0])
+        ty = float(lower_left[1])
+    except Exception:
+        tx = 0.0
+        ty = 0.0
+
+    if (tx or ty) and hasattr(page, "merge_transformed_page"):
+        page.merge_transformed_page(overlay, Transformation().translate(tx, ty))
+    else:
+        page.merge_page(overlay)
 
 
 def merge_pdfs(inputs: Sequence[Path], output_path: Path) -> Path:
@@ -1149,28 +1185,33 @@ def watermark_pdf(
     target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
-            width = float(page.mediabox.width)
-            height = float(page.mediabox.height)
+            box = page.cropbox if hasattr(page, "cropbox") else page.mediabox
+            width = float(box.upper_right[0] - box.lower_left[0])
+            height = float(box.upper_right[1] - box.lower_left[1])
 
             def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
                 """
-                Render centered overlay text onto the provided PDF page area.
+                Render a large diagonal watermark from bottom-left to top-right.
                 
-                Calculates a font size from the smaller of the page width and height (clamped to the range 18-48), configures a unicode-capable font if required, sets a medium-gray text color, and writes the overlay text centered horizontally at the vertical midpoint of the page.
+                Calculates a font size from the smaller of the page width and height (clamped to 28-72), configures a unicode-capable font if required, sets a light gray color, and draws the text centered along a diagonal using rotation.
                 
                 Parameters:
                     pdf (FPDF): The FPDF instance representing the overlay page to draw on.
                     width_mm (float): Page width in millimeters.
                     height_mm (float): Page height in millimeters.
                 """
-                font_size = min(max(int(min(width_mm, height_mm) * 0.12), 18), 48)
+                font_size = min(max(int(min(width_mm, height_mm) * 0.2), 28), 120)
                 _set_overlay_font(pdf, text, font_size)
-                pdf.set_text_color(160, 160, 160)
-                pdf.set_xy(0, height_mm / 2)
-                pdf.cell(width_mm, 10, text, align="C")
+                pdf.set_text_color(165, 165, 165)
+                angle = -math.degrees(math.atan2(height_mm, width_mm))
+                center_x = width_mm / 2
+                center_y = height_mm / 2
+                with pdf.rotation(angle, x=center_x, y=center_y):
+                    pdf.set_xy(0, center_y)
+                    pdf.cell(width_mm, 10, text, align="C")
 
             overlay = _build_overlay_page(width, height, _draw)
-            page.merge_page(overlay)
+            _merge_overlay_page(page, overlay, box)
         writer.add_page(page)
     _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
@@ -1202,15 +1243,16 @@ def page_numbers_pdf(
     target_pages = _resolve_page_selection(pages, total_pages)
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
-            width = float(page.mediabox.width)
-            height = float(page.mediabox.height)
+            box = page.cropbox if hasattr(page, "cropbox") else page.mediabox
+            width = float(box.upper_right[0] - box.lower_left[0])
+            height = float(box.upper_right[1] - box.lower_left[1])
             number = start + index - 1
 
             def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
                 """
-                Draws a right-aligned numeric footer near the bottom edge of the overlay page.
+                Draws a centered numeric footer near the bottom edge of the overlay page.
                 
-                Positions and renders the page number (captured from the surrounding scope) as a footer using a font size chosen to fit the page: the size is proportional to the smaller page dimension and clamped to the range 8-16 points. The rendered text is right-aligned with a 10 mm right/bottom margin and uses a muted gray color.
+                Positions and renders the page number (captured from the surrounding scope) as a footer using a font size chosen to fit the page: the size is proportional to the smaller page dimension and clamped to the range 8-16 points. The rendered text is centered with a 10 mm bottom margin and uses a muted gray color.
                 
                 Parameters:
                     pdf (FPDF): The FPDF instance used to draw on the overlay page.
@@ -1225,10 +1267,10 @@ def page_numbers_pdf(
                 pdf.set_text_color(60, 60, 60)
                 margin = 10
                 pdf.set_xy(0, height_mm - margin)
-                pdf.cell(width_mm - margin, 6, str(number), align="R")
+                pdf.cell(width_mm, 6, str(number), align="C")
 
             overlay = _build_overlay_page(width, height, _draw)
-            page.merge_page(overlay)
+            _merge_overlay_page(page, overlay, box)
         writer.add_page(page)
     _copy_metadata(writer, reader)
     with output_path.open("wb") as handle:
@@ -1285,7 +1327,7 @@ def crop_pdf(
     return output_path
 
 
-def unlock_pdf(input_path: Path, output_path: Path, password: str) -> Path:
+def unlock_pdf(input_path: Path, output_path: Path, password: str = "") -> Path:
     """
     Remove password protection from the PDF at input_path and write the unlocked PDF to output_path.
     
@@ -1302,11 +1344,55 @@ def unlock_pdf(input_path: Path, output_path: Path, password: str) -> Path:
     Raises:
         ValueError: If the PDF is encrypted and the provided password does not unlock it.
     """
+    qpdf = shutil.which("qpdf")
+    if qpdf:
+        password_file: Path | None = None
+        try:
+            if not password:
+                requires = subprocess.run(
+                    [qpdf, "--requires-password", str(input_path)],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=10,
+                )
+                if requires.returncode == 0:
+                    raise ValueError("Password required to unlock this PDF")
+                if requires.returncode == 2:
+                    shutil.copyfile(input_path, output_path)
+                    return output_path
+            if password:
+                with tempfile.NamedTemporaryFile(
+                    mode="w",
+                    encoding="utf-8",
+                    delete=False,
+                ) as handle:
+                    handle.write(password)
+                    password_file = Path(handle.name)
+                password_file.chmod(0o600)
+            cmd = [qpdf, "--decrypt", str(input_path), str(output_path)]
+            if password_file is not None:
+                cmd.insert(1, f"--password-file={password_file}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=60,
+            )
+            if result.returncode == 0 and output_path.exists():
+                return output_path
+        except subprocess.TimeoutExpired as error:
+            raise RuntimeError("Unlocking timed out") from error
+        finally:
+            if password_file is not None:
+                password_file.unlink(missing_ok=True)
+
     reader = PdfReader(str(input_path))
     if reader.is_encrypted:
-        result = reader.decrypt(password)
+        result = reader.decrypt(password or "")
         if result == 0:
-            raise ValueError("Unable to unlock PDF")
+            raise ValueError("Password required to unlock this PDF")
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
@@ -1498,13 +1584,18 @@ def pdf_to_jpg(input_path: Path, output_dir: Path, dpi: int = 150) -> List[Path]
         scale = dpi / 72
         matrix = fitz.Matrix(scale, scale)
         outputs: List[Path] = []
+        stem = input_path.stem
+        if "_" in stem:
+            prefix, remainder = stem.split("_", 1)
+            if prefix.isdigit() and len(prefix) == 2:
+                stem = remainder
         for index in range(document.page_count):
             page = document.load_page(index)
             render = getattr(page, "get_pixmap", None)
             if not callable(render):
                 raise ValueError("PDF renderer unavailable")
             pix = render(matrix=matrix)
-            output_path = output_dir / f"page_{index + 1}.jpg"
+            output_path = output_dir / f"{stem}_{index + 1}.jpg"
             saver = getattr(pix, "save", None)
             if not callable(saver):
                 raise ValueError("Rendered page cannot be saved")
@@ -1524,6 +1615,7 @@ def zip_outputs(outputs: Iterable[Path], zip_path: Path) -> Path:
 MAX_WEB_BYTES = 2 * 1024 * 1024
 UNICODE_FONT_PATHS = (
     Path(__file__).resolve().parent / "assets" / "DejaVuSans.ttf",
+    Path(__file__).resolve().parent / "assets" / "NotoSans-Regular.ttf",
     Path("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"),
     Path("/usr/share/fonts/DejaVuSans.ttf"),
 )
@@ -1572,7 +1664,7 @@ def _set_overlay_font(pdf: FPDF, text: str, size: int) -> None:
         text.encode("latin-1")
     except UnicodeEncodeError as error:
         raise RuntimeError(
-            "Unicode font unavailable. Set ZENPDF_TTF_PATH to a DejaVuSans.ttf path."
+            "Unicode font unavailable. Set ZENPDF_TTF_PATH to a Unicode TTF (e.g. DejaVuSans.ttf or NotoSans-Regular.ttf)."
         ) from error
     pdf.set_font("Helvetica", size=size)
 
@@ -1615,7 +1707,7 @@ def html_to_pdf(html: str, output_path: Path) -> Path:
             text.encode("latin-1")
         except UnicodeEncodeError as error:
             raise RuntimeError(
-                "Unicode font unavailable. Set ZENPDF_TTF_PATH to a DejaVuSans.ttf path."
+                "Unicode font unavailable. Set ZENPDF_TTF_PATH to a Unicode TTF (e.g. DejaVuSans.ttf or NotoSans-Regular.ttf)."
             ) from error
         pdf.set_font("Helvetica", size=12)
     max_width = pdf.w - pdf.l_margin - pdf.r_margin
@@ -1654,6 +1746,7 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
         session: requests.Session,
         fetch_url: str,
         header: str | None,
+        verify_ssl: bool,
     ) -> tuple[bytearray, str]:
         body = bytearray()
         headers = {"Host": header} if header else None
@@ -1663,6 +1756,7 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
             allow_redirects=False,
             stream=True,
             headers=headers,
+            verify=verify_ssl,
         ) as response:
             if 300 <= response.status_code < 400:
                 raise ValueError("Redirects are not allowed")
@@ -1678,23 +1772,44 @@ def web_to_pdf(url: str, output_path: Path) -> Path:
 
     body: bytearray
     encoding: str
+    allow_insecure = (
+        os.getenv("ZENPDF_WEB_ALLOW_INSECURE_SSL") == "1"
+        and (
+            os.getenv("ZENPDF_DEV_MODE") == "1"
+            or os.getenv("NODE_ENV") == "development"
+        )
+    )
+
     with requests.Session() as session:
         if parsed.scheme == "https":
             session.mount("https://", HostHeaderSSLAdapter())
 
         try:
-            body, encoding = _fetch_html(session, target_url, host_header)
+            body, encoding = _fetch_html(
+                session,
+                target_url,
+                host_header,
+                not allow_insecure,
+            )
         except requests.exceptions.SSLError:
-            allow_fallback = (
-                parsed.scheme == "https"
-                and os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
+            allow_fallback = parsed.scheme == "https" and (
+                os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
+                and (
+                    os.getenv("ZENPDF_DEV_MODE") == "1"
+                    or os.getenv("NODE_ENV") == "development"
+                )
             )
             if not allow_fallback:
                 raise
             # Re-validate hostname before falling back to hostname-based HTTPS.
             _resolve_public_ip(parsed.hostname)
             with requests.Session() as fallback_session:
-                body, encoding = _fetch_html(fallback_session, parsed.geturl(), None)
+                body, encoding = _fetch_html(
+                    fallback_session,
+                    parsed.geturl(),
+                    None,
+                    not allow_insecure,
+                )
 
     html = body.decode(encoding, errors="replace")
     return html_to_pdf(html, output_path)
@@ -1704,7 +1819,7 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     """Convert an Office document to PDF using LibreOffice."""
     soffice = shutil.which("soffice") or shutil.which("libreoffice")
     if not soffice:
-        raise RuntimeError("LibreOffice is required for office-to-pdf")
+        raise RuntimeError("LibreOffice is required for Office to PDF conversion")
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1732,6 +1847,377 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     output_path = output_dir / f"{input_path.stem}.pdf"
     if not output_path.exists():
         raise RuntimeError("Office conversion produced no output")
+    return output_path
+
+
+def _ensure_extension(input_path: Path, allowed_extensions: set[str], label: str) -> None:
+    """Validate input extension for Office conversion routes."""
+    extension = input_path.suffix.lower()
+    if extension not in allowed_extensions:
+        supported = ", ".join(sorted(allowed_extensions))
+        raise ValueError(f"{label} expects one of: {supported}")
+
+
+def word_to_pdf(input_path: Path, output_dir: Path) -> Path:
+    """Convert a Word file to PDF using LibreOffice."""
+    _ensure_extension(input_path, {".doc", ".docx"}, "Word to PDF")
+    return office_to_pdf(input_path, output_dir)
+
+
+def powerpoint_to_pdf(input_path: Path, output_dir: Path) -> Path:
+    """Convert a PowerPoint file to PDF using LibreOffice."""
+    _ensure_extension(input_path, {".ppt", ".pptx"}, "PowerPoint to PDF")
+    return office_to_pdf(input_path, output_dir)
+
+
+def excel_to_pdf(input_path: Path, output_dir: Path) -> Path:
+    """Convert an Excel file to PDF using LibreOffice."""
+    _ensure_extension(input_path, {".xls", ".xlsx"}, "Excel to PDF")
+    return office_to_pdf(input_path, output_dir)
+
+
+def pdf_to_powerpoint(input_path: Path, output_path: Path, dpi: int = 150) -> Path:
+    """Convert each PDF page into a PPTX slide with a full-slide rendered image."""
+    if Presentation is None:
+        raise RuntimeError("python-pptx is required for PDF to PowerPoint")
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        if document.page_count == 0:
+            raise ValueError("PDF has no pages")
+        presentation = Presentation()
+        layouts = presentation.slide_layouts
+        if len(layouts) == 0:
+            raise RuntimeError("No slide layouts are available for PowerPoint export")
+        blank_layout = layouts[6] if len(layouts) > 6 else layouts[len(layouts) - 1]
+        scale = dpi / 72
+        matrix = fitz.Matrix(scale, scale)
+        slide_width = presentation.slide_width
+        slide_height = presentation.slide_height
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            image_bytes = pix.tobytes("png")
+            slide = presentation.slides.add_slide(blank_layout)
+            slide.shapes.add_picture(
+                BytesIO(image_bytes),
+                0,
+                0,
+                width=slide_width,
+                height=slide_height,
+            )
+    presentation.save(str(output_path))
+    return output_path
+
+
+def scan_to_pdf(inputs: Sequence[Path], output_path: Path) -> Path:
+    """Create a scan PDF from one or more images."""
+    return image_to_pdf(inputs, output_path)
+
+
+def sign_pdf(
+    input_path: Path,
+    output_path: Path,
+    text: str,
+    pages: str | None = None,
+    x: float = 36.0,
+    y: float = 36.0,
+    font_size: float = 18.0,
+) -> Path:
+    """Apply an electronic text signature stamp to selected pages."""
+    signature_text = text.strip()
+    if not signature_text:
+        raise ValueError("Signature text is required")
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        target_pages = _resolve_page_selection(pages, document.page_count)
+        for index in range(document.page_count):
+            page_number = index + 1
+            if target_pages is not None and page_number not in target_pages:
+                continue
+            page = document.load_page(index)
+            stamp_text = f"Signed: {signature_text}"
+            text_width = fitz.get_text_length(stamp_text, fontsize=font_size)
+            box_width = max(160.0, min(text_width + 16.0, 420.0))
+            box_height = max(40.0, min(font_size + 22.0, 120.0))
+            page_rect = page.rect
+            if x + box_width > page_rect.x1:
+                box_width = max(40.0, page_rect.x1 - x)
+            if y + box_height > page_rect.y1:
+                box_height = max(24.0, page_rect.y1 - y)
+            rect = fitz.Rect(x, y, x + box_width, y + box_height)
+            page.draw_rect(rect, color=(0.22, 0.35, 0.22), width=1)
+            text_x = min(rect.x0 + 8, max(rect.x0, rect.x1 - 8))
+            text_y = min(rect.y0 + font_size + 6, max(rect.y0 + 1, rect.y1 - 2))
+            page.insert_text(
+                (text_x, text_y),
+                stamp_text,
+                fontsize=font_size,
+                color=(0.1, 0.2, 0.1),
+            )
+        document.save(str(output_path), deflate=True)
+    return output_path
+
+
+def _parse_edit_operations(raw_operations: object) -> list[dict]:
+    """Normalize edit operations into a list of dicts."""
+    if raw_operations is None:
+        return []
+    if isinstance(raw_operations, str):
+        text = raw_operations.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as error:
+            raise ValueError("Edit operations JSON is invalid") from error
+        raw_operations = parsed
+    if not isinstance(raw_operations, list):
+        raise ValueError("Edit operations must be a list")
+    normalized: list[dict] = []
+    for item in raw_operations:
+        if not isinstance(item, dict):
+            raise ValueError("Each edit operation must be an object")
+        normalized.append(item)
+    return normalized
+
+
+def _parse_edit_int(value: object, op: str, field: str, default: int) -> int:
+    """Parse an integer edit-operation field with a clear error message."""
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"Invalid numeric value for {field} in {op}: {value!r}"
+        ) from error
+
+
+def _parse_edit_float(value: object, op: str, field: str, default: float) -> float:
+    """Parse a float edit-operation field with a clear error message."""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(
+            f"Invalid numeric value for {field} in {op}: {value!r}"
+        ) from error
+
+
+def edit_pdf(
+    input_path: Path,
+    output_path: Path,
+    operations: object,
+) -> Path:
+    """
+    Apply structured edit operations to a PDF in sequence.
+
+    Page references are interpreted against the document state after previous
+    operations in the same request.
+    """
+    normalized_ops = _parse_edit_operations(operations)
+    if not normalized_ops:
+        raise ValueError("At least one edit operation is required")
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        for operation in normalized_ops:
+            op = str(operation.get("op", "")).strip().lower()
+            page_number = _parse_edit_int(operation.get("page"), op, "page", 1)
+            if op == "delete_pages":
+                pages_value = str(operation.get("pages", "")).strip()
+                if not pages_value:
+                    raise ValueError("delete_pages requires pages")
+                try:
+                    pages = sorted(
+                        _resolve_page_selection(pages_value, document.page_count) or []
+                    )
+                except ValueError as error:
+                    raise ValueError(
+                        f"Invalid pages value for delete_pages: {pages_value!r}"
+                    ) from error
+                for value in reversed(pages):
+                    document.delete_page(value - 1)
+                continue
+            if op == "insert_blank_page":
+                index = max(0, min(page_number - 1, document.page_count))
+                width = _parse_edit_float(operation.get("width"), op, "width", 612)
+                height = _parse_edit_float(operation.get("height"), op, "height", 792)
+                document.new_page(pno=index, width=width, height=height)
+                continue
+            if page_number < 1 or page_number > document.page_count:
+                raise ValueError("Edit operation page is out of range")
+            page = document.load_page(page_number - 1)
+            if op == "add_text":
+                text = str(operation.get("text", "")).strip()
+                if not text:
+                    raise ValueError("add_text requires text")
+                x = _parse_edit_float(operation.get("x"), op, "x", 72)
+                y = _parse_edit_float(operation.get("y"), op, "y", 72)
+                font_size = _parse_edit_float(
+                    operation.get("font_size"), op, "font_size", 14
+                )
+                page.insert_text((x, y), text, fontsize=font_size, color=(0, 0, 0))
+                continue
+            if op == "draw_rect":
+                rect = fitz.Rect(
+                    _parse_edit_float(operation.get("x"), op, "x", 72),
+                    _parse_edit_float(operation.get("y"), op, "y", 72),
+                    _parse_edit_float(operation.get("x2"), op, "x2", 172),
+                    _parse_edit_float(operation.get("y2"), op, "y2", 132),
+                )
+                page.draw_rect(
+                    rect,
+                    color=(0, 0, 0),
+                    width=_parse_edit_float(operation.get("width"), op, "width", 1),
+                )
+                continue
+            if op == "draw_line":
+                page.draw_line(
+                    (
+                        _parse_edit_float(operation.get("x"), op, "x", 72),
+                        _parse_edit_float(operation.get("y"), op, "y", 72),
+                    ),
+                    (
+                        _parse_edit_float(operation.get("x2"), op, "x2", 172),
+                        _parse_edit_float(operation.get("y2"), op, "y2", 72),
+                    ),
+                    color=(0, 0, 0),
+                    width=_parse_edit_float(operation.get("width"), op, "width", 1),
+                )
+                continue
+            if op == "whiteout":
+                rect = fitz.Rect(
+                    _parse_edit_float(operation.get("x"), op, "x", 72),
+                    _parse_edit_float(operation.get("y"), op, "y", 72),
+                    _parse_edit_float(operation.get("x2"), op, "x2", 172),
+                    _parse_edit_float(operation.get("y2"), op, "y2", 132),
+                )
+                page.draw_rect(rect, color=(1, 1, 1), fill=(1, 1, 1), width=0)
+                continue
+            raise ValueError(f"Unsupported edit op: {op}")
+        if document.page_count == 0:
+            raise ValueError("Edit operation removed all pages")
+        document.save(str(output_path), deflate=True)
+    return output_path
+
+
+def organize_pdf(
+    input_path: Path,
+    output_path: Path,
+    order: str | None = None,
+    delete: str | None = None,
+    rotate: str | None = None,
+) -> Path:
+    """Apply remove, reorder, and rotate in one deterministic operation."""
+    reader = _load_pdf(input_path)
+    total_pages = len(reader.pages)
+    delete_pages_set = _resolve_page_selection(delete, total_pages) or set()
+    if order and order.strip():
+        ordered_pages: list[int] = []
+        seen: set[int] = set()
+        for page_number in _parse_page_list(order, total_pages):
+            if page_number in delete_pages_set or page_number in seen:
+                continue
+            ordered_pages.append(page_number)
+            seen.add(page_number)
+    else:
+        ordered_pages = [value for value in range(1, total_pages + 1) if value not in delete_pages_set]
+    if not ordered_pages:
+        raise ValueError("Organize result has no pages")
+
+    rotations: dict[int, int] = {}
+    if rotate and rotate.strip():
+        for part in rotate.split(","):
+            cleaned = part.strip()
+            if not cleaned:
+                continue
+            if ":" not in cleaned:
+                raise ValueError("Rotate format must be page:angle")
+            page_text, angle_text = cleaned.split(":", 1)
+            try:
+                page_value = int(page_text.strip())
+                angle_value = int(angle_text.strip())
+            except ValueError as error:
+                raise ValueError(
+                    f"Invalid rotate value {cleaned!r}: page and angle must be integers"
+                ) from error
+            if page_value < 1 or page_value > total_pages:
+                raise ValueError("Rotate page is out of range")
+            if angle_value not in (90, 180, 270):
+                raise ValueError("Rotate angle must be 90, 180, or 270")
+            rotations[page_value] = angle_value
+
+    writer = PdfWriter()
+    for page_number in ordered_pages:
+        page = reader.pages[page_number - 1]
+        angle = rotations.get(page_number)
+        if angle:
+            _rotate_page(page, angle)
+        writer.add_page(page)
+    _copy_metadata(writer, reader)
+    with output_path.open("wb") as handle:
+        writer.write(handle)
+    return output_path
+
+
+def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
+    """Convert a PDF into a searchable OCR PDF."""
+    language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
+    if os.getenv("ZENPDF_OCR_USE_OCRMYPDF", "1") == "1":
+        ocrmypdf = shutil.which("ocrmypdf")
+        if ocrmypdf:
+            try:
+                result = subprocess.run(
+                    [
+                        ocrmypdf,
+                        "--skip-text",
+                        "--output-type",
+                        "pdf",
+                        "--language",
+                        language,
+                        str(input_path),
+                        str(output_path),
+                    ],
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=240,
+                )
+            except subprocess.TimeoutExpired as error:
+                raise RuntimeError("OCR PDF conversion timed out") from error
+            if result.returncode == 0 and output_path.exists():
+                return output_path
+    if pytesseract is None:
+        raise RuntimeError("OCR PDF conversion requires pytesseract")
+    if (
+        not shutil.which("tesseract")
+        and getattr(pytesseract, "__name__", "") == "pytesseract"
+    ):
+        raise RuntimeError("OCR PDF conversion requires tesseract")
+    page_outputs: list[Path] = []
+    run_id = uuid.uuid4().hex[:8]
+    with fitz.open(str(input_path)) as document:
+        _assert_fitz_unencrypted(document)
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            image = _render_page_image(page, OCR_DPI)
+            pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                image,
+                extension="pdf",
+                lang=language,
+            )
+            page_path = (
+                output_path.parent
+                / f"{output_path.stem}_ocr_{run_id}_page_{index + 1}.pdf"
+            )
+            page_path.write_bytes(pdf_bytes)
+            page_outputs.append(page_path)
+    try:
+        merge_pdfs(page_outputs, output_path)
+    finally:
+        for page_path in page_outputs:
+            page_path.unlink(missing_ok=True)
     return output_path
 
 
@@ -1866,11 +2352,6 @@ def pdf_to_text(input_path: Path, output_path: Path) -> Path:
             lines.append("")
     output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
     return output_path
-
-
-OCR_DPI = 300
-DEFAULT_OCR_LANG = os.getenv("ZENPDF_OCR_LANG", "eng")
-
 
 def _render_page_image(page: fitz.Page, dpi: int) -> Image.Image:
     """Render a PDF page to a PIL image for OCR."""

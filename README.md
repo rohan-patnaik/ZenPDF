@@ -1,6 +1,6 @@
 # ZenPDF
 
-ZenPDF is a web app for running PDF workflows with a background worker.
+ZenPDF is a web app for running PDF operations with a background worker.
 
 ## Project stages
 - Stage 1: Code is written.
@@ -12,6 +12,17 @@ ZenPDF is a web app for running PDF workflows with a background worker.
 - Convex: database + serverless functions (`npx convex dev` syncs to a free dev deployment).
 - Worker (Python): polls for jobs, processes files, uploads outputs.
   - Runs on your local CPU/RAM/disk by default (no GPU unless you add it).
+
+## Tool scope
+- ZenPDF exposes a strict 27-tool catalog aligned to iLovePDF parity:
+  - Merge PDF, Split PDF, Compress PDF
+  - PDF to Word, PDF to PowerPoint, PDF to Excel
+  - Word to PDF, PowerPoint to PDF, Excel to PDF
+  - Edit PDF, PDF to JPG, JPG to PDF
+  - Sign PDF, Watermark, Rotate PDF, HTML to PDF
+  - Unlock PDF, Protect PDF, Organize PDF
+  - PDF to PDF/A, Repair PDF, Page numbers
+  - Scan to PDF, OCR PDF, Compare PDF, Redact PDF, Crop PDF
 
 ## Run locally (dev)
 1) Configure environment

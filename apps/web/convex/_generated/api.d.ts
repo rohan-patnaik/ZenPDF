@@ -23,11 +23,7 @@ import type * as lib_limits from "../lib/limits.js";
 import type * as lib_time from "../lib/time.js";
 import type * as lib_usage from "../lib/usage.js";
 import type * as lib_worker_auth from "../lib/worker_auth.js";
-import type * as lib_workflow_compiler from "../lib/workflow_compiler.js";
-import type * as lib_workflow_spec from "../lib/workflow_spec.js";
-import type * as teams from "../teams.js";
 import type * as users from "../users.js";
-import type * as workflows from "../workflows.js";
 
 import type {
   ApiFromModules,
@@ -51,11 +47,7 @@ declare const fullApi: ApiFromModules<{
   "lib/time": typeof lib_time;
   "lib/usage": typeof lib_usage;
   "lib/worker_auth": typeof lib_worker_auth;
-  "lib/workflow_compiler": typeof lib_workflow_compiler;
-  "lib/workflow_spec": typeof lib_workflow_spec;
-  teams: typeof teams;
   users: typeof users;
-  workflows: typeof workflows;
 }>;
 
 /**

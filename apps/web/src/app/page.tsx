@@ -8,38 +8,27 @@ const toolShelves = [
   {
     title: "Combine & Organize",
     description: "Merge, split, and re-sequence large dossiers without losing page fidelity.",
-    items: ["Merge PDFs", "Split by ranges", "Reorder and rotate"],
-    badge: "Standard",
+    items: ["Merge PDF", "Split PDF", "Organize PDF"],
   },
   {
     title: "Convert & Export",
-    description: "Translate scans and images into polished PDFs or shareable JPGs.",
-    items: ["Image to PDF", "PDF to JPG", "PDF compression", "PDF to Text"],
-    badge: "Standard",
+    description: "Convert across document formats for sharing and archiving.",
+    items: ["PDF to Word", "PDF to PowerPoint", "PDF to Excel", "PDF to JPG"],
   },
   {
     title: "Protect & Repair",
     description: "Lock, unlock, repair, and compare versions while keeping text intact.",
     items: ["Protect & unlock", "Compare versions", "Repair PDFs"],
-    badge: "Standard",
   },
   {
-    title: "Annotate & Redact",
-    description: "Mark up, crop, watermark, and redact with clarity-first controls.",
-    items: ["Watermark", "Page numbers", "Highlight annotations", "Crop & redact"],
-    badge: "Standard",
+    title: "Edit & Sign",
+    description: "Apply edits, visible signatures, page numbers, and redactions.",
+    items: ["Edit PDF", "Sign PDF", "Page numbers", "Redact PDF"],
   },
   {
-    title: "Workflow Studio",
-    description: "Save multi-step pipelines and re-run them in seconds.",
-    items: ["Saved presets", "Batch queues", "Team templates"],
-    badge: "Premium",
-  },
-  {
-    title: "OCR Conversions",
-    description: "Turn scans into Word, Excel, or PDF/A exports when capacity allows.",
-    items: ["PDF to Word (OCR)", "PDF to Excel (OCR)", "PDF/A export"],
-    badge: "Premium",
+    title: "Capture & OCR",
+    description: "Convert scans and image captures into searchable PDFs.",
+    items: ["Scan to PDF", "OCR PDF", "PDF to PDF/A", "Crop PDF"],
   },
 ];
 
@@ -66,11 +55,11 @@ const planSnapshots = [
   },
   {
     tier: "PREMIUM",
-    description: "Supporter mode unlocks OCR workflows and larger batches.",
+    description: "Supporter mode increases daily and batch limits.",
     details: [
       `${PREMIUM.maxFilesPerJob} files per job`,
       `${formatBytes(PREMIUM.maxMbPerFile * 1024 * 1024)} per file`,
-      "OCR + PDF/A when enabled",
+      `${PREMIUM.maxJobsPerDay} jobs per day`,
     ],
   },
 ];
@@ -86,7 +75,7 @@ const steps = [
   },
   {
     title: "Deliver",
-    copy: "Download the results or save a reusable workflow for later.",
+    copy: "Download the results with clear output names and file sizes.",
   },
 ];
 
@@ -94,41 +83,34 @@ const ToolCard = ({
   title,
   description,
   items,
-  badge,
 }: {
   title: string;
   description: string;
   items: string[];
-  badge: string;
 }) => (
   <div className="paper-card flex h-full flex-col gap-4 p-6">
-    <div className="flex items-center justify-between">
-      <div className="flex items-center gap-3">
-        <span className="flex h-11 w-11 items-center justify-center rounded-[16px] border border-ink-900/10 bg-paper-100 text-ink-900">
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="1.6"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          >
-            <path d="M6 3h8l4 4v14H6z" />
-            <path d="M14 3v5h5" />
-            <path d="M9 13h6" />
-            <path d="M9 17h6" />
-          </svg>
-        </span>
-        <div>
-          <h3 className="text-xl font-display">{title}</h3>
-          <p className="text-xs text-ink-500">{description}</p>
-        </div>
-      </div>
-      <span className="rounded-full border border-ink-900/15 bg-rose-100 px-3 py-1 text-[0.65rem] uppercase tracking-[0.2em] text-ink-700">
-        {badge}
+    <div className="flex items-center gap-3">
+      <span className="flex h-11 w-11 items-center justify-center rounded-[16px] border border-ink-900/10 bg-paper-100 text-ink-900">
+        <svg
+          width="20"
+          height="20"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <path d="M6 3h8l4 4v14H6z" />
+          <path d="M14 3v5h5" />
+          <path d="M9 13h6" />
+          <path d="M9 17h6" />
+        </svg>
       </span>
+      <div>
+        <h3 className="text-xl font-display">{title}</h3>
+        <p className="text-xs text-ink-500">{description}</p>
+      </div>
     </div>
     <ul className="mt-auto space-y-2 text-sm text-ink-700">
       {items.map((item) => (
@@ -142,7 +124,7 @@ const ToolCard = ({
 );
 
 /**
- * Render the application's landing page with hero, status panel, tool shelf, plans, workflow, and footer.
+ * Render the application's landing page with hero, status panel, tool shelf, plans, and footer.
  *
  * @returns A React element representing the home page layout and its static content.
  */
@@ -158,7 +140,7 @@ export default function Home() {
               Calm, precise PDF control with clear limits and a paper-first feel.
             </h1>
             <p className="max-w-xl text-lg text-ink-700">
-              ZenPDF keeps your PDF workflows grounded with strict capacity
+              ZenPDF keeps your PDF operations grounded with strict capacity
               controls, friendly error messages, and a serene dossier-inspired
               interface. Heavy lifting happens in a separate worker so the web
               app stays light.
@@ -194,11 +176,11 @@ export default function Home() {
                   <div className="flex items-center justify-between text-sm text-ink-700">
                     <span className="ink-label">Active tools</span>
                     <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      22 standard
+                      27 available
                     </span>
                   </div>
                   <p className="mt-3 text-sm text-ink-700">
-                    OCR and PDF/A toggle based on monthly budget health.
+                    Heavy tools can pause if monthly budget limits are reached.
                   </p>
                 </div>
                 <div className="paper-card p-5">
@@ -281,9 +263,6 @@ export default function Home() {
                   </div>
                 ))}
               </div>
-              <Link className="paper-button--ghost text-sm" href="/workflows">
-                Open workflow studio
-              </Link>
               <div className="mt-auto rounded-[20px] border border-forest-600/30 bg-sage-200/70 p-4 text-sm text-forest-700">
                 Supporter mode hides the banner and expands batch limits.
               </div>

@@ -28,9 +28,6 @@ export default function SiteHeader() {
           <Link className="paper-button--ghost" href="/tools">
             Tools
           </Link>
-          <Link className="paper-button--ghost" href="/workflows">
-            Workflows
-          </Link>
           <Link className="paper-button--ghost" href="/usage-capacity">
             Usage & Capacity
           </Link>
@@ -52,8 +49,8 @@ export default function SiteHeader() {
             <div>
               <span className="ink-label">Supporter mode</span>
               <p className="mt-1 max-w-2xl text-sm">
-                Unlock OCR + PDF/A exports, larger batches, and remove this banner
-                when supporter mode is enabled.
+                Unlock larger batches and remove this banner when supporter
+                mode is enabled.
               </p>
             </div>
             <Link className="paper-button--ghost text-xs" href="/usage-capacity">
