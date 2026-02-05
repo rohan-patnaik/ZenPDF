@@ -1,142 +1,74 @@
 # ZenPDF Tool Techniques
 
-Last Updated: 2026-02-04  
-Version: 1.2
+Last Updated: 2026-02-05
+Version: 2.0
 
-This document summarizes how each tool is implemented and what technique(s) are used under the hood.
-It captures the current execution path for each feature so troubleshooting and tuning are easier and records the decision rationale behind those choices.
+This document records the current implementation strategy for the strict 27-tool catalog aligned with iLovePDF naming.
 
-## Decision Criteria
+## Core approach
+- Structural PDF operations: `pypdf`.
+- Text/annotation and raster operations: `PyMuPDF` (`fitz`).
+- Overlay rendering: `fpdf2`.
+- Office conversion: LibreOffice (`soffice --headless --convert-to pdf`).
+- OCR: `ocrmypdf` (primary, when available), `pytesseract` fallback.
+- Validation and repair helpers: `qpdf`, `mutool`, Ghostscript where applicable.
 
-- Prefer stable OSS libraries with active maintenance.
-- Favor deterministic, reproducible outputs for core operations.
-- Use fallbacks for malformed inputs and flaky tooling.
-- Balance throughput, quality, and cost for worker execution.
+## Decision rationale
+- Selection criteria:
+  - Prefer actively maintained OSS libraries with permissive licensing.
+  - Prefer deterministic outputs and predictable failure modes for worker retries.
+  - Prefer tools available in containerized Linux runtimes without proprietary dependencies.
+- `pypdf` for structural edits:
+  - Chosen for pure-Python portability and reliable page/object manipulation.
+  - Alternatives like `PyPDF2`/`pdfrw` were not selected due to older maintenance posture or narrower APIs for this pipeline.
+- `PyMuPDF` for text search and rasterization:
+  - Chosen for fast text geometry APIs and robust rendering performance.
+  - Trade-off: heavier binary dependency than pure-Python libraries.
+- `fpdf2` for overlays:
+  - Chosen for lightweight text/shape overlays with straightforward composition into existing PDFs.
+- `ocrmypdf` primary with `pytesseract` fallback:
+  - `ocrmypdf` provides best quality and metadata-preserving OCR when present.
+  - Fallback keeps OCR available in constrained environments where `ocrmypdf` is unavailable.
+- `qpdf`/`mutool`/Ghostscript for validation and conversion:
+  - Chosen as complementary tools: structure checks (`qpdf`), repair/cleanup (`mutool`), standards conversion and compression candidates (Ghostscript).
+  - Trade-off: additional runtime dependencies, but better resilience on malformed files and broad PDF compatibility.
 
-## Core PDF tools
+## Tool matrix (27 only)
+- Merge PDF: `pypdf` append pages.
+- Split PDF: `pypdf` range split -> ZIP output.
+- Compress PDF: staged compression pipeline (normalize/repair + image-heavy branch + candidate selection).
+- PDF to Word: `python-docx` from extracted text.
+- PDF to PowerPoint: render each page with `PyMuPDF`, place as full-slide image with `python-pptx`.
+- PDF to Excel: extracted text rows into `openpyxl`.
+- Word to PDF: LibreOffice conversion with `.doc/.docx` extension guard.
+- PowerPoint to PDF: LibreOffice conversion with `.ppt/.pptx` extension guard.
+- Excel to PDF: LibreOffice conversion with `.xls/.xlsx` extension guard.
+- Edit PDF: structured operations via `PyMuPDF` (text, shapes, whiteout, page delete/insert).
+- PDF to JPG: `PyMuPDF` page rasterization, deterministic naming, ZIP archive.
+- JPG to PDF: `img2pdf`.
+- Sign PDF: visible text signature stamp with `PyMuPDF`.
+- Watermark: diagonal overlay merged with `pypdf`.
+- Rotate PDF: page rotation with `pypdf`.
+- HTML to PDF: URL fetch + SSRF guard + text render with `fpdf2`.
+- Unlock PDF: lazy password flow (`qpdf` first, `pypdf` fallback).
+- Protect PDF: `pypdf` encryption.
+- Organize PDF: single operation combining delete/reorder/rotate.
+- PDF to PDF/A: Ghostscript PDF/A conversion.
+- Repair PDF: PDF rewrite/repair path.
+- Page numbers: centered footer overlay with `fpdf2` + `pypdf` merge.
+- Scan to PDF: image capture files routed to `img2pdf`.
+- OCR PDF: `ocrmypdf` primary; fallback builds searchable page PDFs from Tesseract and merges.
+- Compare PDF: text extraction and plain-text diff report.
+- Redact PDF: text search + redaction annotations in `PyMuPDF`.
+- Crop PDF: box adjustment with `pypdf`.
 
-- Merge PDFs — Technique: pypdf `PdfReader` + `PdfWriter` to append pages.
-- Split PDF — Technique: pypdf page slicing into individual PDFs, then zip for multi-output.
-- Compress PDF — Technique: staged pipeline with fallbacks (see detailed section below).
-- Repair PDF — Technique: pypdf rewrite (rebuilds structure).
-- Rotate pages — Technique: pypdf rotate selected pages.
-- Remove pages — Technique: pypdf rebuilds a PDF without specified pages.
-- Reorder pages — Technique: pypdf page reordering.
-- Watermark — Technique: FPDF overlays text onto each page, merged via pypdf.
-- Page numbers — Technique: FPDF overlays numbers onto each page, merged via pypdf.
-- Crop pages — Technique: pypdf updates crop/trim/media boxes.
-- Redact text — Technique: PyMuPDF (`fitz`) text search + redaction annotations + apply.
-- Highlight text — Technique: PyMuPDF (`fitz`) text search + highlight annotations.
-- Compare PDFs — Technique: pypdf text extraction; outputs a plain-text diff summary.
-- Unlock PDF — Technique: pypdf decrypts with password and rewrites unencrypted output.
-- Protect PDF — Technique: pypdf encrypts with user/owner password.
+## Local mode behavior
+- `ZENPDF_DEV_MODE=1` enables local development bypass for plan limits in job creation.
+- SSL fallback for HTML-to-PDF can be enabled in local/dev mode for self-signed environments.
 
-Decision Rationale:
-- Use pypdf for structural edits because it is lightweight and reliable for page-level operations.
-- Use PyMuPDF for text search/highlight/redaction because it provides accurate text search and annotation APIs.
-
-Trade-offs:
-- pypdf does not re-render content, so it cannot fix rendering issues or reduce image sizes.
-- PyMuPDF adds a heavier dependency but is required for reliable text geometry operations.
-
-## Compression pipeline (detail)
-
-**Goals**
-- Improve compression on image-heavy PDFs while maintaining reliability and friendly errors.
-- Keep determinism where feasible, without breaking encrypted PDFs or malformed inputs.
-- Choose the smallest valid output and report `no_change` when savings are insignificant.
-
-**Pipeline**
-1. Preflight check:
-   - Reject encrypted PDFs early.
-   - Attempt parse with `pypdf` and `PyMuPDF` (best-effort).
-2. Normalize/repair (best-effort; first success wins):
-   - `mutool clean -gg` (preferred if installed).
-   - `qpdf --object-streams=generate --compress-streams=y --recompress-flate`.
-   - Fallback: pypdf rewrite.
-3. Image-heavy detector (PyMuPDF; samples up to 10 pages):
-   - Counts images per page and text chars per page.
-   - Marks image-heavy if `images_per_page >= 1.0` or `(text_chars_per_page < 500 and images_per_page > 0.5)`.
-4. If image-heavy:
-   - Run Ghostscript early with profile-specific downsampling (balanced by default).
-   - Follow with `qpdf` structural optimization.
-5. Lossless structural optimization:
-   - `qpdf` recompress + deterministic ID.
-   - Optional `mutool merge -O compress` pass.
-6. Optional image optimization (qpdf):
-   - `qpdf --optimize-images` with quality/min-size guards.
-7. Optional `pdfsizeopt` (env flagged):
-   - Can enable JBIG2 if `jbig2` is available.
-8. If not image-heavy:
-   - Run Ghostscript as a late-stage candidate.
-9. Validate candidates:
-   - `qpdf --check` (if available).
-   - PyMuPDF render of first page and page-count match.
-10. Select smallest valid output:
-    - If savings below thresholds, return `no_change` and keep original.
-11. Determinism:
-    - Final `qpdf --deterministic-id` pass.
-    - Optional Zopfli (env flagged, slow) on the final output.
-
-**Ghostscript presets**
-- `balanced` (default): `/ebook`, 150 dpi color/gray.
-- `strong`: `/screen`, 100 dpi color/gray (higher loss).
-- `light`: `/ebook` with JPEG pass-through (less loss, smaller gains).
-
-**Validation checklist**
-- Output exists and size > 0.
-- `qpdf --check` passes (if available).
-- PyMuPDF can open and render the first page.
-- Page count unchanged.
-
-## Conversion tools
-
-- Image → PDF — Technique: `img2pdf` converts images to a single PDF.
-- PDF → JPG — Technique: PyMuPDF rasterizes each page to JPG at a given DPI.
-- PDF → PDF/A — Technique: Ghostscript PDF/A-2b conversion with version checks.
-- PDF → Text — Technique: pypdf text extraction to .txt.
-- PDF → Word — Technique: `pdf2docx` conversion.
-- PDF → Word (OCR) — Technique: PyMuPDF renders pages + Tesseract OCR + `python-docx`.
-- PDF → Excel — Technique: text extraction into `openpyxl` worksheet.
-- PDF → Excel (OCR) — Technique: OCR + `openpyxl`.
-- Office → PDF — Technique: LibreOffice headless conversion (`soffice --convert-to pdf`).
-- Web → PDF — Technique: fetch HTML over HTTP(S), extract text, render with FPDF.
-
-Decision Rationale:
-- Use specialized tools for each conversion (LibreOffice for Office, Tesseract for OCR) to maximize fidelity.
-- Keep conversions deterministic and avoid heavy rendering engines when possible.
-
-Trade-offs:
-- Some converters (OCR, Office) are slower and have larger dependency footprints.
-- Basic HTML-to-PDF rendering is fast but not a full browser engine, so complex layouts may not match.
-
-## Notes on compression tuning
-
-- The compression pipeline is intentionally staged to handle malformed PDFs and avoid timeouts.
-- `pdfsizeopt` and `jbig2enc` are optional due to heavier dependencies and more aggressive (lossy) behavior.
-- Ghostscript uses profile-driven downsampling; use `light` for conservative outputs and `strong` for aggressive compression.
-- The worker returns a structured compression result to the UI: status, method, savings, and step timings.
-
-## Relevant configuration (worker env)
-
-- `ZENPDF_COMPRESS_PROFILE=balanced`
-- `ZENPDF_COMPRESS_AUTO_IMAGE_HEAVY=1`
-- `ZENPDF_COMPRESS_USE_ZOPFLI=0`
-- `ZENPDF_COMPRESS_GS_PASSTHROUGH_JPEG=0`
-- `ZENPDF_COMPRESS_SAVINGS_THRESHOLD_PCT=0.08`
-- `ZENPDF_COMPRESS_MIN_SAVINGS_BYTES=200000`
-- `ZENPDF_COMPRESS_TIMEOUT_BASE_SECONDS=120`
-- `ZENPDF_COMPRESS_TIMEOUT_PER_MB_SECONDS=3`
-- `ZENPDF_COMPRESS_TIMEOUT_PER_PAGE_SECONDS=1.5`
-- `ZENPDF_COMPRESS_TIMEOUT_MAX_SECONDS=900`
-- `ZENPDF_COMPRESS_TIMEOUT_SECONDS=`
-- `ZENPDF_COMPRESS_ENABLE_IMAGE_OPT=0`
-- `ZENPDF_QPDF_OI_QUALITY=75`
-- `ZENPDF_QPDF_OI_MIN_WIDTH=128`
-- `ZENPDF_QPDF_OI_MIN_HEIGHT=128`
-- `ZENPDF_QPDF_OI_MIN_AREA=16384`
-- `ZENPDF_COMPRESS_ENABLE_PDFSIZEOPT=0`
-- `ZENPDF_COMPRESS_ENABLE_JBIG2=0`
-- `ZENPDF_COMPRESS_PDFSIZEOPT_ARGS=`
-
-See `apps/worker/.env.example` for the full list of compression controls.
+## Key env flags
+- `ZENPDF_DEV_MODE=1`
+- `ZENPDF_OCR_USE_OCRMYPDF=1`
+- `ZENPDF_WEB_ALLOW_INSECURE_SSL=1` (dev only)
+- `ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK=1`
+- Compression tuning flags remain documented in `apps/worker/.env.example`.

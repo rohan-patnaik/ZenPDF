@@ -34,5 +34,6 @@ docker compose up --build
 - Convex dashboard: <http://localhost:3210>
 
 ## Notes
+- Local development bypass is enabled when `ZENPDF_DEV_MODE=1` and the web app runs in development mode, which disables plan/capacity checks for local runs.
 - Premium access is allowlisted with `ZENPDF_PREMIUM_EMAILS` or `ZENPDF_PREMIUM_CLERK_IDS`.
 - For production self-hosting, run `npm run build` and `npm run start` in `apps/web`.

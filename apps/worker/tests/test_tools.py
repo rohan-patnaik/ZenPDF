@@ -1,7 +1,9 @@
 """Tests for worker conversion utilities."""
 
+import os
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from io import BytesIO
 
 import shutil
 import subprocess
@@ -21,27 +23,36 @@ from zenpdf_worker.tools import (
     compare_pdfs,
     compress_pdf,
     crop_pdf,
+    edit_pdf,
+    excel_to_pdf,
     highlight_pdf,
     html_to_pdf,
     image_to_pdf,
     merge_pdfs,
+    ocr_pdf,
     office_to_pdf,
+    organize_pdf,
     page_numbers_pdf,
     pdf_to_pdfa,
     pdf_to_docx,
     pdf_to_docx_ocr,
+    pdf_to_powerpoint,
     pdf_to_text,
     pdf_to_xlsx,
     pdf_to_xlsx_ocr,
     pdf_to_jpg,
+    powerpoint_to_pdf,
     protect_pdf,
     repair_pdf,
     redact_pdf,
     rotate_pdf,
+    scan_to_pdf,
+    sign_pdf,
     split_pdf,
     unlock_pdf,
     watermark_pdf,
     web_to_pdf,
+    word_to_pdf,
     zip_outputs,
 )
 
@@ -378,7 +389,10 @@ def test_web_to_pdf_fallbacks_to_hostname() -> None:
 
         with patch("zenpdf_worker.tools.requests.Session", side_effect=factory), patch(
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
-        ), patch.dict("os.environ", {"ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK": "1"}):
+        ), patch.dict(
+            os.environ,
+            {"ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK": "1", "ZENPDF_DEV_MODE": "1"},
+        ):
             output = web_to_pdf("https://example.com", temp_path / "site.pdf")
 
         assert output.exists()
@@ -556,6 +570,124 @@ def test_office_to_pdf_missing_soffice(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: None)
         with pytest.raises(RuntimeError):
             office_to_pdf(doc_path, temp_path)
+
+
+def test_word_powerpoint_excel_to_pdf_extension_validation() -> None:
+    """Reject unsupported source extensions for split Office conversion tools."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "sample.txt"
+        source.write_text("not office", encoding="utf-8")
+        with pytest.raises(ValueError):
+            word_to_pdf(source, temp_path)
+        with pytest.raises(ValueError):
+            powerpoint_to_pdf(source, temp_path)
+        with pytest.raises(ValueError):
+            excel_to_pdf(source, temp_path)
+
+
+def test_organize_pdf_order_delete_rotate() -> None:
+    """Apply organize operation in deterministic delete->order->rotate behavior."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_text_pdf(source, "one")
+        # build 3-page input
+        page_two = temp_path / "two.pdf"
+        page_three = temp_path / "three.pdf"
+        _make_text_pdf(page_two, "two")
+        _make_text_pdf(page_three, "three")
+        merge_pdfs([source, page_two, page_three], source)
+
+        output = organize_pdf(
+            source,
+            temp_path / "organized.pdf",
+            order="3,1,2",
+            delete="2",
+            rotate="3:90",
+        )
+        reader = PdfReader(str(output))
+        assert len(reader.pages) == 2
+
+
+def test_edit_pdf_add_text_and_delete_pages() -> None:
+    """Apply edit operations including text insertion and page deletion."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+        operations = [
+            {"op": "add_text", "page": 1, "x": 72, "y": 72, "text": "Approved"},
+            {"op": "delete_pages", "pages": "2"},
+        ]
+        edited = edit_pdf(source, temp_path / "edited.pdf", operations)
+        reader = PdfReader(str(edited))
+        assert len(reader.pages) == 1
+        assert "Approved" in (reader.pages[0].extract_text() or "")
+
+
+def test_sign_pdf_adds_signature_stamp() -> None:
+    """Apply visible signature text to selected pages."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+        signed = sign_pdf(source, temp_path / "signed.pdf", "Jane Doe")
+        reader = PdfReader(str(signed))
+        assert "Signed: Jane Doe" in (reader.pages[0].extract_text() or "")
+
+
+def test_scan_to_pdf_alias() -> None:
+    """Scan-to-PDF should produce a merged PDF from images."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        image_path = temp_path / "scan.png"
+        image = Image.new("RGB", (200, 200), color=(120, 140, 180))
+        image.save(image_path)
+        output = scan_to_pdf([image_path], temp_path / "scan.pdf")
+        assert output.exists()
+
+
+def test_ocr_pdf_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fallback OCR path should create a searchable PDF when ocrmypdf is unavailable."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_image_pdf(source)
+
+        monkeypatch.setenv("ZENPDF_OCR_USE_OCRMYPDF", "0")
+
+        class _FakePytesseract:
+            @staticmethod
+            def image_to_pdf_or_hocr(_image, extension="pdf", lang="eng"):
+                assert extension == "pdf"
+                assert lang == "eng"
+                writer = PdfWriter()
+                writer.add_blank_page(width=300, height=300)
+                buffer = BytesIO()
+                writer.write(buffer)
+                return buffer.getvalue()
+
+        with patch("zenpdf_worker.tools.pytesseract", _FakePytesseract):
+            output = ocr_pdf(source, temp_path / "ocr.pdf", "eng")
+        assert output.exists()
+        assert output.stat().st_size > 0
+
+
+def test_pdf_to_powerpoint() -> None:
+    """Convert a PDF into PPTX (or surface dependency requirement)."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+        output = temp_path / "slides.pptx"
+        try:
+            result = pdf_to_powerpoint(source, output)
+        except RuntimeError as error:
+            assert "python-pptx is required" in str(error)
+            return
+        assert result.exists()
+        assert result.stat().st_size > 0
 
 
 class _DummySocket:

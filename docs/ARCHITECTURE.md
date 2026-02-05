@@ -24,7 +24,6 @@
 - Budget state: monthly cap, capacity status, heavy tool flags.
 - Plan limits: config-driven tier caps with env overrides.
 - Global limits: system-wide concurrency and job caps.
-- Workflows and teams (premium).
 
 ## Job Lifecycle
 1. Client requests tool with inputs.
@@ -63,7 +62,7 @@ Stable error codes are mapped to friendly UI messages:
 - Run the worker container as non-root and enforce a restrictive seccomp/AppArmor policy (or Cloud Run sandboxing) for LibreOffice conversions.
 
 ## Testing & CI
-- Unit: limits, job state machine, error mapping, workflow compiler.
+- Unit: limits, job state machine, error mapping.
 - Integration: Convex functions and worker with fixtures.
 - E2E: core tools, premium gating, Usage & Capacity page.
 - CI: lint + unit + integration on PR; E2E on main/nightly.

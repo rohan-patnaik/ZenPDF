@@ -14,35 +14,37 @@ type ToolId =
   | "merge"
   | "split"
   | "compress"
-  | "rotate"
-  | "remove-pages"
-  | "reorder-pages"
+  | "pdf-to-word"
+  | "pdf-to-powerpoint"
+  | "pdf-to-excel"
+  | "word-to-pdf"
+  | "powerpoint-to-pdf"
+  | "excel-to-pdf"
+  | "edit-pdf"
+  | "pdf-to-jpg"
+  | "jpg-to-pdf"
+  | "sign-pdf"
   | "watermark"
-  | "page-numbers"
-  | "crop"
+  | "rotate"
+  | "html-to-pdf"
   | "unlock"
   | "protect"
-  | "repair"
-  | "redact"
-  | "highlight"
-  | "compare"
-  | "image-to-pdf"
-  | "pdf-to-jpg"
-  | "web-to-pdf"
-  | "office-to-pdf"
+  | "organize-pdf"
   | "pdfa"
-  | "pdf-to-text"
-  | "pdf-to-word"
-  | "pdf-to-excel"
-  | "pdf-to-word-ocr"
-  | "pdf-to-excel-ocr";
+  | "repair"
+  | "page-numbers"
+  | "scan-to-pdf"
+  | "ocr-pdf"
+  | "compare"
+  | "redact"
+  | "crop";
 
 type ToolField = {
   key: string;
   label: string;
   placeholder: string;
   helper?: string;
-  type?: "text" | "number" | "password";
+  type?: "text" | "number" | "password" | "textarea";
   required?: boolean;
 };
 
@@ -52,25 +54,21 @@ type ToolDefinition = {
   description: string;
   accept: string;
   multiple: boolean;
-  tier?: "Standard" | "Premium";
   requiresFiles?: boolean;
   fields?: ToolField[];
 };
 
 const PDF_ACCEPT = "application/pdf,.pdf";
 const IMAGE_ACCEPT = "image/*,.png,.jpg,.jpeg";
-const OFFICE_ACCEPT =
-  "application/vnd.openxmlformats-officedocument.wordprocessingml.document,.docx," +
-  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xlsx," +
-  "application/vnd.openxmlformats-officedocument.presentationml.presentation,.pptx";
-
-const DEV_BYPASS_STORAGE_KEY = "zenpdf-dev-bypass";
+const WORD_ACCEPT = "application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,.docx";
+const POWERPOINT_ACCEPT = "application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,.ppt,.pptx";
+const EXCEL_ACCEPT = "application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,.xlsx";
 
 const TOOLS: ToolDefinition[] = [
   {
     id: "merge",
-    label: "Merge PDFs",
-    description: "Combine multiple PDFs into a single dossier.",
+    label: "Merge PDF",
+    description: "Combine multiple PDF files into one.",
     accept: PDF_ACCEPT,
     multiple: true,
   },
@@ -97,8 +95,137 @@ const TOOLS: ToolDefinition[] = [
     multiple: false,
   },
   {
+    id: "pdf-to-word",
+    label: "PDF to Word",
+    description: "Convert PDF content into DOCX.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "pdf-to-powerpoint",
+    label: "PDF to PowerPoint",
+    description: "Convert PDF pages into PPTX slides.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "pdf-to-excel",
+    label: "PDF to Excel",
+    description: "Extract PDF content into XLSX.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "word-to-pdf",
+    label: "Word to PDF",
+    description: "Convert DOC or DOCX into PDF.",
+    accept: WORD_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "powerpoint-to-pdf",
+    label: "PowerPoint to PDF",
+    description: "Convert PPT or PPTX into PDF.",
+    accept: POWERPOINT_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "excel-to-pdf",
+    label: "Excel to PDF",
+    description: "Convert XLS or XLSX into PDF.",
+    accept: EXCEL_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "edit-pdf",
+    label: "Edit PDF",
+    description: "Apply structured edit operations to a PDF.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+    fields: [
+      {
+        key: "operations",
+        label: "Operations JSON",
+        placeholder:
+          '[{\"op\":\"add_text\",\"page\":1,\"x\":72,\"y\":72,\"text\":\"Approved\"}]',
+        helper:
+          "Supported ops: add_text, draw_rect, draw_line, whiteout, delete_pages, insert_blank_page.",
+        required: true,
+        type: "textarea",
+      },
+    ],
+  },
+  {
+    id: "pdf-to-jpg",
+    label: "PDF to JPG",
+    description: "Export each page as JPG images in a ZIP.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "jpg-to-pdf",
+    label: "JPG to PDF",
+    description: "Convert JPG or PNG images into PDF.",
+    accept: IMAGE_ACCEPT,
+    multiple: true,
+  },
+  {
+    id: "sign-pdf",
+    label: "Sign PDF",
+    description: "Place a visible electronic signature stamp.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+    fields: [
+      {
+        key: "text",
+        label: "Signature text",
+        placeholder: "Jane Doe",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1,3-4",
+        helper: "Leave blank to sign all pages.",
+      },
+      {
+        key: "x",
+        label: "X position (pt)",
+        placeholder: "36",
+        type: "number",
+      },
+      {
+        key: "y",
+        label: "Y position (pt)",
+        placeholder: "36",
+        type: "number",
+      },
+    ],
+  },
+  {
+    id: "watermark",
+    label: "Watermark",
+    description: "Stamp diagonal watermark text over pages.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+    fields: [
+      {
+        key: "text",
+        label: "Watermark text",
+        placeholder: "CONFIDENTIAL",
+        required: true,
+      },
+      {
+        key: "pages",
+        label: "Pages",
+        placeholder: "1-3,6",
+        helper: "Leave blank to watermark every page.",
+      },
+    ],
+  },
+  {
     id: "rotate",
-    label: "Rotate pages",
+    label: "Rotate PDF",
     description: "Rotate pages by 90, 180, or 270 degrees.",
     accept: PDF_ACCEPT,
     multiple: false,
@@ -119,59 +246,88 @@ const TOOLS: ToolDefinition[] = [
     ],
   },
   {
-    id: "remove-pages",
-    label: "Remove pages",
-    description: "Drop specific pages from a PDF.",
-    accept: PDF_ACCEPT,
+    id: "html-to-pdf",
+    label: "HTML to PDF",
+    description: "Capture an HTML page URL into PDF.",
+    accept: "",
     multiple: false,
+    requiresFiles: false,
     fields: [
       {
-        key: "pages",
-        label: "Pages to remove",
-        placeholder: "2,5-6",
+        key: "url",
+        label: "Web address",
+        placeholder: "https://example.com",
+        required: true,
       },
     ],
   },
   {
-    id: "reorder-pages",
-    label: "Reorder pages",
-    description: "Reorder by listing the new page order.",
+    id: "unlock",
+    label: "Unlock PDF",
+    description: "Remove encryption from a PDF.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+  },
+  {
+    id: "protect",
+    label: "Protect PDF",
+    description: "Encrypt a PDF with a new password.",
+    accept: PDF_ACCEPT,
+    multiple: false,
+    fields: [
+      {
+        key: "password",
+        label: "New password",
+        placeholder: "Create a password",
+        type: "password",
+        required: true,
+      },
+    ],
+  },
+  {
+    id: "organize-pdf",
+    label: "Organize PDF",
+    description: "Reorder, delete, and rotate pages in one step.",
     accept: PDF_ACCEPT,
     multiple: false,
     fields: [
       {
         key: "order",
-        label: "New order",
+        label: "Final order",
         placeholder: "3,1,2",
-        helper: "Pages not listed are removed.",
+        helper: "Leave blank to keep original order.",
+      },
+      {
+        key: "delete",
+        label: "Delete pages",
+        placeholder: "4,7-8",
+      },
+      {
+        key: "rotate",
+        label: "Rotate map",
+        placeholder: "1:90,2:180",
+        helper: "Format page:angle with 90/180/270.",
       },
     ],
   },
   {
-    id: "watermark",
-    label: "Watermark",
-    description: "Stamp a light text watermark onto each page.",
+    id: "pdfa",
+    label: "PDF to PDF/A",
+    description: "Convert PDFs into archival PDF/A output.",
     accept: PDF_ACCEPT,
     multiple: false,
-    fields: [
-      {
-        key: "text",
-        label: "Watermark text",
-        placeholder: "CONFIDENTIAL",
-        required: true,
-      },
-      {
-        key: "pages",
-        label: "Pages",
-        placeholder: "1-3,6",
-        helper: "Leave blank to watermark every page.",
-      },
-    ],
+  },
+  {
+    id: "repair",
+    label: "Repair PDF",
+    description: "Rebuild a PDF to fix structural issues.",
+    accept: PDF_ACCEPT,
+    multiple: false,
   },
   {
     id: "page-numbers",
     label: "Page numbers",
-    description: "Add page numbers to the footer of each page.",
+    description: "Add centered footer page numbers.",
     accept: PDF_ACCEPT,
     multiple: false,
     fields: [
@@ -191,30 +347,37 @@ const TOOLS: ToolDefinition[] = [
     ],
   },
   {
-    id: "crop",
-    label: "Crop pages",
-    description: "Trim margins from each page.",
+    id: "scan-to-pdf",
+    label: "Scan to PDF",
+    description: "Convert camera captures or images into a PDF scan file.",
+    accept: IMAGE_ACCEPT,
+    multiple: true,
+  },
+  {
+    id: "ocr-pdf",
+    label: "OCR PDF",
+    description: "Create a searchable PDF with OCR text.",
     accept: PDF_ACCEPT,
     multiple: false,
     fields: [
       {
-        key: "margins",
-        label: "Margins (pt)",
-        placeholder: "10,10,10,10",
-        helper: "Top,right,bottom,left in points (72 = 1 inch).",
-        required: true,
-      },
-      {
-        key: "pages",
-        label: "Pages",
-        placeholder: "1-3,6",
-        helper: "Leave blank to crop every page.",
+        key: "lang",
+        label: "OCR language",
+        placeholder: "eng",
+        helper: "Use Tesseract language code, e.g. eng.",
       },
     ],
   },
   {
+    id: "compare",
+    label: "Compare PDF",
+    description: "Generate a comparison report for two PDFs.",
+    accept: PDF_ACCEPT,
+    multiple: true,
+  },
+  {
     id: "redact",
-    label: "Redact text",
+    label: "Redact PDF",
     description: "Find and black out matching text in the PDF.",
     accept: PDF_ACCEPT,
     multiple: false,
@@ -235,154 +398,26 @@ const TOOLS: ToolDefinition[] = [
     ],
   },
   {
-    id: "highlight",
-    label: "Highlight text",
-    description: "Highlight matching text across the PDF.",
+    id: "crop",
+    label: "Crop PDF",
+    description: "Trim margins from each page.",
     accept: PDF_ACCEPT,
     multiple: false,
     fields: [
       {
-        key: "text",
-        label: "Text to highlight",
-        placeholder: "CONFIDENTIAL",
-        helper: "Case-sensitive match.",
+        key: "margins",
+        label: "Margins (pt)",
+        placeholder: "10,10,10,10",
+        helper: "Top,right,bottom,left in points (72 = 1 inch).",
         required: true,
       },
       {
         key: "pages",
         label: "Pages",
         placeholder: "1-3,6",
-        helper: "Leave blank to scan every page.",
+        helper: "Leave blank to crop every page.",
       },
     ],
-  },
-  {
-    id: "compare",
-    label: "Compare PDFs",
-    description: "Generate a text report comparing two PDFs.",
-    accept: PDF_ACCEPT,
-    multiple: true,
-  },
-  {
-    id: "unlock",
-    label: "Unlock PDF",
-    description: "Remove a password so the file opens freely.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-    fields: [
-      {
-        key: "password",
-        label: "Current password",
-        placeholder: "Enter current password",
-        type: "password",
-        required: true,
-      },
-    ],
-  },
-  {
-    id: "protect",
-    label: "Protect PDF",
-    description: "Encrypt a PDF with a new password.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-    fields: [
-      {
-        key: "password",
-        label: "New password",
-        placeholder: "Create a password",
-        type: "password",
-        required: true,
-      },
-    ],
-  },
-  {
-    id: "repair",
-    label: "Repair PDF",
-    description: "Rebuild a PDF file to fix structural issues.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "image-to-pdf",
-    label: "Image → PDF",
-    description: "Convert JPG or PNG images into a PDF.",
-    accept: IMAGE_ACCEPT,
-    multiple: true,
-  },
-  {
-    id: "pdf-to-jpg",
-    label: "PDF → JPG",
-    description: "Export each page as a JPG (zipped when multiple).",
-    accept: PDF_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "web-to-pdf",
-    label: "Web → PDF",
-    description: "Capture a URL into a printable PDF snapshot.",
-    accept: "",
-    multiple: false,
-    requiresFiles: false,
-    fields: [
-      {
-        key: "url",
-        label: "Web address",
-        placeholder: "https://example.com",
-        required: true,
-      },
-    ],
-  },
-  {
-    id: "office-to-pdf",
-    label: "Office → PDF",
-    description: "Convert Word, Excel, or PowerPoint files to PDF.",
-    accept: OFFICE_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "pdfa",
-    label: "PDF → PDF/A",
-    description: "Convert PDFs into archival PDF/A-2b output.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-    tier: "Premium",
-  },
-  {
-    id: "pdf-to-text",
-    label: "PDF → Text",
-    description: "Extract raw text into a plain TXT file.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "pdf-to-word",
-    label: "PDF → Word",
-    description: "Extract text from digital PDFs into DOCX.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "pdf-to-word-ocr",
-    label: "PDF → Word (OCR)",
-    description: "OCR scanned PDFs into a Word document.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-    tier: "Premium",
-  },
-  {
-    id: "pdf-to-excel",
-    label: "PDF → Excel",
-    description: "Extract text into a simple XLSX worksheet.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-  },
-  {
-    id: "pdf-to-excel-ocr",
-    label: "PDF → Excel (OCR)",
-    description: "OCR scanned PDFs into a simple XLSX worksheet.",
-    accept: PDF_ACCEPT,
-    multiple: false,
-    tier: "Premium",
   },
 ];
 
@@ -609,7 +644,6 @@ export default function ToolsPage() {
   const [lastJobId, setLastJobId] = useState<string | null>(null);
   const [anonId, setAnonId] = useState<string | null>(() => getOrCreateAnonId());
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [devBypass, setDevBypass] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const devModeAvailable = process.env.NODE_ENV === "development";
 
@@ -620,6 +654,23 @@ export default function ToolsPage() {
     [anonId],
   );
   const jobs = useQuery(api.jobs.listJobs, jobsArgs) as JobRecord[] | undefined;
+  const unlockNeedsPassword = useMemo(() => {
+    if (!jobs) {
+      return false;
+    }
+    const latestUnlock = [...jobs]
+      .filter((job) => job.tool === "unlock")
+      .sort((a, b) => b.createdAt - a.createdAt)[0];
+    if (!latestUnlock) {
+      return false;
+    }
+    const message = (latestUnlock.errorMessage ?? "").toLowerCase();
+    return (
+      latestUnlock.status === "failed" &&
+      latestUnlock.errorCode === "USER_INPUT_INVALID" &&
+      message.includes("password required")
+    );
+  }, [jobs]);
 
   useEffect(() => {
     const timer = window.setInterval(() => {
@@ -630,10 +681,32 @@ export default function ToolsPage() {
     };
   }, []);
 
-  const tool = useMemo(
-    () => TOOLS.find((item) => item.id === activeTool),
-    [activeTool],
-  );
+  const tool = useMemo(() => {
+    const base = TOOLS.find((item) => item.id === activeTool);
+    if (!base) {
+      return undefined;
+    }
+    if (base.id !== "unlock") {
+      return base;
+    }
+    if (!unlockNeedsPassword) {
+      return base;
+    }
+    return {
+      ...base,
+      description:
+        "This PDF requires a password. Enter it to remove encryption.",
+      fields: [
+        {
+          key: "password",
+          label: "Password",
+          placeholder: "Enter password",
+          type: "password",
+          required: true,
+        },
+      ] as ToolField[],
+    };
+  }, [activeTool, unlockNeedsPassword]);
   const fileLabel = tool?.multiple ? "Choose files" : "Choose file";
 
   const totalSize = useMemo(
@@ -676,24 +749,6 @@ export default function ToolsPage() {
     setFileInputKey((value) => value + 1);
   };
 
-  useEffect(() => {
-    if (!devModeAvailable) {
-      return;
-    }
-    const stored = window.localStorage.getItem(DEV_BYPASS_STORAGE_KEY);
-    if (stored) {
-      setDevBypass(stored === "1");
-    }
-  }, [devModeAvailable]);
-
-  const toggleDevBypass = () => {
-    setDevBypass((prev) => {
-      const next = !prev;
-      window.localStorage.setItem(DEV_BYPASS_STORAGE_KEY, next ? "1" : "0");
-      return next;
-    });
-  };
-
   const buildConfig = () => {
     if (!tool) {
       return undefined;
@@ -734,7 +789,7 @@ export default function ToolsPage() {
       setStatus("Add at least one file to continue.");
       return;
     }
-    if (!needsFiles && tool.id === "web-to-pdf") {
+    if (!needsFiles && tool.id === "html-to-pdf") {
       const urlValue = configValues.url?.trim() ?? "";
       if (!urlValue) {
         setStatus("Enter a valid URL.");
@@ -783,7 +838,6 @@ export default function ToolsPage() {
         inputs: uploads,
         config: buildConfig(),
         anonId: anonId ?? undefined,
-        devBypass: devModeAvailable && devBypass ? true : undefined,
       });
 
       if (response.anonId && response.anonId !== anonId) {
@@ -836,7 +890,6 @@ export default function ToolsPage() {
         <section className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
           <div className="space-y-4">
             {TOOLS.map((item) => {
-              const tierLabel = item.tier ?? "Standard";
               return (
                 <button
                   key={item.id}
@@ -849,20 +902,9 @@ export default function ToolsPage() {
                       : "hover:border-forest-600/30 hover:ring-1 hover:ring-forest-600/10"
                   }`}
                 >
-                  <div className="flex items-center justify-between">
-                    <div>
-                      <h2 className="text-lg font-display">{item.label}</h2>
-                      <p className="text-xs text-ink-500">{item.description}</p>
-                    </div>
-                    <span
-                      className={`rounded-full px-3 py-1 text-[0.6rem] uppercase tracking-[0.2em] ${
-                        tierLabel === "Premium"
-                          ? "border border-ink-900/15 bg-rose-100 text-ink-700"
-                          : "border border-ink-900/10 bg-paper-100 text-ink-500"
-                      }`}
-                    >
-                      {tierLabel}
-                    </span>
+                  <div>
+                    <h2 className="text-lg font-display">{item.label}</h2>
+                    <p className="text-xs text-ink-500">{item.description}</p>
                   </div>
                 </button>
               );
@@ -882,24 +924,14 @@ export default function ToolsPage() {
             <div className="mt-4 text-sm text-ink-700">{tool?.description}</div>
 
             {devModeAvailable && (
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-xs text-ink-600">
+              <div className="mt-4 rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-xs text-ink-600">
                 <div>
                   <div className="font-semibold text-ink-700">Dev mode</div>
                   <div className="text-ink-500">
-                    Bypass limits locally (development builds; requires `ZENPDF_DEV_MODE=1`).
+                    Local development bypass is always enabled (set
+                    `ZENPDF_DEV_MODE=0` to enforce limits locally).
                   </div>
                 </div>
-                <button
-                  type="button"
-                  onClick={toggleDevBypass}
-                  className={`rounded-full px-3 py-1 text-[0.65rem] uppercase tracking-[0.2em] transition ${
-                    devBypass
-                      ? "bg-forest-600 text-paper-50"
-                      : "border border-ink-900/10 bg-paper-50 text-ink-600"
-                  }`}
-                >
-                  {devBypass ? "Bypass on" : "Bypass off"}
-                </button>
               </div>
             )}
 
@@ -959,19 +991,31 @@ export default function ToolsPage() {
                   <label className="text-xs uppercase tracking-[0.2em] text-ink-500">
                     {field.label}
                   </label>
-                  <input
-                    type={field.type ?? "text"}
-                    inputMode={field.type === "number" ? "numeric" : undefined}
-                    min={field.key === "angle" ? 90 : undefined}
-                    max={field.key === "angle" ? 270 : undefined}
-                    step={field.key === "angle" ? 90 : undefined}
-                    value={configValues[field.key] ?? ""}
-                    onChange={(event) =>
-                      updateConfig(field.key, event.target.value)
-                    }
-                    placeholder={field.placeholder}
-                    className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
-                  />
+                  {field.type === "textarea" ? (
+                    <textarea
+                      value={configValues[field.key] ?? ""}
+                      onChange={(event) =>
+                        updateConfig(field.key, event.target.value)
+                      }
+                      placeholder={field.placeholder}
+                      rows={4}
+                      className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
+                    />
+                  ) : (
+                    <input
+                      type={field.type ?? "text"}
+                      inputMode={field.type === "number" ? "numeric" : undefined}
+                      min={field.key === "angle" ? 90 : undefined}
+                      max={field.key === "angle" ? 270 : undefined}
+                      step={field.key === "angle" ? 90 : undefined}
+                      value={configValues[field.key] ?? ""}
+                      onChange={(event) =>
+                        updateConfig(field.key, event.target.value)
+                      }
+                      placeholder={field.placeholder}
+                      className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
+                    />
+                  )}
                   {field.helper && (
                     <p className="mt-2 text-xs text-ink-500">{field.helper}</p>
                   )}

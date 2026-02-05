@@ -6,7 +6,8 @@
 - Detect abuse and regressions early.
 
 ## Logging Guidelines
-- Use structured logs with jobId, tool, tier, teamId, and requestId.
+- Use structured logs with jobId, tool, tier, and requestId.
+- `teamId` is intentionally omitted because teams/workflows are not a product concept in the strict 27-tool scope; abuse detection is handled by anon/user identity, tier, tool, IP/network metadata, and requestId correlation.
 - Log status transitions: queued -> running -> completed or failed.
 - Redact PII and omit file contents; log file size and page count only.
 - Emit stable error codes and the user-facing message key.

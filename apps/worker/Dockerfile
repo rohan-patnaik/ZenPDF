@@ -8,9 +8,13 @@ RUN apt-get update \
         fonts-dejavu-core \
         ghostscript \
         jbig2enc \
+        libreoffice \
         mupdf-tools \
+        ocrmypdf \
         poppler-utils \
         qpdf \
+        tesseract-ocr \
+        tesseract-ocr-eng \
         wget \
     && rm -rf /var/lib/apt/lists/*
 

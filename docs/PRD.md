@@ -1,46 +1,37 @@
 # ZenPDF Product Requirements
 
 ## Overview
-ZenPDF is an open-source web app that delivers feature parity with iLovePDF's Standard and Premium toolsets (functionality only, no UI/branding parity). It runs on Next.js, Convex, and a Cloud Run worker to keep heavy PDF processing out of the web tier.
+ZenPDF is an open-source web app that delivers feature parity with iLovePDF's toolset (functionality only, no UI/branding parity). It runs on Next.js, Convex, and a Cloud Run worker to keep heavy PDF processing out of the web tier.
 
 ## Goals
-- Provide a reliable, friendly PDF toolbox for individuals and teams.
+- Provide a reliable, friendly PDF toolbox aligned to the iLovePDF tool catalog.
 - Offer clear plan limits and visible capacity status.
 - Keep costs within free-tier budgets by enforcing strict limits.
 - Preserve a tactile, editorial UI theme across core flows.
 
 ## Target Users
 - Individuals who need occasional PDF utilities.
-- Small teams sharing presets and workflows.
+- Power users who need predictable tool behavior and file naming.
 - OSS-friendly users who may run the stack locally.
 
 ## Core Features
-Standard (limited):
-- Merge, split, compress
-- Image <-> PDF, PDF <-> JPG
-- Office -> PDF, PDF -> Word/Excel (non-OCR)
-- Rotate, remove pages, reorder
-- Watermark, page numbers, crop
-- Repair, unlock, protect
-- Web to PDF
-- Basic annotations (highlight text)
-- Redact, compare, copy utility (PDF → Text)
-- OCR to searchable PDF (limited)
+ZenPDF exposes a strict 27-tool parity set:
+- Merge PDF, Split PDF, Compress PDF
+- PDF to Word, PDF to PowerPoint, PDF to Excel
+- Word to PDF, PowerPoint to PDF, Excel to PDF
+- Edit PDF, PDF to JPG, JPG to PDF
+- Sign PDF, Watermark, Rotate PDF, HTML to PDF
+- Unlock PDF, Protect PDF, Organize PDF
+- PDF to PDF/A, Repair PDF, Page numbers
+- Scan to PDF, OCR PDF, Compare PDF, Redact PDF, Crop PDF
 
-Premium (feature-flagged, no billing yet):
-- PDF to Word/Excel (OCR for scans)
-- PDF/A conversion
-- Workflows (multi-step presets)
-- Teams (org + shared presets/templates)
-- Higher limits and concurrency
-- Ads-free flag (hide supporter banner)
-
-Premium access is currently enabled through environment allowlists (no billing yet).
+All tools are available across plans. There are no premium-only tools.
 
 ## Plans & Limits
 - Tiers: ANON, FREE_ACCOUNT, PREMIUM.
 - Limits are config-driven via Convex tables and env overrides.
 - Enforced server-side for every job and tool.
+- PREMIUM currently represents a higher-capacity profile only (limits/concurrency), not extra tools.
 - Budget controls disable heavy tools first, then respond with friendly errors.
 
 ## Usage & Capacity Page
@@ -62,7 +53,6 @@ Premium access is currently enabled through environment allowlists (no billing y
 - USER_LIMIT_DAILY_MINUTES
 - USER_INPUT_INVALID
 - USER_SESSION_REQUIRED
-- USER_LIMIT_PREMIUM_REQUIRED
 - SERVICE_CAPACITY_TEMPORARY
 - SERVICE_CAPACITY_MONTHLY_BUDGET
 

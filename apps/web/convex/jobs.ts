@@ -30,16 +30,38 @@ const jobOutput = v.object({
   sizeBytes: v.optional(v.number()),
 });
 
-const HEAVY_TOOLS = new Set([
-  "ocr-searchable-pdf",
-  "pdf-to-word-ocr",
-  "pdf-to-excel-ocr",
+const SUPPORTED_TOOLS = new Set([
+  "merge",
+  "split",
+  "compress",
+  "pdf-to-word",
+  "pdf-to-powerpoint",
+  "pdf-to-excel",
+  "word-to-pdf",
+  "powerpoint-to-pdf",
+  "excel-to-pdf",
+  "edit-pdf",
+  "pdf-to-jpg",
+  "jpg-to-pdf",
+  "sign-pdf",
+  "watermark",
+  "rotate",
+  "html-to-pdf",
+  "unlock",
+  "protect",
+  "organize-pdf",
   "pdfa",
+  "repair",
+  "page-numbers",
+  "scan-to-pdf",
+  "ocr-pdf",
+  "compare",
+  "redact",
+  "crop",
 ]);
 
-const PREMIUM_ONLY_TOOLS = new Set([
-  "pdf-to-word-ocr",
-  "pdf-to-excel-ocr",
+const HEAVY_TOOLS = new Set([
+  "ocr-pdf",
   "pdfa",
 ]);
 
@@ -85,7 +107,6 @@ export const createJob = mutation({
     inputs: v.array(jobInput),
     config: v.optional(v.any()),
     anonId: v.optional(v.string()),
-    devBypass: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const now = Date.now();
@@ -100,8 +121,10 @@ export const createJob = mutation({
       args.config && typeof args.config === "object" && !Array.isArray(args.config)
         ? args.config
         : undefined;
+    if (!SUPPORTED_TOOLS.has(args.tool)) {
+      throwFriendlyError("USER_INPUT_INVALID", { tool: args.tool });
+    }
     const devBypass =
-      args.devBypass === true &&
       process.env.ZENPDF_DEV_MODE === "1" &&
       process.env.NODE_ENV === "development";
     const planLimits = await resolvePlanLimits(ctx, tier);
@@ -115,10 +138,6 @@ export const createJob = mutation({
 
       if (!budget.heavyToolsEnabled && HEAVY_TOOLS.has(args.tool)) {
         throwFriendlyError("SERVICE_CAPACITY_TEMPORARY");
-      }
-
-      if (tier !== "PREMIUM" && PREMIUM_ONLY_TOOLS.has(args.tool)) {
-        throwFriendlyError("USER_LIMIT_PREMIUM_REQUIRED");
       }
 
       const { counter: usageCounter } = await resolveUsageCounter(

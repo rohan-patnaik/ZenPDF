@@ -7,6 +7,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 import requests
 
@@ -15,55 +16,61 @@ from .tools import (
     compare_pdfs,
     compress_pdf,
     crop_pdf,
-    highlight_pdf,
+    edit_pdf,
+    excel_to_pdf,
     image_to_pdf,
     merge_pdfs,
-    office_to_pdf,
+    ocr_pdf,
     page_numbers_pdf,
     pdf_to_pdfa,
     pdf_to_docx,
-    pdf_to_docx_ocr,
-    pdf_to_text,
+    pdf_to_powerpoint,
     pdf_to_xlsx,
-    pdf_to_xlsx_ocr,
     pdf_to_jpg,
+    powerpoint_to_pdf,
     protect_pdf,
     repair_pdf,
     redact_pdf,
-    remove_pages,
-    reorder_pages,
+    organize_pdf,
     rotate_pdf,
+    scan_to_pdf,
+    sign_pdf,
     split_pdf,
     unlock_pdf,
     watermark_pdf,
     web_to_pdf,
+    word_to_pdf,
     zip_outputs,
 )
 
 TOOL_OUTPUT_SUFFIXES = {
     "merge": ("merged", None),
+    "split": ("split", ".zip"),
     "compress": ("compressed", None),
-    "repair": ("repaired", None),
-    "rotate": ("rotated", None),
-    "remove-pages": ("trimmed", None),
-    "reorder-pages": ("reordered", None),
+    "pdf-to-word": ("word", ".docx"),
+    "pdf-to-powerpoint": ("powerpoint", ".pptx"),
+    "pdf-to-excel": ("excel", ".xlsx"),
+    "word-to-pdf": ("word", ".pdf"),
+    "powerpoint-to-pdf": ("powerpoint", ".pdf"),
+    "excel-to-pdf": ("excel", ".pdf"),
+    "edit-pdf": ("edited", ".pdf"),
+    "pdf-to-jpg": ("jpg", ".zip"),
+    "jpg-to-pdf": ("images", ".pdf"),
+    "sign-pdf": ("signed", ".pdf"),
     "watermark": ("watermarked", None),
-    "page-numbers": ("numbered", None),
-    "crop": ("cropped", None),
-    "redact": ("redacted", None),
-    "highlight": ("highlighted", None),
+    "rotate": ("rotated", None),
+    "html-to-pdf": ("html", ".pdf"),
     "unlock": ("unlocked", None),
     "protect": ("protected", None),
+    "organize-pdf": ("organized", ".pdf"),
     "pdfa": ("pdfa", None),
-    "pdf-to-word": ("word", ".docx"),
-    "pdf-to-text": ("text", ".txt"),
+    "repair": ("repaired", None),
+    "page-numbers": ("numbered", None),
+    "scan-to-pdf": ("scan", ".pdf"),
+    "ocr-pdf": ("ocr", ".pdf"),
     "compare": ("compare", ".txt"),
-    "pdf-to-word-ocr": ("word_ocr", ".docx"),
-    "pdf-to-excel": ("excel", ".xlsx"),
-    "pdf-to-excel-ocr": ("excel_ocr", ".xlsx"),
-    "office-to-pdf": ("converted", ".pdf"),
-    "image-to-pdf": ("images", ".pdf"),
-    "web-to-pdf": ("web", ".pdf"),
+    "redact": ("redacted", None),
+    "crop": ("cropped", None),
 }
 
 
@@ -84,8 +91,8 @@ def _normalize_extension(extension: str) -> str:
 
 def _build_output_path(tool: str, inputs: List[Path], temp: Path) -> Path:
     """Compute a consistent output filename based on the tool and input."""
-    if tool == "web-to-pdf":
-        return temp / "web_to_pdf.pdf"
+    if tool == "html-to-pdf":
+        return temp / "html_to_pdf.pdf"
     if tool not in TOOL_OUTPUT_SUFFIXES or not inputs:
         return temp / "output.pdf"
     base_path = _strip_input_prefix(inputs[0])
@@ -94,6 +101,24 @@ def _build_output_path(tool: str, inputs: List[Path], temp: Path) -> Path:
     resolved_extension = extension or (base_path.suffix or ".pdf")
     resolved_extension = _normalize_extension(resolved_extension)
     return temp / f"{stem}_{suffix}{resolved_extension}"
+
+
+def _sanitize_filename_token(value: str) -> str:
+    """Create a filesystem-safe lowercase token."""
+    token = "".join(char.lower() if char.isalnum() else "-" for char in value)
+    token = "-".join(part for part in token.split("-") if part)
+    return token[:48] or "html"
+
+
+def _build_html_output_path(url: str, temp: Path) -> Path:
+    """Build a descriptive, unique output filename for HTML-to-PDF jobs."""
+    try:
+        hostname = urlparse(url).hostname or "html"
+    except ValueError:
+        hostname = "html"
+    prefix = _sanitize_filename_token(hostname)
+    timestamp = int(time.time())
+    return temp / f"{prefix}_{timestamp}_html.pdf"
 
 
 def _rename_output(source: Path, target: Path) -> Path:
@@ -317,16 +342,18 @@ class ZenPdfWorker:
             return ToolRunResult(
                 [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
             )
-        if tool == "remove-pages":
-            pages = config.get("pages") or ""
-            if not pages.strip():
-                return ToolRunResult([merge_pdfs([inputs[0]], output_path)])
-            return ToolRunResult([remove_pages(inputs[0], output_path, pages)])
-        if tool == "reorder-pages":
-            order = config.get("order") or ""
-            if not order.strip():
-                return ToolRunResult([merge_pdfs([inputs[0]], output_path)])
-            return ToolRunResult([reorder_pages(inputs[0], output_path, order)])
+        if tool == "organize-pdf":
+            return ToolRunResult(
+                [
+                    organize_pdf(
+                        inputs[0],
+                        output_path,
+                        config.get("order"),
+                        config.get("delete"),
+                        config.get("rotate"),
+                    )
+                ]
+            )
         if tool == "watermark":
             text = config.get("text") or ""
             if not str(text).strip():
@@ -357,50 +384,70 @@ class ZenPdfWorker:
             return ToolRunResult(
                 [redact_pdf(inputs[0], output_path, str(text), config.get("pages"))]
             )
+        if tool == "edit-pdf":
+            return ToolRunResult([edit_pdf(inputs[0], output_path, config.get("operations"))])
         if tool == "compare":
             if len(inputs) != 2:
                 raise ValueError("Two PDF files are required")
             return ToolRunResult([compare_pdfs(inputs[0], inputs[1], output_path)])
-        if tool == "highlight":
-            if not inputs:
-                raise ValueError("PDF file is required")
-            text = config.get("text") or ""
-            if not str(text).strip():
-                raise ValueError("Text to highlight is required")
-            return ToolRunResult(
-                [
-                    highlight_pdf(
-                        inputs[0], output_path, str(text), config.get("pages")
-                    )
-                ]
-            )
         if tool == "unlock":
-            password = config.get("password") or ""
-            if not str(password).strip():
-                raise ValueError("Password is required")
-            return ToolRunResult([unlock_pdf(inputs[0], output_path, str(password))])
+            password = config.get("password") if config else ""
+            return ToolRunResult([unlock_pdf(inputs[0], output_path, str(password or ""))])
         if tool == "protect":
             password = config.get("password") or ""
             if not str(password).strip():
                 raise ValueError("Password is required")
             return ToolRunResult([protect_pdf(inputs[0], output_path, str(password))])
-        if tool == "image-to-pdf":
+        if tool == "jpg-to-pdf":
             return ToolRunResult([image_to_pdf(inputs, output_path)])
+        if tool == "scan-to-pdf":
+            return ToolRunResult([scan_to_pdf(inputs, output_path)])
+        if tool == "sign-pdf":
+            text = str(config.get("text") or "").strip()
+            if not text:
+                raise ValueError("Signature text is required")
+            x = _parse_int(config.get("x"), 36)
+            y = _parse_int(config.get("y"), 36)
+            return ToolRunResult(
+                [
+                    sign_pdf(
+                        inputs[0],
+                        output_path,
+                        text,
+                        config.get("pages"),
+                        float(x),
+                        float(y),
+                    )
+                ]
+            )
         if tool == "pdf-to-jpg":
             dpi = _parse_int(config.get("dpi"), 150)
             dpi = min(max(dpi, 72), MAX_DPI)
             images = pdf_to_jpg(inputs[0], temp, dpi)
-            zip_path = temp / "pdf_pages.zip"
+            base_name = _strip_input_prefix(inputs[0])
+            zip_stem = base_name.stem or "output"
+            zip_path = temp / f"{zip_stem}.zip"
             return ToolRunResult([zip_outputs(images, zip_path)])
-        if tool == "web-to-pdf":
+        if tool == "html-to-pdf":
             url = config.get("url")
             if not url:
                 raise ValueError("URL is required")
-            return ToolRunResult([web_to_pdf(str(url), output_path)])
-        if tool == "office-to-pdf":
+            html_output = _build_html_output_path(str(url), temp)
+            return ToolRunResult([web_to_pdf(str(url), html_output)])
+        if tool == "word-to-pdf":
             if not inputs:
-                raise ValueError("Office file is required")
-            converted = office_to_pdf(inputs[0], temp)
+                raise ValueError("Word document is required")
+            converted = word_to_pdf(inputs[0], temp)
+            return ToolRunResult([_rename_output(converted, output_path)])
+        if tool == "powerpoint-to-pdf":
+            if not inputs:
+                raise ValueError("PowerPoint document is required")
+            converted = powerpoint_to_pdf(inputs[0], temp)
+            return ToolRunResult([_rename_output(converted, output_path)])
+        if tool == "excel-to-pdf":
+            if not inputs:
+                raise ValueError("Excel document is required")
+            converted = excel_to_pdf(inputs[0], temp)
             return ToolRunResult([_rename_output(converted, output_path)])
         if tool == "pdfa":
             if not inputs:
@@ -410,26 +457,18 @@ class ZenPdfWorker:
             if not inputs:
                 raise ValueError("PDF file is required")
             return ToolRunResult([pdf_to_docx(inputs[0], output_path)])
-        if tool == "pdf-to-text":
+        if tool == "pdf-to-powerpoint":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([pdf_to_text(inputs[0], output_path)])
-        if tool == "pdf-to-word-ocr":
-            if not inputs:
-                raise ValueError("PDF file is required")
-            return ToolRunResult(
-                [pdf_to_docx_ocr(inputs[0], output_path, config.get("lang"))]
-            )
+            return ToolRunResult([pdf_to_powerpoint(inputs[0], output_path)])
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
             return ToolRunResult([pdf_to_xlsx(inputs[0], output_path)])
-        if tool == "pdf-to-excel-ocr":
+        if tool == "ocr-pdf":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult(
-                [pdf_to_xlsx_ocr(inputs[0], output_path, config.get("lang"))]
-            )
+            return ToolRunResult([ocr_pdf(inputs[0], output_path, config.get("lang"))])
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:

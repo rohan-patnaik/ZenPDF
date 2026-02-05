@@ -31,11 +31,11 @@ const TIER_DETAILS: Record<
   FREE_ACCOUNT: {
     name: "Free account",
     description: "Google sign-in with higher limits and saved job history.",
-    note: "Supporter mode unlocks OCR, PDF/A, and larger batches.",
+    note: "Supporter mode increases daily limits and batch sizes.",
   },
   PREMIUM: {
     name: "Premium supporter",
-    description: "Feature-flagged supporter mode for OCR and larger workloads.",
+    description: "Higher throughput profile for larger workloads.",
     note: "Premium access still respects monthly budget health.",
   },
 };
@@ -61,7 +61,6 @@ const errorCatalogOrder = [
   "USER_INPUT_INVALID",
   "USER_LIMIT_MAX_FILES",
   "USER_LIMIT_CONCURRENT_JOBS",
-  "USER_LIMIT_PREMIUM_REQUIRED",
   "USER_LIMIT_DAILY_JOBS",
   "USER_LIMIT_DAILY_MINUTES",
   "USER_SESSION_REQUIRED",
@@ -86,7 +85,7 @@ const buildPlanBullets = (tier: PlanTier, limits: PlanLimits) => {
   } else if (tier === "FREE_ACCOUNT") {
     bullets.push("Saved job history");
   } else {
-    bullets.push("OCR + PDF/A when enabled");
+    bullets.push("Highest daily throughput");
   }
   return bullets;
 };
@@ -312,7 +311,7 @@ export default function UsageCapacityPage() {
           <h2 className="mt-2 text-2xl">Choose the right tier for the workload.</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink-700">
             Limits reset daily and are enforced server-side. Upgrade tiers when you
-            need larger batches, saved history, or OCR-heavy workflows.
+            need larger batches, saved history, or OCR-heavy jobs.
           </p>
           <div className="mt-6 grid gap-4 md:grid-cols-3">
             {(["ANON", "FREE_ACCOUNT", "PREMIUM"] as PlanTier[]).map((plan) => (

@@ -19,10 +19,6 @@ export const FRIENDLY_ERRORS = {
     message: "You already have the maximum number of active jobs.",
     next: "Wait for existing jobs to finish, then retry.",
   },
-  USER_LIMIT_PREMIUM_REQUIRED: {
-    message: "This tool is available to Premium supporters only.",
-    next: "Sign in with a Premium account or run ZenPDF locally.",
-  },
   USER_SESSION_REQUIRED: {
     message: "We could not confirm your session for this job.",
     next: "Refresh the page or sign in, then retry.",
