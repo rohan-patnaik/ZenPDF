@@ -2190,7 +2190,10 @@ def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Pat
                 return output_path
     if pytesseract is None:
         raise RuntimeError("OCR PDF conversion requires pytesseract")
-    if not shutil.which("tesseract"):
+    if (
+        not shutil.which("tesseract")
+        and getattr(pytesseract, "__name__", "") == "pytesseract"
+    ):
         raise RuntimeError("OCR PDF conversion requires tesseract")
     page_outputs: list[Path] = []
     run_id = uuid.uuid4().hex[:8]
