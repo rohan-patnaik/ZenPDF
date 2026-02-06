@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useMutation, useQuery } from "convex/react";
 
@@ -496,6 +496,7 @@ type JobRecord = {
   } | null;
   createdAt: number;
   startedAt?: number;
+  finishedAt?: number;
 };
 
 const parseEnvFloat = (value: string | undefined, fallback: number) => {
@@ -583,7 +584,7 @@ const JobCard = ({
   const statusTone =
     job.status === "failed"
       ? "status-pill status-pill--error"
-      : job.status === "done"
+      : job.status === "done" || job.status === "succeeded"
         ? "status-pill status-pill--success"
         : "status-pill";
 
@@ -695,9 +696,12 @@ export default function ToolsPage() {
   const [configValues, setConfigValues] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
   const [lastJobId, setLastJobId] = useState<string | null>(null);
+  const [contextJobId, setContextJobId] = useState<string | null>(null);
+  const [contextToolId, setContextToolId] = useState<ToolId | null>(null);
   const [anonId, setAnonId] = useState<string | null>(() => getOrCreateAnonId());
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const activeToolPanelRef = useRef<HTMLDivElement | null>(null);
   const devModeAvailable = process.env.NODE_ENV === "development";
 
   const generateUploadUrl = useMutation(api.files.generateUploadUrl);
@@ -799,12 +803,95 @@ export default function ToolsPage() {
     return jobs.find((job) => job.status === "queued" || job.status === "running");
   }, [jobs, lastJobId]);
 
+  const contextResult = useMemo(() => {
+    if (!jobs || !contextJobId || !contextToolId || contextToolId !== activeTool) {
+      return undefined;
+    }
+    const matchingJob = jobs.find((job) => job._id === contextJobId);
+    const output = matchingJob?.outputs?.[0];
+    const normalizedStatus =
+      matchingJob?.status === "succeeded" || matchingJob?.status === "done"
+        ? "succeeded"
+        : matchingJob?.status === "failed"
+          ? "failed"
+          : "running";
+    if (!matchingJob || !output || normalizedStatus !== "succeeded") {
+      return undefined;
+    }
+    const inputSize =
+      matchingJob.inputs && matchingJob.inputs.length === 1
+        ? matchingJob.inputs[0]?.sizeBytes
+        : undefined;
+    const compressionResult =
+      matchingJob.tool === "compress" ? matchingJob.toolResult ?? undefined : undefined;
+    const noChange = compressionResult?.status === "no_change";
+    const hasSavings =
+      compressionResult?.status === "success" &&
+      (compressionResult.savings_bytes ?? 0) > 0;
+    return {
+      jobId: matchingJob._id,
+      storageId: output.storageId,
+      filename: output.filename,
+      status: normalizedStatus,
+      outputSizeBytes: output.sizeBytes,
+      inputSizeBytes: inputSize,
+      completedAt: matchingJob.finishedAt ?? matchingJob.createdAt,
+      noChange,
+      hasSavings,
+      savingsBytes: compressionResult?.savings_bytes,
+      savingsPercent: compressionResult?.savings_percent,
+    };
+  }, [activeTool, contextJobId, contextToolId, jobs]);
+
+  const contextResultSummary = useMemo(() => {
+    if (!contextResult) {
+      return "";
+    }
+
+    const outputSize =
+      contextResult.outputSizeBytes !== undefined
+        ? formatBytes(contextResult.outputSizeBytes)
+        : undefined;
+    const inputSize =
+      contextResult.inputSizeBytes !== undefined
+        ? formatBytes(contextResult.inputSizeBytes)
+        : undefined;
+
+    if (contextResult.hasSavings && outputSize && inputSize && contextResult.savingsBytes !== undefined) {
+      return `Output ${outputSize} from ${inputSize} · Saved ${formatBytes(
+        contextResult.savingsBytes,
+      )} (${formatSavingsPercent(contextResult.savingsPercent ?? 0)})`;
+    }
+
+    if (contextResult.noChange && outputSize) {
+      return `Output ${outputSize} · No size reduction`;
+    }
+
+    if (outputSize && inputSize) {
+      return `Output ${outputSize} from ${inputSize}`;
+    }
+
+    if (outputSize) {
+      return `Output ${outputSize}`;
+    }
+
+    return "Output ready for download";
+  }, [contextResult]);
+
   const selectTool = (toolId: ToolId) => {
     setActiveTool(toolId);
     setFiles([]);
     setFileInputKey((value) => value + 1);
     setConfigValues({});
     setStatus(null);
+    setContextJobId(null);
+    setContextToolId(null);
+    window.requestAnimationFrame(() => {
+      activeToolPanelRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
   };
 
   const updateConfig = (key: string, value: string) => {
@@ -918,6 +1005,8 @@ export default function ToolsPage() {
       }
 
       setLastJobId(response.jobId as string);
+      setContextJobId(response.jobId as string);
+      setContextToolId(tool.id);
       setStatus("Job queued. Results will appear below.");
       setFiles([]);
       setFileInputKey((value) => value + 1);
@@ -1057,7 +1146,7 @@ export default function ToolsPage() {
             </div>
           </aside>
 
-          <div className="paper-card p-6">
+          <div ref={activeToolPanelRef} className="paper-card scroll-mt-28 p-6">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <span className="ink-label">Active tool</span>
@@ -1187,6 +1276,53 @@ export default function ToolsPage() {
                 )}
                 {isSubmitting ? "Working..." : "Queue job"}
               </button>
+              {contextResult && (
+                <button
+                  type="button"
+                  className="paper-button--ghost"
+                  onClick={() =>
+                    handleDownload(
+                      contextResult.jobId,
+                      contextResult.storageId,
+                      contextResult.filename,
+                    )
+                  }
+                >
+                  Download
+                </button>
+              )}
+              {contextResult && (
+                <div className="surface-muted flex min-w-[19rem] flex-1 items-center gap-3 p-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <p
+                        className="truncate text-sm font-semibold text-ink-900"
+                        title={contextResult.filename}
+                      >
+                        {contextResult.filename}
+                      </p>
+                      <span
+                        className={
+                          contextResult.status === "succeeded"
+                            ? "status-pill status-pill--success"
+                            : contextResult.status === "failed"
+                              ? "status-pill status-pill--error"
+                              : "status-pill"
+                        }
+                      >
+                        {contextResult.status === "succeeded"
+                          ? "Succeeded"
+                          : contextResult.status === "failed"
+                            ? "Failed"
+                            : "Running"}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-ink-500">
+                      {formatJobTimestamp(contextResult.completedAt)} · {contextResultSummary}
+                    </p>
+                  </div>
+                </div>
+              )}
             </div>
 
             {status && (
