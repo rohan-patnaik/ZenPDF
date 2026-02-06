@@ -7,7 +7,7 @@ import { useThemeMode } from "@/components/ThemeModeProvider";
 
 export default function DonateBookmark() {
   const [open, setOpen] = useState(false);
-  const [showQr, setShowQr] = useState(false);
+  const [showQr, setShowQr] = useState(true);
   const { theme } = useThemeMode();
 
   const defaultUpiName = "Rohan Patnaik";
@@ -52,12 +52,12 @@ export default function DonateBookmark() {
   }, [qrUrl, upiUri]);
 
   const handleOpen = () => {
-    setShowQr(false);
+    setShowQr(true);
     setOpen(true);
   };
 
   const handleClose = () => {
-    setShowQr(false);
+    setShowQr(true);
     setOpen(false);
   };
 
@@ -99,28 +99,27 @@ export default function DonateBookmark() {
           aria-modal="true"
           aria-labelledby="support-title"
         >
-          <div className="paper-card pointer-events-auto w-full max-w-md p-6">
-            <div className="flex items-start justify-between gap-3">
-              <div>
-                <span className="ink-label">Support ZenPDF</span>
-                <h2 id="support-title" className="mt-2 text-2xl">
-                  Buy me a chai
-                </h2>
-                <p className="mt-2 text-sm text-ink-700">
-                  ZenPDF is free and open source. Support goes directly via UPI with no platform
-                  cut through OnlyChai.
-                </p>
-              </div>
-              <button
-                type="button"
-                className="paper-button--ghost"
-                onClick={handleClose}
-              >
-                Close
-              </button>
+          <div className="paper-card pointer-events-auto relative w-full max-w-md p-6 text-center">
+            <button
+              type="button"
+              className="paper-button--ghost absolute right-6 top-6 w-auto px-4 py-2"
+              onClick={handleClose}
+            >
+              Close
+            </button>
+
+            <div className="mx-auto max-w-[30rem]">
+              <span className="ink-label block">Support ZenPDF</span>
+              <h2 id="support-title" className="mt-2 text-2xl">
+                Buy me a chai
+              </h2>
+              <p className="mt-2 text-sm text-ink-700">
+                ZenPDF is free and open source. Support goes directly via UPI with no platform cut
+                through OnlyChai.
+              </p>
             </div>
 
-            <div className="surface-muted mt-4 p-4">
+            <div className="surface-muted mt-4 p-4 text-center">
               <div className="ink-label">UPI ID</div>
               <div className="mt-1 break-all text-sm text-ink-900">
                 {upiId || "Set NEXT_PUBLIC_DONATE_UPI_ID"}
@@ -128,7 +127,7 @@ export default function DonateBookmark() {
             </div>
 
             {showQr && resolvedQrUrl && (
-              <div className="surface-muted mt-4 p-3">
+              <div className="surface-muted mt-4 p-3 text-center">
                 <img
                   src={resolvedQrUrl}
                   alt="UPI QR code"
@@ -139,7 +138,7 @@ export default function DonateBookmark() {
               </div>
             )}
 
-            <div className="mt-4 flex flex-wrap gap-2">
+            <div className="mt-4 flex flex-wrap justify-center gap-2">
               <button
                 type="button"
                 className="paper-button"
@@ -157,7 +156,7 @@ export default function DonateBookmark() {
                   }
                 }}
               >
-                Open any UPI
+                Open UPI App
               </a>
             </div>
           </div>
