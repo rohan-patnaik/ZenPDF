@@ -31,33 +31,33 @@
 
 :root[data-theme="dark"] {
   color-scheme: dark;
-  /* Medium-to-dark grays (less black-heavy) */
-  --paper-50: 28 28 28;
-  --paper-100: 34 34 34;
-  --paper-200: 48 48 48;
-  --paper-300: 74 74 74;
-  --ink-900: 250 250 250;
-  --ink-700: 196 196 196;
-  --ink-500: 150 150 150;
+  /* Dark theme surface ladder: page < primary surface < nested surface */
+  --paper-50: 40 40 40;
+  --paper-100: 48 48 48;
+  --paper-200: 67 67 67;
+  --paper-300: 98 98 98;
+  --ink-900: 246 246 246;
+  --ink-700: 208 208 208;
+  --ink-500: 165 165 165;
   /* Single Supabase green accent */
   --forest-700: 63 207 142;
   --forest-600: 63 207 142;
   --forest-500: 63 207 142;
-  --sage-200: 34 34 34;
-  --rose-100: 66 29 29;
-  --gold-200: 66 52 22;
-  --wood-800: 23 23 23;
+  --sage-200: 48 48 48;
+  --rose-100: 78 38 38;
+  --gold-200: 78 62 30;
+  --wood-800: 22 22 22;
   --wood-700: 28 28 28;
-  --wood-600: 34 34 34;
+  --wood-600: 36 36 36;
   --wood-500: 48 48 48;
-  --wood-400: 74 74 74;
+  --wood-400: 72 72 72;
   --leaf-300: 169 241 202;
   --leaf-500: 63 207 142;
   --leaf-700: 63 207 142;
-  --page-bg-top: 28 28 28;
-  --page-bg-bottom: 34 34 34;
-  --page-accent: 34 34 34;
-  --shadow-ink: 8 8 8;
+  --page-bg-top: 25 25 25;
+  --page-bg-bottom: 31 31 31;
+  --page-accent: 42 42 42;
+  --shadow-ink: 10 10 10;
 }
 
 html,
@@ -378,7 +378,47 @@ h4 {
 }
 
 :root[data-theme="dark"] body {
-  background: linear-gradient(180deg, rgb(var(--page-bg-top)), rgb(var(--page-bg-bottom)));
+  background:
+    radial-gradient(circle at top center, rgb(255 255 255 / 0.04), transparent 42%),
+    linear-gradient(180deg, rgb(var(--page-bg-top)), rgb(var(--page-bg-bottom)));
+}
+
+:root[data-theme="dark"] .paper-card {
+  background: rgb(var(--paper-50) / 0.96);
+  border-color: rgb(var(--paper-200) / 0.95);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.04),
+    0 16px 30px -24px rgb(0 0 0 / 0.85);
+}
+
+:root[data-theme="dark"] .paper-stack {
+  background: rgb(var(--paper-100) / 0.95);
+  border-color: rgb(var(--paper-200));
+  box-shadow:
+    inset 0 1px 0 rgb(255 255 255 / 0.05),
+    0 18px 34px -24px rgb(0 0 0 / 0.85);
+}
+
+:root[data-theme="dark"] .wood-nav {
+  border-color: rgb(var(--paper-200));
+  background: rgb(var(--paper-50) / 0.9);
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.05),
+    0 16px 34px -24px rgb(0 0 0 / 0.86);
+}
+
+:root[data-theme="dark"] .surface-muted,
+:root[data-theme="dark"] .task-step,
+:root[data-theme="dark"] .field-input,
+:root[data-theme="dark"] .tool-card,
+:root[data-theme="dark"] .paper-button--ghost {
+  background: rgb(var(--paper-100));
+  border-color: rgb(var(--paper-200));
+}
+
+:root[data-theme="dark"] .nav-link:hover {
+  border-color: rgb(var(--paper-200));
+  background: rgb(var(--paper-100));
 }
 
 :root[data-theme="dark"] .paper-button {
@@ -420,6 +460,8 @@ h4 {
 }
 
 :root[data-theme="dark"] .paper-button--ghost:hover {
+  background: rgb(var(--paper-50));
+  border-color: rgb(var(--forest-500) / 0.5);
   color: rgb(var(--forest-500));
 }
 
