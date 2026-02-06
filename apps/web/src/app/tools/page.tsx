@@ -46,6 +46,9 @@ type ToolField = {
   helper?: string;
   type?: "text" | "number" | "password" | "textarea";
   required?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 
 type ToolDefinition = {
@@ -242,6 +245,9 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "90",
         helper: "Use 90, 180, or 270.",
         type: "number",
+        min: 90,
+        max: 270,
+        step: 90,
       },
     ],
   },
@@ -971,9 +977,9 @@ export default function ToolsPage() {
           id={field.key}
           type={field.type ?? "text"}
           inputMode={field.type === "number" ? "numeric" : undefined}
-          min={field.key === "angle" ? 90 : undefined}
-          max={field.key === "angle" ? 270 : undefined}
-          step={field.key === "angle" ? 90 : undefined}
+          min={field.min}
+          max={field.max}
+          step={field.step}
           value={configValues[field.key] ?? ""}
           onChange={(event) => updateConfig(field.key, event.target.value)}
           placeholder={field.placeholder}

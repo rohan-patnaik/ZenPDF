@@ -20,8 +20,11 @@ const clerkHandler = clerkMiddleware(async (auth, req) => {
 });
 
 export function proxy(request: Request, event: NextFetchEvent) {
+  const nextRequest =
+    request instanceof NextRequest ? request : new NextRequest(request);
+
   if (shouldBypassAuth()) {
-    const requestHeaders = new Headers(request.headers);
+    const requestHeaders = new Headers(nextRequest.headers);
     requestHeaders.set("x-zenpdf-auth-bypassed", "1");
     return NextResponse.next({
       request: {
@@ -29,9 +32,14 @@ export function proxy(request: Request, event: NextFetchEvent) {
       },
     });
   }
-  const nextRequest =
-    request instanceof NextRequest ? request : new NextRequest(request);
-  return clerkHandler(nextRequest, event);
+
+  const sanitizedHeaders = new Headers(nextRequest.headers);
+  sanitizedHeaders.delete("x-zenpdf-auth-bypassed");
+  const sanitizedRequest = new NextRequest(nextRequest, {
+    headers: sanitizedHeaders,
+  });
+
+  return clerkHandler(sanitizedRequest, event);
 }
 
 export default proxy;

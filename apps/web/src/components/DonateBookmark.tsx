@@ -384,7 +384,7 @@ export default function DonateBookmark() {
                     title="Donate with card"
                     className="donate-card-frame"
                     loading="lazy"
-                    allow="payment *; clipboard-write"
+                    allow="clipboard-write"
                   />
                 ) : (
                   <p className="text-sm text-ink-700">Card checkout is unavailable right now.</p>

@@ -87,7 +87,7 @@ const practicalRoutes = [
   {
     title: "Need unlimited usage",
     description: "Run ZenPDF locally when you need full control and no cloud caps.",
-    href: "/usage-capacity",
+    href: "/self-host",
     cta: "See self-host path",
   },
 ];
