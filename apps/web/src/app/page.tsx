@@ -31,6 +31,7 @@ const toolShelves = [
     items: ["Scan to PDF", "OCR PDF", "PDF to PDF/A", "Crop PDF"],
   },
 ];
+const totalToolCount = toolShelves.reduce((count, shelf) => count + shelf.items.length, 0);
 
 const { ANON, FREE_ACCOUNT } = DEFAULT_LIMITS;
 
@@ -157,7 +158,7 @@ export default function Home() {
               <div className="paper-card p-4">
                 <div className="flex items-center justify-between gap-3">
                   <span className="ink-label">Active tools</span>
-                  <span className="status-pill">27 available</span>
+                  <span className="status-pill">{totalToolCount} available</span>
                 </div>
                 <p className="mt-2 text-sm text-ink-700">
                   Heavy tools can pause when monthly budget limits are reached.

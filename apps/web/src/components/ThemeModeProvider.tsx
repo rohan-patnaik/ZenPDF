@@ -15,9 +15,15 @@ const STORAGE_KEY = "zenpdf-theme";
 const ThemeModeContext = createContext<ThemeModeContextValue | null>(null);
 
 const getInitialTheme = (): ThemeMode => {
-  if (typeof document === "undefined") {
+  if (typeof window === "undefined") {
     return "light";
   }
+
+  const storedTheme = window.localStorage.getItem(STORAGE_KEY);
+  if (storedTheme === "dark" || storedTheme === "light") {
+    return storedTheme;
+  }
+
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
 };
 

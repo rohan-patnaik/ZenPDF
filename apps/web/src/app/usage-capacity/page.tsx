@@ -126,13 +126,13 @@ const PlanCard = ({ tier, limits }: { tier: PlanTier; limits: PlanLimits }) => {
   const bullets = buildPlanBullets(tier, limits);
 
   return (
-    <div className="paper-card flex h-full flex-col gap-4 p-6">
-      <div>
+    <div className="paper-card flex h-full flex-col p-6">
+      <div className="min-h-[7.25rem]">
         <span className="ink-label">{TIER_LABELS[tier]}</span>
         <h3 className="mt-2 text-lg font-semibold text-ink-900">{details.name}</h3>
         <p className="mt-2 text-sm text-ink-500">{details.description}</p>
       </div>
-      <ul className="space-y-2 text-sm text-ink-700">
+      <ul className="mt-4 flex-1 space-y-2 text-sm text-ink-700">
         {bullets.map((bullet) => (
           <li key={bullet} className="flex items-center gap-2">
             <span className="h-1.5 w-1.5 rounded-full bg-forest-600" />
@@ -140,7 +140,7 @@ const PlanCard = ({ tier, limits }: { tier: PlanTier; limits: PlanLimits }) => {
           </li>
         ))}
       </ul>
-      <div className="surface-muted mt-auto px-3 py-2 text-xs text-ink-600">{details.note}</div>
+      <div className="surface-muted mt-4 px-3 py-2 text-xs text-ink-600">{details.note}</div>
     </div>
   );
 };
@@ -343,9 +343,9 @@ export default function UsageCapacityPage() {
               </div>
             </SignedIn>
 
-            <div className="alert">
-              Run ZenPDF locally for unlimited usage and full control.
-            </div>
+            <Link className="paper-button--ghost" href="/self-host">
+              Run ZenPDF locally
+            </Link>
             <Link className="paper-button" href="/tools">
               Return to tools
             </Link>
