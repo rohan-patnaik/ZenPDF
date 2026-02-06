@@ -46,6 +46,9 @@ type ToolField = {
   helper?: string;
   type?: "text" | "number" | "password" | "textarea";
   required?: boolean;
+  min?: number;
+  max?: number;
+  step?: number;
 };
 
 type ToolDefinition = {
@@ -242,6 +245,9 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "90",
         helper: "Use 90, 180, or 270.",
         type: "number",
+        min: 90,
+        max: 270,
+        step: 90,
       },
     ],
   },
@@ -421,6 +427,54 @@ const TOOLS: ToolDefinition[] = [
   },
 ];
 
+const TOOL_GROUPS: Array<{
+  id: string;
+  title: string;
+  description: string;
+  toolIds: ToolId[];
+}> = [
+  {
+    id: "organize",
+    title: "Organize & Prepare",
+    description: "Restructure pages before sharing or conversion.",
+    toolIds: ["merge", "split", "organize-pdf", "rotate", "crop", "page-numbers", "compress"],
+  },
+  {
+    id: "convert",
+    title: "Convert",
+    description: "Move between PDF, Office, image, and web formats.",
+    toolIds: [
+      "pdf-to-word",
+      "pdf-to-powerpoint",
+      "pdf-to-excel",
+      "word-to-pdf",
+      "powerpoint-to-pdf",
+      "excel-to-pdf",
+      "pdf-to-jpg",
+      "jpg-to-pdf",
+      "html-to-pdf",
+    ],
+  },
+  {
+    id: "edit",
+    title: "Edit & Annotate",
+    description: "Apply visual edits, signatures, and redactions.",
+    toolIds: ["edit-pdf", "sign-pdf", "watermark", "redact"],
+  },
+  {
+    id: "protect",
+    title: "Protect & Validate",
+    description: "Secure or fix files before final delivery.",
+    toolIds: ["unlock", "protect", "repair", "compare"],
+  },
+  {
+    id: "capture",
+    title: "Capture & Archive",
+    description: "Create searchable or archival-ready output.",
+    toolIds: ["scan-to-pdf", "ocr-pdf", "pdfa"],
+  },
+];
+
 type JobRecord = {
   _id: string;
   tool: string;
@@ -526,26 +580,31 @@ const JobCard = ({
       ? Math.floor((now - job.startedAt) / 1000)
       : 0;
   const remainingSeconds = Math.max(timeoutSeconds - elapsedSeconds, 0);
+  const statusTone =
+    job.status === "failed"
+      ? "status-pill status-pill--error"
+      : job.status === "done"
+        ? "status-pill status-pill--success"
+        : "status-pill";
 
   return (
     <div className="paper-card p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <div className="text-lg font-display text-ink-900">{job.tool}</div>
-          <div className="text-xs text-ink-500">
-            Status: {job.status}
-            {job.progress !== undefined && ` (${job.progress}%)`}
-            <span className="ml-2 text-[0.65rem]" title={new Date(job.createdAt).toISOString()}>
-              {formatJobTimestamp(job.createdAt)}
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-base font-semibold text-ink-900">{job.tool}</div>
+            <span className={statusTone}>
+              {job.status}
+              {job.progress !== undefined && ` (${job.progress}%)`}
             </span>
-            {noChange && (
-              <span className="ml-2 rounded-full bg-ink-900/10 px-2 py-0.5 text-[0.6rem] uppercase tracking-[0.2em] text-ink-600">
-                No change
-              </span>
-            )}
+            {noChange && <span className="status-pill">No change</span>}
           </div>
+          <div className="mt-1 text-xs text-ink-500" title={new Date(job.createdAt).toISOString()}>
+            {formatJobTimestamp(job.createdAt)}
+          </div>
+
           {showCompressTimer && (
-            <div className="text-xs text-ink-500">
+            <div className="mt-1 text-xs text-ink-500">
               {job.status === "running" && job.startedAt
                 ? `Timeout in ${formatMinutesSeconds(remainingSeconds)}`
                 : `Timeout budget ${formatMinutesSeconds(timeoutSeconds)}`}
@@ -553,25 +612,19 @@ const JobCard = ({
             </div>
           )}
           {noChange && (
-            <div className="text-xs text-ink-500">
+            <div className="mt-1 text-xs text-ink-500">
               No meaningful size reduction possible (already optimized or image-heavy).
             </div>
           )}
           {job.errorCode && (
-            <div className="text-xs text-ink-500">
-              {job.errorCode} {job.errorMessage ? `— ${job.errorMessage}` : ""}
+            <div className="mt-1 text-xs text-red-700">
+              {job.errorCode} {job.errorMessage ? `- ${job.errorMessage}` : ""}
             </div>
           )}
           {(job.status === "queued" || job.status === "running") && (
-            <div className="mt-2 flex items-center gap-2 text-xs text-ink-500">
-              <span className="h-2 w-2 animate-pulse rounded-full bg-forest-500" />
-              <span>{job.status === "queued" ? "Queued" : "Processing"}</span>
-            </div>
-          )}
-          {(job.status === "queued" || job.status === "running") && (
-            <div className="mt-2 h-1 w-full rounded-full bg-ink-900/10">
+            <div className="mt-3 h-1.5 w-full rounded-full bg-paper-200">
               <div
-                className="h-full rounded-full bg-forest-500"
+                className="h-full rounded-full bg-forest-600"
                 style={{
                   width: `${Math.min(
                     Math.max(
@@ -585,14 +638,14 @@ const JobCard = ({
             </div>
           )}
         </div>
-        <div className="flex flex-col gap-2">
+        <div className="flex w-full flex-col gap-2 lg:w-auto lg:min-w-[250px]">
           {(job.outputs ?? []).map((output) => (
             <div
               key={output.storageId}
-              className="flex items-center justify-between gap-3"
+              className="surface-muted flex items-center justify-between gap-3 p-3"
             >
               <div className="min-w-0">
-                <div className="truncate text-xs text-ink-700">
+                <div className="truncate text-xs font-medium text-ink-700">
                   {output.filename}
                 </div>
                 {output.sizeBytes !== undefined && (
@@ -610,7 +663,7 @@ const JobCard = ({
               </div>
               <button
                 type="button"
-                className="paper-button--ghost text-[0.6rem] uppercase tracking-[0.2em]"
+                className="paper-button--ghost"
                 onClick={() =>
                   onDownload(job._id, output.storageId, output.filename)
                 }
@@ -707,7 +760,26 @@ export default function ToolsPage() {
       ] as ToolField[],
     };
   }, [activeTool, unlockNeedsPassword]);
+
+  const toolGroups = useMemo(
+    () =>
+      TOOL_GROUPS.map((group) => ({
+        ...group,
+        tools: group.toolIds
+          .map((toolId) => TOOLS.find((item) => item.id === toolId))
+          .filter((item): item is ToolDefinition => Boolean(item)),
+      })),
+    [],
+  );
+
+  const activeGroup = useMemo(
+    () => TOOL_GROUPS.find((group) => group.toolIds.includes(activeTool)),
+    [activeTool],
+  );
+
   const fileLabel = tool?.multiple ? "Choose files" : "Choose file";
+  const requiredFields = tool?.fields?.filter((field) => field.required) ?? [];
+  const optionalFields = tool?.fields?.filter((field) => !field.required) ?? [];
 
   const totalSize = useMemo(
     () => files.reduce((sum, file) => sum + file.size, 0),
@@ -874,75 +946,172 @@ export default function ToolsPage() {
     window.open(`/api/download?${params.toString()}`, "_blank", "noopener");
   }
 
+  const statusClassName =
+    status === null
+      ? ""
+      : status.startsWith("Unable") ||
+          status.startsWith("Enter") ||
+          status.startsWith("Upload exactly") ||
+          status.startsWith("Add at least")
+        ? "alert alert--error"
+        : status.startsWith("Job queued")
+          ? "alert alert--success"
+          : "alert";
+
+  const renderField = (field: ToolField) => (
+    <div key={field.key}>
+      <label className="field-label" htmlFor={field.key}>
+        {field.label}
+      </label>
+      {field.type === "textarea" ? (
+        <textarea
+          id={field.key}
+          value={configValues[field.key] ?? ""}
+          onChange={(event) => updateConfig(field.key, event.target.value)}
+          placeholder={field.placeholder}
+          rows={4}
+          className="field-input"
+        />
+      ) : (
+        <input
+          id={field.key}
+          type={field.type ?? "text"}
+          inputMode={field.type === "number" ? "numeric" : undefined}
+          min={field.min}
+          max={field.max}
+          step={field.step}
+          value={configValues[field.key] ?? ""}
+          onChange={(event) => updateConfig(field.key, event.target.value)}
+          placeholder={field.placeholder}
+          className="field-input"
+        />
+      )}
+      {field.helper && <p className="field-helper">{field.helper}</p>}
+    </div>
+  );
+
   return (
     <div className="relative">
       <SiteHeader />
-      <main className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-16">
-        <section className="paper-card mt-4 p-8">
+      <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
+        <section className="paper-card p-8">
           <span className="ink-label">Tool desk</span>
-          <h1 className="mt-3 text-4xl">Run a tool in a calm, guided flow.</h1>
-          <p className="mt-3 max-w-2xl text-base text-ink-700">
+          <h1 className="mt-2 text-3xl">Run a tool in a clear, guided flow.</h1>
+          <p className="mt-3 max-w-2xl text-sm text-ink-700">
             Each tool runs in the background worker, with limits enforced before
-            processing begins. Upload, configure, and queue a job in seconds.
+            processing begins. Choose a tool, upload files, then queue a job.
           </p>
+          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+            <div className="task-step">
+              <span className="task-step-index">1</span>
+              <p className="mt-2 text-sm font-semibold text-ink-900">Select a tool</p>
+              <p className="mt-1 text-xs text-ink-500">Grouped by intent so placement matches task flow.</p>
+            </div>
+            <div className="task-step">
+              <span className="task-step-index">2</span>
+              <p className="mt-2 text-sm font-semibold text-ink-900">Configure required fields</p>
+              <p className="mt-1 text-xs text-ink-500">Required inputs come first. Optional settings are collapsed.</p>
+            </div>
+            <div className="task-step">
+              <span className="task-step-index">3</span>
+              <p className="mt-2 text-sm font-semibold text-ink-900">Queue and monitor</p>
+              <p className="mt-1 text-xs text-ink-500">Progress, output files, and errors stay near the action area.</p>
+            </div>
+          </div>
         </section>
 
         <section className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="space-y-4">
-            {TOOLS.map((item) => {
-              return (
-                <button
-                  key={item.id}
-                  type="button"
-                  onClick={() => selectTool(item.id)}
-                  aria-pressed={item.id === activeTool}
-                  className={`paper-card tool-card w-full p-4 text-left transition duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-forest-500/40 hover:shadow-paper-lift active:translate-y-0.5 active:shadow-paper ${
-                    item.id === activeTool
-                      ? "border-forest-600/60 ring-2 ring-forest-600/20"
-                      : "hover:border-forest-600/30 hover:ring-1 hover:ring-forest-600/10"
-                  }`}
-                >
-                  <div>
-                    <h2 className="text-lg font-display">{item.label}</h2>
-                    <p className="text-xs text-ink-500">{item.description}</p>
+          <aside className="paper-card p-4 sm:p-5">
+            <div className="mb-3 flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Tools</h2>
+              <span className="status-pill">{TOOLS.length} available</span>
+            </div>
+            <p className="text-xs text-ink-500">
+              Grouped by workflow to make feature placement practical and predictable.
+            </p>
+            <div className="mt-3">
+              {toolGroups.map((group) => (
+                <section key={group.id} aria-label={group.title}>
+                  <div className="tool-group-label">{group.title}</div>
+                  <p className="mb-2 text-xs text-ink-500">{group.description}</p>
+                  <div className="space-y-2">
+                    {group.tools.map((item) => (
+                      <button
+                        key={item.id}
+                        type="button"
+                        onClick={() => selectTool(item.id)}
+                        aria-pressed={item.id === activeTool}
+                        className={`tool-card w-full rounded-xl border p-3 text-left transition focus-visible:outline-none ${
+                          item.id === activeTool
+                            ? "border-forest-600 bg-sage-200/45"
+                            : "border-paper-200 bg-paper-50 hover:border-forest-500/50"
+                        }`}
+                      >
+                        <h3 className="text-sm font-semibold text-ink-900">{item.label}</h3>
+                        <p className="mt-1 text-xs text-ink-500">{item.description}</p>
+                      </button>
+                    ))}
                   </div>
-                </button>
-              );
-            })}
-          </div>
+                </section>
+              ))}
+            </div>
+          </aside>
 
           <div className="paper-card p-6">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <span className="ink-label">Active tool</span>
-                <h2 className="text-2xl">{tool?.label}</h2>
+                <h2 className="mt-1 text-2xl">{tool?.label}</h2>
+                {activeGroup && (
+                  <p className="mt-1 text-xs text-ink-500">
+                    Group: <span className="font-semibold text-ink-700">{activeGroup.title}</span>
+                  </p>
+                )}
               </div>
               <Link className="paper-button--ghost" href="/usage-capacity">
                 View limits
               </Link>
             </div>
-            <div className="mt-4 text-sm text-ink-700">{tool?.description}</div>
+            <p className="mt-3 text-sm text-ink-700">{tool?.description}</p>
+            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+              <div className="surface-muted p-3">
+                <p className="ink-label">Input mode</p>
+                <p className="mt-1 text-sm font-semibold text-ink-900">
+                  {(tool?.requiresFiles ?? true) ? "File upload" : "URL input"}
+                </p>
+              </div>
+              <div className="surface-muted p-3">
+                <p className="ink-label">Files required</p>
+                <p className="mt-1 text-sm font-semibold text-ink-900">
+                  {(tool?.requiresFiles ?? true)
+                    ? tool?.multiple
+                      ? "One or more"
+                      : "Single file"
+                    : "No files"}
+                </p>
+              </div>
+              <div className="surface-muted p-3">
+                <p className="ink-label">Field scope</p>
+                <p className="mt-1 text-sm font-semibold text-ink-900">
+                  {requiredFields.length} required / {optionalFields.length} optional
+                </p>
+              </div>
+            </div>
 
             {devModeAvailable && (
-              <div className="mt-4 rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-xs text-ink-600">
-                <div>
-                  <div className="font-semibold text-ink-700">Dev mode</div>
-                  <div className="text-ink-500">
-                    Local development bypass is always enabled (set
-                    `ZENPDF_DEV_MODE=0` to enforce limits locally).
-                  </div>
-                </div>
+              <div className="alert mt-4">
+                <strong className="font-semibold text-ink-700">Dev mode:</strong>{" "}
+                Local development bypass is enabled (set `ZENPDF_DEV_MODE=0` to enforce
+                limits locally).
               </div>
             )}
 
             <div className="mt-6 space-y-4">
               {(tool?.requiresFiles ?? true) && (
                 <div>
-                  <label className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                    Files
-                  </label>
+                  <label className="field-label">Files</label>
                   <div className="mt-2 space-y-2">
-                    <label className="paper-button--ghost inline-flex cursor-pointer items-center gap-2 text-xs uppercase tracking-[0.2em]">
+                    <label className="paper-button--ghost inline-flex cursor-pointer items-center gap-2">
                       <input
                         key={fileInputKey}
                         type="file"
@@ -953,22 +1122,20 @@ export default function ToolsPage() {
                       />
                       {fileLabel}
                     </label>
-                    <div className="text-xs text-ink-500">
+                    <p className="field-helper">
                       {files.length > 0
-                        ? `${files.length} file(s) ready • ${formatBytes(totalSize)}`
+                        ? `${files.length} file(s) ready - ${formatBytes(totalSize)}`
                         : "No files selected yet."}
-                    </div>
+                    </p>
                     {files.length > 0 && (
-                      <div className="space-y-1 text-xs text-ink-600">
+                      <div className="surface-muted space-y-1 p-3 text-xs text-ink-700">
                         {files.map((file) => (
                           <div
                             key={`${file.name}-${file.size}-${file.lastModified}`}
                             className="flex items-center justify-between gap-3"
                           >
                             <span className="truncate">{file.name}</span>
-                            <span className="text-ink-500">
-                              {formatBytes(file.size)}
-                            </span>
+                            <span className="text-ink-500">{formatBytes(file.size)}</span>
                           </div>
                         ))}
                       </div>
@@ -977,7 +1144,7 @@ export default function ToolsPage() {
                       <button
                         type="button"
                         onClick={clearFiles}
-                        className="paper-button--ghost w-fit text-[0.65rem] uppercase tracking-[0.2em]"
+                        className="paper-button--ghost w-fit"
                       >
                         Clear files
                       </button>
@@ -986,41 +1153,26 @@ export default function ToolsPage() {
                 </div>
               )}
 
-              {tool?.fields?.map((field) => (
-                <div key={field.key}>
-                  <label className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                    {field.label}
-                  </label>
-                  {field.type === "textarea" ? (
-                    <textarea
-                      value={configValues[field.key] ?? ""}
-                      onChange={(event) =>
-                        updateConfig(field.key, event.target.value)
-                      }
-                      placeholder={field.placeholder}
-                      rows={4}
-                      className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
-                    />
-                  ) : (
-                    <input
-                      type={field.type ?? "text"}
-                      inputMode={field.type === "number" ? "numeric" : undefined}
-                      min={field.key === "angle" ? 90 : undefined}
-                      max={field.key === "angle" ? 270 : undefined}
-                      step={field.key === "angle" ? 90 : undefined}
-                      value={configValues[field.key] ?? ""}
-                      onChange={(event) =>
-                        updateConfig(field.key, event.target.value)
-                      }
-                      placeholder={field.placeholder}
-                      className="mt-2 w-full rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3 text-sm"
-                    />
-                  )}
-                  {field.helper && (
-                    <p className="mt-2 text-xs text-ink-500">{field.helper}</p>
-                  )}
+              {requiredFields.length > 0 && (
+                <div>
+                  <p className="field-label">Required settings</p>
+                  <div className="mt-3 space-y-4">{requiredFields.map(renderField)}</div>
                 </div>
-              ))}
+              )}
+              {requiredFields.length === 0 && (
+                <div className="surface-muted p-3 text-sm text-ink-600">
+                  No required settings for this tool.
+                </div>
+              )}
+
+              {optionalFields.length > 0 && (
+                <details className="surface-muted p-4">
+                  <summary className="cursor-pointer text-sm font-semibold text-ink-700">
+                    Advanced options
+                  </summary>
+                  <div className="mt-3 space-y-4">{optionalFields.map(renderField)}</div>
+                </details>
+              )}
             </div>
 
             <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -1031,21 +1183,27 @@ export default function ToolsPage() {
                 disabled={isSubmitting}
               >
                 {isSubmitting && (
-                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-paper-50/60 border-t-paper-50" />
+                  <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-white" />
                 )}
                 {isSubmitting ? "Working..." : "Queue job"}
               </button>
-              {status && <p className="text-sm text-ink-700">{status}</p>}
             </div>
+
+            {status && (
+              <p role="status" aria-live="polite" className={`${statusClassName} mt-3`}>
+                {status}
+              </p>
+            )}
+
             {activeJob && (activeJob.status === "queued" || activeJob.status === "running") && (
-              <div className="mt-4 rounded-[18px] border border-ink-900/10 bg-paper-100 px-4 py-3">
+              <div className="surface-muted mt-4 p-4">
                 <div className="flex items-center gap-2 text-xs text-ink-500">
                   <span className="h-2 w-2 animate-pulse rounded-full bg-forest-500" />
-                  <span className="uppercase tracking-[0.2em]">Processing</span>
+                  <span className="uppercase tracking-[0.14em]">Processing</span>
                 </div>
                 <div className="mt-2 text-sm text-ink-700">
                   {activeJob.status === "queued" ? "Queued" : "Running"}
-                  {activeJob.progress !== undefined && ` • ${activeJob.progress}%`}
+                  {activeJob.progress !== undefined && ` - ${activeJob.progress}%`}
                 </div>
                 {activeJob.tool === "compress" && (
                   <div className="mt-2 text-xs text-ink-500">
@@ -1064,12 +1222,12 @@ export default function ToolsPage() {
                             activeJob.inputs?.[0]?.sizeBytes,
                           ),
                         )}`}
-                    {" · Based on file size"}
+                    {" - Based on file size"}
                   </div>
                 )}
-                <div className="mt-2 h-2 w-full rounded-full bg-ink-900/10">
+                <div className="mt-2 h-2 w-full rounded-full bg-paper-200">
                   <div
-                    className="h-full rounded-full bg-forest-500"
+                    className="h-full rounded-full bg-forest-600"
                     style={{
                       width: `${Math.min(
                         Math.max(
@@ -1083,20 +1241,15 @@ export default function ToolsPage() {
                 </div>
               </div>
             )}
-            {lastJobId && (
-              <p className="mt-3 text-xs text-ink-500">
-                Latest job: {lastJobId}
-              </p>
-            )}
+
+            {lastJobId && <p className="mt-3 text-xs text-ink-500">Latest job: {lastJobId}</p>}
           </div>
         </section>
 
         <section className="mt-10">
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-3">
             <h2 className="text-2xl">Recent jobs</h2>
-            <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-              Auto-refresh
-            </span>
+            <span className="status-pill">Auto-refresh</span>
           </div>
           <div className="mt-4 grid gap-4">
             {(jobs ?? []).length === 0 && (

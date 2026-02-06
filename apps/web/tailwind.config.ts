@@ -32,18 +32,18 @@ const config: Config = {
         },
       },
       fontFamily: {
-        display: ["var(--font-display)", "serif"],
-        body: ["var(--font-body)", "serif"],
+        display: ["var(--font-display)", "sans-serif"],
+        body: ["var(--font-body)", "sans-serif"],
       },
       borderRadius: {
-        paper: "28px",
-        "paper-lg": "34px",
+        paper: "16px",
+        "paper-lg": "20px",
       },
       boxShadow: {
         paper:
-          "0 22px 45px -34px rgba(34, 26, 18, 0.65), 0 6px 14px -12px rgba(34, 26, 18, 0.35)",
+          "0 1px 2px rgba(15, 23, 42, 0.06), 0 12px 24px -20px rgba(15, 23, 42, 0.25)",
         "paper-lift":
-          "0 28px 60px -40px rgba(34, 26, 18, 0.6), 0 10px 20px -14px rgba(34, 26, 18, 0.35)",
+          "0 1px 2px rgba(15, 23, 42, 0.05), 0 18px 32px -22px rgba(15, 23, 42, 0.3)",
       },
     },
   },

@@ -17,7 +17,7 @@
 - Desktop installers are out of scope.
 
 ## Data Model (Convex)
-- Users: tier, ads-free flag, auth metadata, org membership.
+- Users: tier and auth metadata.
 - Jobs: tool type, status, progress, inputs, outputs, error codes.
 - Artifacts: file metadata, storageId, TTL.
 - Usage counters: per-user, per-anon, and global limits.
@@ -43,7 +43,7 @@
 - Enforce per-user and global caps server-side.
 - Heavy tools disabled first during budget pressure.
 - Friendly errors returned for capacity or budget limits.
-- Premium tier access is allowlisted via ZENPDF_PREMIUM_EMAILS / ZENPDF_PREMIUM_CLERK_IDS.
+- No premium tier or premium-only tools.
 
 ## Error Mapping
 Stable error codes are mapped to friendly UI messages:
@@ -51,7 +51,6 @@ Stable error codes are mapped to friendly UI messages:
 - USER_LIMIT_DAILY_JOBS
 - USER_LIMIT_DAILY_MINUTES
 - USER_INPUT_INVALID
-- USER_LIMIT_PREMIUM_REQUIRED
 - SERVICE_CAPACITY_TEMPORARY
 - SERVICE_CAPACITY_MONTHLY_BUDGET
 
@@ -64,5 +63,5 @@ Stable error codes are mapped to friendly UI messages:
 ## Testing & CI
 - Unit: limits, job state machine, error mapping.
 - Integration: Convex functions and worker with fixtures.
-- E2E: core tools, premium gating, Usage & Capacity page.
+- E2E: core tools and Usage & Capacity page.
 - CI: lint + unit + integration on PR; E2E on main/nightly.

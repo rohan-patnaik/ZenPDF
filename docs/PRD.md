@@ -28,11 +28,19 @@ ZenPDF exposes a strict 27-tool parity set:
 All tools are available across plans. There are no premium-only tools.
 
 ## Plans & Limits
-- Tiers: ANON, FREE_ACCOUNT, PREMIUM.
+- Tiers: ANON and FREE_ACCOUNT.
 - Limits are config-driven via Convex tables and env overrides.
 - Enforced server-side for every job and tool.
-- PREMIUM currently represents a higher-capacity profile only (limits/concurrency), not extra tools.
+- Per-user/per-anon plan limits cap daily jobs/minutes for the current actor.
+- Global pooled limits cap aggregate daily jobs/minutes and concurrent jobs across all actors.
+- Monthly budget caps track aggregate platform cost over the current month.
+- Enforcement order: validate user-level constraints first, then global pooled daily capacity/concurrency, then monthly budget checks before enqueueing.
 - Budget controls disable heavy tools first, then respond with friendly errors.
+
+## Heavy Tool Definition
+- Heavy tools are OCR PDF (`ocr-pdf`) and PDF/A conversion (`pdfa`).
+- A tool is classified as heavy when it has materially higher compute time/cost than baseline utilities (for example, OCR inference passes or archival conversion pipelines).
+- When monthly budget pressure increases, heavy tools are paused first while core tools remain available.
 
 ## Usage & Capacity Page
 - Non-technical descriptions of limits and capacity state.
@@ -49,12 +57,12 @@ All tools are available across plans. There are no premium-only tools.
 ## Friendly Error Catalog
 - USER_LIMIT_FILE_TOO_LARGE
 - USER_LIMIT_SIZE_REQUIRED
-- USER_LIMIT_DAILY_JOBS
-- USER_LIMIT_DAILY_MINUTES
+- USER_LIMIT_DAILY_JOBS (per-user/per-anon daily jobs cap reached)
+- USER_LIMIT_DAILY_MINUTES (per-user/per-anon daily processing-minutes cap reached)
 - USER_INPUT_INVALID
 - USER_SESSION_REQUIRED
-- SERVICE_CAPACITY_TEMPORARY
-- SERVICE_CAPACITY_MONTHLY_BUDGET
+- SERVICE_CAPACITY_TEMPORARY (global pooled daily jobs/minutes/concurrency reached, or heavy tools paused)
+- SERVICE_CAPACITY_MONTHLY_BUDGET (global monthly budget/cost cap reached)
 
 Each error must include a plain-language explanation and what to do next.
 
@@ -69,4 +77,4 @@ Each error must include a plain-language explanation and what to do next.
 ## Non-Goals
 - Mobile app.
 - On-device heavy PDF processing.
-- Payment integration (supporter mode may be added later).
+- Subscription billing or premium-only feature gating.

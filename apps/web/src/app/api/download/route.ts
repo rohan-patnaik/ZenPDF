@@ -38,9 +38,11 @@ export async function GET(request: NextRequest): Promise<Response> {
 
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL ?? "http://localhost:3210";
   const convex = new ConvexHttpClient(convexUrl);
-  const disableAuth =
+  const bypassAllowed =
     process.env.ZENPDF_DISABLE_AUTH === "1" &&
     process.env.NODE_ENV !== "production";
+  const disableAuth =
+    bypassAllowed && request.headers.get("x-zenpdf-auth-bypassed") === "1";
   if (!disableAuth) {
     try {
       const { getToken } = getAuth(request);

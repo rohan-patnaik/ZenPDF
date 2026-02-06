@@ -206,7 +206,7 @@ def _build_overlay_page(
     pdf.set_auto_page_break(auto=False)
     pdf.add_page()
     draw_fn(pdf, width_mm, height_mm)
-    pdf_output = pdf.output(dest="S")
+    pdf_output = pdf.output()
     if isinstance(pdf_output, str):
         pdf_bytes = pdf_output.encode("latin-1")
     else:
@@ -1657,7 +1657,7 @@ def _set_overlay_font(pdf: FPDF, text: str, size: int) -> None:
     """
     font_path = _resolve_unicode_font_path()
     if font_path:
-        pdf.add_font("DejaVuSans", fname=str(font_path), uni=True)
+        pdf.add_font("DejaVuSans", fname=str(font_path))
         pdf.set_font("DejaVuSans", size=size)
         return
     try:
@@ -1700,7 +1700,7 @@ def html_to_pdf(html: str, output_path: Path) -> Path:
     pdf.add_page()
     font_path = _resolve_unicode_font_path()
     if font_path:
-        pdf.add_font("DejaVuSans", fname=str(font_path), uni=True)
+        pdf.add_font("DejaVuSans", fname=str(font_path))
         pdf.set_font("DejaVuSans", size=12)
     else:
         try:
