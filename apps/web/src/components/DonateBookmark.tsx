@@ -99,15 +99,7 @@ export default function DonateBookmark() {
           aria-modal="true"
           aria-labelledby="support-title"
         >
-          <div className="paper-card pointer-events-auto relative w-full max-w-md p-6 text-center">
-            <button
-              type="button"
-              className="paper-button--ghost absolute right-6 top-6 w-auto px-4 py-2"
-              onClick={handleClose}
-            >
-              Close
-            </button>
-
+          <div className="paper-card pointer-events-auto w-full max-w-md p-6 text-center">
             <div className="mx-auto max-w-[30rem]">
               <span className="ink-label block">Support ZenPDF</span>
               <h2 id="support-title" className="mt-2 text-2xl">
@@ -117,6 +109,13 @@ export default function DonateBookmark() {
                 ZenPDF is free and open source. Support goes directly via UPI with no platform cut
                 through OnlyChai.
               </p>
+              <button
+                type="button"
+                className="paper-button--ghost mt-4 w-auto px-4 py-2"
+                onClick={handleClose}
+              >
+                Close
+              </button>
             </div>
 
             <div className="surface-muted mt-4 p-4 text-center">
