@@ -9,6 +9,7 @@ export default function DonateBookmark() {
   const [open, setOpen] = useState(false);
   const [showQr, setShowQr] = useState(true);
   const [showCardCheckout, setShowCardCheckout] = useState(false);
+  const [activePaymentAction, setActivePaymentAction] = useState<"qr" | "upi" | "card">("qr");
   const [generatedQrUrl, setGeneratedQrUrl] = useState("");
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [qrGenerationError, setQrGenerationError] = useState("");
@@ -17,15 +18,19 @@ export default function DonateBookmark() {
   const modalRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
 
-  const defaultUpiName = "Rohan Patnaik";
-  const defaultUpiId = "rohanpatnaik1997-1@okhdfcbank";
+  const defaultUpiName = "ZenPDF Creator";
+  const defaultUpiId = "";
   // const defaultLightIcon = "/icons/chai-fab-light.png";
   // const defaultDarkIcon = "/icons/chai-fab-dark.png";
   const defaultLightIcon = "/icons/chai.png";
   const defaultDarkIcon = "/icons/chai.png";
 
   const upiId = (process.env.NEXT_PUBLIC_DONATE_UPI_ID ?? defaultUpiId).trim();
-  const upiName = (process.env.NEXT_PUBLIC_DONATE_UPI_NAME ?? defaultUpiName).trim();
+  const upiName = (
+    process.env.NEXT_PUBLIC_DONATE_PAYEE_NAME ??
+    process.env.NEXT_PUBLIC_DONATE_UPI_NAME ??
+    defaultUpiName
+  ).trim();
   const upiNote = (process.env.NEXT_PUBLIC_DONATE_UPI_NOTE ?? "Support ZenPDF").trim();
   const qrUrl = (process.env.NEXT_PUBLIC_DONATE_UPI_QR_URL ?? "").trim();
   const cardEmbedUrl = (process.env.NEXT_PUBLIC_DONATE_CARD_EMBED_URL ?? "").trim();
@@ -128,12 +133,14 @@ export default function DonateBookmark() {
     }
     setShowQr(true);
     setShowCardCheckout(false);
+    setActivePaymentAction("qr");
     setOpen(true);
   }, []);
 
   const handleClose = useCallback(() => {
     setShowQr(true);
     setShowCardCheckout(false);
+    setActivePaymentAction("qr");
     setOpen(false);
   }, []);
 
@@ -324,28 +331,41 @@ export default function DonateBookmark() {
             <div className="mt-4 flex flex-wrap justify-center gap-2">
               <button
                 type="button"
-                className="paper-button"
-                onClick={() => setShowQr(true)}
+                className={activePaymentAction === "qr" ? "paper-button" : "paper-button--ghost"}
+                aria-pressed={activePaymentAction === "qr"}
+                onClick={() => {
+                  setActivePaymentAction("qr");
+                  setShowCardCheckout(false);
+                  setShowQr(true);
+                }}
                 disabled={!canShowQr}
               >
                 Show UPI QR
               </button>
-              <a
-                className="paper-button--ghost"
-                href={upiUri || "#"}
-                onClick={(event) => {
-                  if (!upiUri) {
-                    event.preventDefault();
-                  }
-                }}
-              >
-                Open UPI App
-              </a>
               <button
                 type="button"
-                className="paper-button--ghost"
-                aria-pressed={showCardCheckout}
-                onClick={() => setShowCardCheckout((current) => !current)}
+                className={activePaymentAction === "upi" ? "paper-button" : "paper-button--ghost"}
+                onClick={() => {
+                  setActivePaymentAction("upi");
+                  setShowCardCheckout(false);
+                  if (upiUri && typeof window !== "undefined") {
+                    window.location.href = upiUri;
+                  }
+                }}
+                aria-pressed={activePaymentAction === "upi"}
+                disabled={!upiUri}
+              >
+                Open UPI App
+              </button>
+              <button
+                type="button"
+                className={activePaymentAction === "card" ? "paper-button" : "paper-button--ghost"}
+                aria-pressed={activePaymentAction === "card"}
+                onClick={() => {
+                  setActivePaymentAction("card");
+                  setShowQr(false);
+                  setShowCardCheckout(true);
+                }}
               >
                 Pay by card
               </button>

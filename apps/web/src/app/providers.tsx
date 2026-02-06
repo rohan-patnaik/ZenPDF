@@ -28,24 +28,36 @@ export default function Providers({ children }: { children: React.ReactNode }) {
             colorBackground: "rgb(var(--paper-50))",
             colorInputBackground: "rgb(var(--paper-50))",
             colorInputText: "rgb(var(--ink-900))",
-            colorNeutral: "rgb(var(--paper-300))",
+            colorNeutral: "rgb(var(--ink-500))",
           },
           elements: {
-            userButtonTrigger: "h-9 w-9 rounded-full",
+            userButtonTrigger:
+              "h-9 w-9 rounded-full ring-1 ring-paper-300/80 transition hover:ring-forest-500/55",
             userButtonAvatarBox: "h-9 w-9 rounded-full",
+            userButtonPopoverRootBox: "zen-user-popover-root mt-2",
             userButtonPopoverCard:
-              "border border-paper-200 bg-paper-50 text-ink-900 shadow-paper",
-            userButtonPopoverMain: "bg-paper-50",
-            userButtonPopoverActions: "bg-paper-50",
+              "zen-user-popover-card rounded-[16px] overflow-hidden border border-paper-200 bg-paper-50 text-ink-900 shadow-paper-lift",
+            userButtonPopoverMain: "zen-user-popover-main bg-paper-50",
+            userButtonPopoverActions:
+              "zen-user-popover-actions border-t border-paper-200 bg-paper-50",
             userButtonPopoverActionButton:
-              "!text-ink-900 !opacity-100 hover:bg-paper-100 hover:!text-ink-900",
-            userButtonPopoverActionButtonIconBox: "!text-ink-700 !opacity-100",
-            userButtonPopoverActionButtonIcon: "!text-ink-700 !opacity-100",
-            userButtonPopoverFooter: "bg-paper-100 !text-ink-700",
+              "zen-user-popover-action min-h-14 px-4 !text-ink-900 !opacity-100 hover:bg-paper-100 hover:!text-ink-900 focus:bg-paper-100 focus:!text-ink-900",
+            userButtonPopoverActionButtonIconBox:
+              "zen-user-popover-action-iconbox !text-ink-700 !opacity-100",
+            userButtonPopoverActionButtonIcon:
+              "zen-user-popover-action-icon !text-ink-700 !opacity-100",
+            userButtonPopoverFooter:
+              "zen-user-popover-footer border-t border-paper-200 bg-paper-100 !text-ink-700",
             userButtonPopoverFooterPagesLink:
-              "!text-ink-700 hover:!text-ink-900",
-            userPreviewMainIdentifierText: "!text-ink-900 !opacity-100",
-            userPreviewSecondaryIdentifier: "!text-ink-700 !opacity-100",
+              "zen-user-popover-footer-link !text-ink-700 hover:!text-ink-900",
+            userPreview: "zen-user-preview px-4 py-4",
+            userPreviewAvatarContainer: "zen-user-preview-avatar-wrap",
+            userPreviewAvatarBox: "zen-user-preview-avatar-box",
+            userPreviewTextContainer: "zen-user-preview-text gap-1",
+            userPreviewMainIdentifierText:
+              "zen-user-preview-name !text-ink-900 !opacity-100",
+            userPreviewSecondaryIdentifier:
+              "zen-user-preview-email !text-ink-700 !opacity-100",
           },
         }}
       >

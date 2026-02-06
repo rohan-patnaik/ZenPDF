@@ -370,6 +370,72 @@ h4 {
   color: rgb(var(--ink-500));
 }
 
+/* Clerk user profile popover readability overrides */
+.cl-userButtonPopoverCard {
+  overflow: hidden;
+}
+
+.cl-userButtonPopoverMain,
+.cl-userButtonPopoverActions,
+.cl-userButtonPopoverFooter {
+  background: rgb(var(--paper-50)) !important;
+}
+
+.cl-userButtonPopoverActions {
+  border-top: 1px solid rgb(var(--paper-200)) !important;
+}
+
+.cl-userButtonPopoverActionButton {
+  min-height: 3.25rem;
+  font-weight: 600;
+  color: rgb(var(--ink-900)) !important;
+  opacity: 1 !important;
+  transition: background-color 0.18s ease, color 0.18s ease;
+}
+
+.cl-userButtonPopoverActionButton + .cl-userButtonPopoverActionButton {
+  border-top: 1px solid rgb(var(--paper-200));
+}
+
+.cl-userButtonPopoverActionButton:hover,
+.cl-userButtonPopoverActionButton:focus-visible {
+  background: rgb(var(--paper-100)) !important;
+  color: rgb(var(--ink-900)) !important;
+}
+
+.cl-userButtonPopoverActionButton * {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
+.cl-userButtonPopoverActionButtonIcon,
+.cl-userButtonPopoverActionButtonIconBox,
+.cl-userButtonPopoverActionButton svg {
+  color: rgb(var(--ink-700)) !important;
+}
+
+.cl-userPreviewMainIdentifier,
+.cl-userPreviewMainIdentifierText {
+  color: rgb(var(--ink-900)) !important;
+  opacity: 1 !important;
+}
+
+.cl-userPreviewSecondaryIdentifier {
+  color: rgb(var(--ink-700)) !important;
+  opacity: 1 !important;
+}
+
+.cl-userButtonPopoverFooter {
+  border-top: 1px solid rgb(var(--paper-200)) !important;
+  background: rgb(var(--paper-100)) !important;
+  color: rgb(var(--ink-700)) !important;
+}
+
+.cl-userButtonPopoverFooter * {
+  color: inherit !important;
+  opacity: 1 !important;
+}
+
 .theme-toggle {
   width: 2rem;
   height: 2rem;
@@ -381,6 +447,96 @@ h4 {
 .theme-toggle svg {
   width: 1rem;
   height: 1rem;
+}
+
+.zen-user-popover-root {
+  z-index: 70;
+}
+
+.zen-user-popover-card {
+  min-width: min(23rem, calc(100vw - 1.25rem));
+  border-radius: 16px;
+  border: 1px solid rgb(var(--paper-200));
+  background: rgb(var(--paper-50));
+  box-shadow:
+    0 1px 2px rgb(var(--shadow-ink) / 0.2),
+    0 20px 42px -26px rgb(var(--shadow-ink) / 0.55);
+}
+
+.zen-user-preview {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.85rem;
+  align-items: center;
+}
+
+.zen-user-preview-avatar-wrap {
+  margin: 0;
+}
+
+.zen-user-preview-avatar-box {
+  border: none;
+  box-shadow: none;
+}
+
+.zen-user-preview-text {
+  row-gap: 0.2rem;
+}
+
+.zen-user-preview-name {
+  color: rgb(var(--ink-900));
+  font-size: 1.02rem;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+
+.zen-user-preview-email {
+  color: rgb(var(--ink-700));
+  font-size: 0.9rem;
+  line-height: 1.35;
+}
+
+.zen-user-popover-actions {
+  border-top: 1px solid rgb(var(--paper-200));
+}
+
+.zen-user-popover-action {
+  min-height: 3.15rem;
+  padding-inline: 1rem;
+  color: rgb(var(--ink-900));
+  font-weight: 600;
+  opacity: 1;
+  transition: background-color 0.16s ease, color 0.16s ease;
+}
+
+.zen-user-popover-action * {
+  opacity: 1;
+}
+
+.zen-user-popover-action:hover,
+.zen-user-popover-action:focus-visible {
+  background: rgb(var(--paper-100));
+  color: rgb(var(--ink-900));
+}
+
+.zen-user-popover-action-iconbox,
+.zen-user-popover-action-icon {
+  color: rgb(var(--ink-700));
+  opacity: 1;
+}
+
+.zen-user-popover-footer {
+  border-top: 1px solid rgb(var(--paper-200));
+  color: rgb(var(--ink-700));
+}
+
+.zen-user-popover-footer-link {
+  color: rgb(var(--ink-700));
+}
+
+.zen-user-popover-footer-link:hover,
+.zen-user-popover-footer-link:focus-visible {
+  color: rgb(var(--ink-900));
 }
 
 .donate-fab {
@@ -596,6 +752,42 @@ h4 {
   border-color: rgb(var(--forest-500) / 0.58);
   background: rgb(var(--paper-50));
   color: rgb(var(--forest-500));
+}
+
+:root[data-theme="dark"] .zen-user-popover-card {
+  border-color: rgb(var(--paper-200));
+  background: rgb(var(--paper-50));
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.05),
+    0 22px 42px -24px rgb(0 0 0 / 0.85);
+}
+
+:root[data-theme="dark"] .zen-user-preview-name {
+  color: rgb(var(--ink-900));
+}
+
+:root[data-theme="dark"] .zen-user-preview-email {
+  color: rgb(var(--ink-700));
+}
+
+:root[data-theme="dark"] .zen-user-popover-actions,
+:root[data-theme="dark"] .zen-user-popover-footer {
+  border-top-color: rgb(var(--paper-200));
+}
+
+:root[data-theme="dark"] .zen-user-popover-action {
+  color: rgb(var(--ink-900));
+}
+
+:root[data-theme="dark"] .zen-user-popover-action:hover,
+:root[data-theme="dark"] .zen-user-popover-action:focus-visible {
+  background: rgb(var(--paper-100));
+  color: rgb(var(--ink-900));
+}
+
+:root[data-theme="dark"] .zen-user-popover-action-iconbox,
+:root[data-theme="dark"] .zen-user-popover-action-icon {
+  color: rgb(var(--ink-700));
 }
 
 :root[data-theme="dark"] .donate-fab {

@@ -19,16 +19,22 @@ const clerkHandler = clerkMiddleware(async (auth, req) => {
   }
 });
 
-export function middleware(request: Request, event: NextFetchEvent) {
+export function proxy(request: Request, event: NextFetchEvent) {
   if (shouldBypassAuth()) {
-    return NextResponse.next();
+    const requestHeaders = new Headers(request.headers);
+    requestHeaders.set("x-zenpdf-auth-bypassed", "1");
+    return NextResponse.next({
+      request: {
+        headers: requestHeaders,
+      },
+    });
   }
   const nextRequest =
     request instanceof NextRequest ? request : new NextRequest(request);
   return clerkHandler(nextRequest, event);
 }
 
-export default middleware;
+export default proxy;
 
 export const config = {
   matcher: ["/((?!.*\\..*|_next).*)", "/", "/(api|trpc)(.*)"],
