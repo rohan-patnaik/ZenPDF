@@ -32,7 +32,7 @@ const toolShelves = [
   },
 ];
 
-const { ANON, FREE_ACCOUNT, PREMIUM } = DEFAULT_LIMITS;
+const { ANON, FREE_ACCOUNT } = DEFAULT_LIMITS;
 
 const planSnapshots = [
   {
@@ -53,15 +53,6 @@ const planSnapshots = [
       `${FREE_ACCOUNT.maxJobsPerDay} jobs per day`,
     ],
   },
-  {
-    tier: "PREMIUM",
-    description: "Supporter mode increases daily and batch limits.",
-    details: [
-      `${PREMIUM.maxFilesPerJob} files per job`,
-      `${formatBytes(PREMIUM.maxMbPerFile * 1024 * 1024)} per file`,
-      `${PREMIUM.maxJobsPerDay} jobs per day`,
-    ],
-  },
 ];
 
 const steps = [
@@ -79,6 +70,27 @@ const steps = [
   },
 ];
 
+const practicalRoutes = [
+  {
+    title: "Run a PDF task",
+    description: "Choose a tool, upload files, and queue processing jobs.",
+    href: "/tools",
+    cta: "Open tools",
+  },
+  {
+    title: "Check limits first",
+    description: "Review your daily caps and shared capacity before heavy work.",
+    href: "/usage-capacity",
+    cta: "Open usage",
+  },
+  {
+    title: "Need unlimited usage",
+    description: "Run ZenPDF locally when you need full control and no cloud caps.",
+    href: "/usage-capacity",
+    cta: "See self-host path",
+  },
+];
+
 const ToolCard = ({
   title,
   description,
@@ -89,28 +101,9 @@ const ToolCard = ({
   items: string[];
 }) => (
   <div className="paper-card flex h-full flex-col gap-4 p-6">
-    <div className="flex items-center gap-3">
-      <span className="flex h-11 w-11 items-center justify-center rounded-[16px] border border-ink-900/10 bg-paper-100 text-ink-900">
-        <svg
-          width="20"
-          height="20"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.6"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        >
-          <path d="M6 3h8l4 4v14H6z" />
-          <path d="M14 3v5h5" />
-          <path d="M9 13h6" />
-          <path d="M9 17h6" />
-        </svg>
-      </span>
-      <div>
-        <h3 className="text-xl font-display">{title}</h3>
-        <p className="text-xs text-ink-500">{description}</p>
-      </div>
+    <div>
+      <h3 className="text-lg font-semibold">{title}</h3>
+      <p className="mt-1 text-sm text-ink-500">{description}</p>
     </div>
     <ul className="mt-auto space-y-2 text-sm text-ink-700">
       {items.map((item) => (
@@ -123,161 +116,156 @@ const ToolCard = ({
   </div>
 );
 
-/**
- * Render the application's landing page with hero, status panel, tool shelf, plans, and footer.
- *
- * @returns A React element representing the home page layout and its static content.
- */
 export default function Home() {
   return (
     <div className="relative">
       <SiteHeader />
-      <main className="relative z-10">
-        <section className="mx-auto flex w-full max-w-6xl flex-col gap-12 px-6 pb-16 pt-6 lg:flex-row lg:items-center">
-          <div className="flex-1 space-y-6 fade-up">
+      <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
+        <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
+          <div className="paper-card p-8 fade-up">
             <span className="ink-label">Open-source PDF workbench</span>
-            <h1 className="text-4xl leading-tight md:text-5xl">
-              Calm, precise PDF control with clear limits and a paper-first feel.
+            <h1 className="mt-3 text-3xl leading-tight sm:text-4xl">
+              Clean, reliable PDF workflows with transparent limits.
             </h1>
-            <p className="max-w-xl text-lg text-ink-700">
-              ZenPDF keeps your PDF operations grounded with strict capacity
-              controls, friendly error messages, and a serene dossier-inspired
-              interface. Heavy lifting happens in a separate worker so the web
-              app stays light.
+            <p className="mt-4 max-w-2xl text-base text-ink-700">
+              ZenPDF keeps document processing predictable with clear capacity rules,
+              friendly error feedback, and server-side enforcement. Upload, configure,
+              and run tools in a guided flow.
             </p>
-            <div className="flex flex-wrap gap-3">
+            <div className="mt-6 flex flex-wrap gap-3">
               <Link className="paper-button" href="/tools">
                 Start with a file
               </Link>
               <Link className="paper-button--ghost" href="/usage-capacity">
-                See usage & capacity
+                View usage limits
               </Link>
             </div>
           </div>
-          <div
-            className="relative flex-1 fade-up"
-            style={{ animationDelay: "0.12s" }}
-          >
-            <div className="absolute -left-6 top-6 hidden h-full w-full rounded-[34px] bg-paper-200/70 shadow-paper-lift lg:block" />
-            <div className="relative paper-stack p-6">
-              <div className="space-y-5">
-                <div className="paper-card p-5">
-                  <div className="flex items-center justify-between text-sm text-ink-700">
-                    <span className="ink-label">Status</span>
-                    <span className="rounded-full border border-forest-600/30 bg-sage-200 px-3 py-1 text-xs uppercase tracking-[0.2em] text-forest-700">
-                      Available
-                    </span>
-                  </div>
-                  <p className="mt-3 text-sm text-ink-700">
-                    Capacity is monitored hourly to protect free-tier budgets.
-                  </p>
+
+          <div className="paper-stack p-6 fade-up" style={{ animationDelay: "0.08s" }}>
+            <div className="space-y-4">
+              <div className="paper-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="ink-label">Status</span>
+                  <span className="status-pill status-pill--success">Available</span>
                 </div>
-                <div className="paper-card p-5">
-                  <div className="flex items-center justify-between text-sm text-ink-700">
-                    <span className="ink-label">Active tools</span>
-                    <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      27 available
-                    </span>
-                  </div>
-                  <p className="mt-3 text-sm text-ink-700">
-                    Heavy tools can pause if monthly budget limits are reached.
-                  </p>
+                <p className="mt-2 text-sm text-ink-700">
+                  Capacity is monitored hourly to protect free-tier budgets.
+                </p>
+              </div>
+
+              <div className="paper-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="ink-label">Active tools</span>
+                  <span className="status-pill">27 available</span>
                 </div>
-                <div className="paper-card p-5">
-                  <div className="flex items-center justify-between text-sm text-ink-700">
-                    <span className="ink-label">Storage</span>
-                    <span className="text-xs uppercase tracking-[0.2em] text-ink-500">
-                      Convex Files
-                    </span>
-                  </div>
-                  <p className="mt-3 text-sm text-ink-700">
-                    Files expire automatically to keep storage lean.
-                  </p>
+                <p className="mt-2 text-sm text-ink-700">
+                  Heavy tools can pause when monthly budget limits are reached.
+                </p>
+              </div>
+
+              <div className="paper-card p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <span className="ink-label">Storage</span>
+                  <span className="status-pill">Convex Files</span>
                 </div>
+                <p className="mt-2 text-sm text-ink-700">
+                  Files expire automatically to keep storage lean and controlled.
+                </p>
               </div>
             </div>
           </div>
         </section>
 
-        <section className="mx-auto w-full max-w-6xl px-6 pb-16">
-          <div className="flex flex-col gap-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="ink-label">Tool shelf</span>
-                <h2 className="text-3xl">Everyday PDF work, layered and calm.</h2>
+        <section className="mt-10">
+          <span className="ink-label">Choose your route</span>
+          <h2 className="mt-2 text-2xl">Go to the right place for your task.</h2>
+          <div className="mt-4 grid gap-3 md:grid-cols-3">
+            {practicalRoutes.map((route) => (
+              <div key={route.title} className="paper-card flex flex-col gap-3 p-5">
+                <h3 className="text-base font-semibold text-ink-900">{route.title}</h3>
+                <p className="text-sm text-ink-700">{route.description}</p>
+                <Link className="paper-button--ghost mt-auto w-fit" href={route.href}>
+                  {route.cta}
+                </Link>
               </div>
-              <Link className="paper-button--ghost" href="/tools">
-                Open tool desk
-              </Link>
-            </div>
-            <div className="ink-divider" />
+            ))}
           </div>
-          <div className="mt-8 grid gap-6 md:grid-cols-2">
+        </section>
+
+        <section className="mt-10">
+          <div className="flex flex-wrap items-end justify-between gap-3">
+            <div>
+              <span className="ink-label">Tool shelf</span>
+              <h2 className="mt-2 text-2xl">Everyday PDF operations in one desk.</h2>
+            </div>
+            <Link className="paper-button--ghost" href="/tools">
+              Open tools
+            </Link>
+          </div>
+          <div className="ink-divider mt-4" />
+          <div className="mt-6 grid gap-4 md:grid-cols-2">
             {toolShelves.map((tool) => (
               <ToolCard key={tool.title} {...tool} />
             ))}
           </div>
         </section>
 
-        <section className="mx-auto w-full max-w-6xl px-6 pb-16">
-          <div className="grid gap-6 lg:grid-cols-[1.2fr_0.8fr]">
-            <div className="paper-card p-8">
-              <span className="ink-label">Plans</span>
-              <h2 className="mt-3 text-3xl">Limits you can understand.</h2>
-              <p className="mt-3 text-base text-ink-700">
-                ZenPDF shows every cap up front and enforces it server-side.
-                When capacity tightens, heavy tools pause first.
-              </p>
-              <div className="mt-6 grid gap-4 md:grid-cols-3">
-                {planSnapshots.map((plan) => (
-                  <div key={plan.tier} className="rounded-[22px] border border-ink-900/10 bg-paper-100 p-4">
-                    <h3 className="text-lg font-display text-ink-900">{plan.tier}</h3>
-                    <p className="mt-2 text-sm text-ink-700">{plan.description}</p>
-                    <ul className="mt-3 space-y-2 text-xs text-ink-500">
-                      {plan.details.map((detail) => (
-                        <li key={detail} className="flex items-center gap-2">
-                          <span className="h-1.5 w-1.5 rounded-full bg-forest-600" />
-                          {detail}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
-                ))}
-              </div>
+        <section className="mt-10 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="paper-card p-6 sm:p-8">
+            <span className="ink-label">Plans</span>
+            <h2 className="mt-2 text-2xl">Limits shown up front.</h2>
+            <p className="mt-3 text-sm text-ink-700">
+              Every cap is visible and enforced server-side. If capacity tightens,
+              heavy tools pause first.
+            </p>
+            <div className="mt-5 grid gap-3 md:grid-cols-2">
+              {planSnapshots.map((plan) => (
+                <div key={plan.tier} className="surface-muted p-4">
+                  <h3 className="text-base font-semibold text-ink-900">{plan.tier}</h3>
+                  <p className="mt-1 text-xs text-ink-500">{plan.description}</p>
+                  <ul className="mt-3 space-y-2 text-sm text-ink-700">
+                    {plan.details.map((detail) => (
+                      <li key={detail} className="flex items-center gap-2">
+                        <span className="h-1.5 w-1.5 rounded-full bg-forest-600" />
+                        {detail}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
             </div>
-            <div className="paper-card flex flex-col gap-4 p-8">
-              <span className="ink-label">Workflow</span>
-              <h2 className="text-2xl">From upload to delivery.</h2>
-              <div className="space-y-4">
-                {steps.map((step, index) => (
-                  <div key={step.title} className="flex items-start gap-4">
-                    <div className="flex h-10 w-10 items-center justify-center rounded-[16px] border border-ink-900/10 bg-paper-100 text-sm font-display text-ink-900">
-                      0{index + 1}
-                    </div>
-                    <div>
-                      <h3 className="text-lg font-display text-ink-900">
-                        {step.title}
-                      </h3>
-                      <p className="text-sm text-ink-700">{step.copy}</p>
-                    </div>
+          </div>
+
+          <div className="paper-card p-6 sm:p-8">
+            <span className="ink-label">Workflow</span>
+            <h2 className="mt-2 text-2xl">From upload to result.</h2>
+            <div className="mt-4 space-y-4">
+              {steps.map((step, index) => (
+                <div key={step.title} className="flex items-start gap-3">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-lg border border-paper-300 bg-paper-100 text-xs font-semibold text-forest-700">
+                    0{index + 1}
                   </div>
-                ))}
-              </div>
-              <div className="mt-auto rounded-[20px] border border-forest-600/30 bg-sage-200/70 p-4 text-sm text-forest-700">
-                Supporter mode hides the banner and expands batch limits.
-              </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-ink-900">{step.title}</h3>
+                    <p className="text-sm text-ink-700">{step.copy}</p>
+                  </div>
+                </div>
+              ))}
+            </div>
+            <div className="alert alert--success mt-6">
+              All tools are free to use. Limits are for shared pool fairness.
             </div>
           </div>
         </section>
       </main>
 
-      <footer className="relative z-10 mx-auto w-full max-w-6xl px-6 pb-12">
-        <div className="paper-card flex flex-col gap-4 p-6 md:flex-row md:items-center md:justify-between">
+      <footer className="mx-auto w-full max-w-6xl px-4 pb-12 sm:px-6">
+        <div className="paper-card flex flex-col gap-4 p-6 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <span className="ink-label">Open source</span>
-            <p className="mt-2 text-sm text-ink-700">
-              ZenPDF is built to be run locally when you need unlimited
-              capacity.
+            <p className="mt-1 text-sm text-ink-700">
+              ZenPDF can be run locally when you need unlimited capacity and full control.
             </p>
           </div>
           <Link className="paper-button" href="/usage-capacity">

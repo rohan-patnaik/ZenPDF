@@ -33,14 +33,14 @@ Each epic is broken into PR-sized subtasks. Update this file as work ships.
 - [x] 4.4 Repair PDFs (rebuild structure)
 - [x] 4.5 Annotations + copy utility hardening
 
-## Epic 5 — Tiers Polish
-- [x] 5.1 ANON/FREE/PREMIUM UX clarity
+## Epic 5 — Limits UX Polish
+- [x] 5.1 ANON/FREE UX clarity
 - [x] 5.2 Usage & Capacity page fully implemented
 
-## Epic 6 — Premium
+## Epic 6 — Heavy Tools
 - [x] 6.1 OCR conversions to Word/Excel
 - [x] 6.2 PDF/A conversion
-- [x] 6.3 Premium limits + ads-free flag
+- [x] 6.3 Limits + capacity controls for heavy tools
 
 ## Epic 7 — Workflows + Teams
 - [x] 7.1 Workflow compiler + presets

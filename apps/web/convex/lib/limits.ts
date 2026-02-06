@@ -1,6 +1,6 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
 
-export type PlanTier = "ANON" | "FREE_ACCOUNT" | "PREMIUM";
+export type PlanTier = "ANON" | "FREE_ACCOUNT";
 
 export type PlanLimits = {
   maxFilesPerJob: number;
@@ -22,31 +22,24 @@ export type GlobalLimits = {
 const DEFAULT_PLAN_LIMITS: Record<PlanTier, PlanLimits> = {
   ANON: {
     maxFilesPerJob: 1,
-    maxMbPerFile: 10,
+    maxMbPerFile: 25,
     maxConcurrentJobs: 1,
-    maxJobsPerDay: 3,
+    maxJobsPerDay: 5,
     maxDailyMinutes: 10,
   },
   FREE_ACCOUNT: {
     maxFilesPerJob: 3,
-    maxMbPerFile: 50,
+    maxMbPerFile: 75,
     maxConcurrentJobs: 2,
-    maxJobsPerDay: 25,
+    maxJobsPerDay: 30,
     maxDailyMinutes: 60,
-  },
-  PREMIUM: {
-    maxFilesPerJob: 10,
-    maxMbPerFile: 250,
-    maxConcurrentJobs: 4,
-    maxJobsPerDay: 200,
-    maxDailyMinutes: 240,
   },
 };
 
 const DEFAULT_GLOBAL_LIMITS: GlobalLimits = {
-  maxConcurrentJobs: 20,
-  maxJobsPerDay: 1500,
-  maxDailyMinutes: 12000,
+  maxConcurrentJobs: 3,
+  maxJobsPerDay: 200,
+  maxDailyMinutes: 120,
   jobMaxAttempts: 3,
   leaseDurationMs: 2 * 60 * 1000,
   artifactTtlHours: 24,

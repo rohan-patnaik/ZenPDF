@@ -1,36 +1,42 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { SignInButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
-import { useQuery } from "convex/react";
 
-import { api } from "@/lib/convex";
+import ThemeToggle from "@/components/ThemeToggle";
 
 export default function SiteHeader() {
-  const viewer = useQuery(api.users.getViewer, {});
-  const showSupporter = viewer ? !viewer.adsFree : false;
+  const pathname = usePathname();
+  const isTools = pathname?.startsWith("/tools") ?? false;
+  const isUsage = pathname?.startsWith("/usage-capacity") ?? false;
 
   return (
-    <header className="relative z-20">
-      <div className="wood-nav mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
+    <header className="sticky top-0 z-30 px-4 pt-4 sm:px-6">
+      <div className="wood-nav mx-auto flex w-full max-w-6xl flex-wrap items-center justify-between gap-3 px-4 py-3 sm:px-6">
         <Link href="/" className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-[18px] border border-ink-900/15 bg-paper-100 text-lg font-display text-ink-900 shadow-paper">
+          <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-paper-300 bg-paper-100 text-sm font-display font-bold text-forest-700">
             Z
           </div>
           <div>
-            <div className="text-lg font-display text-ink-900">ZenPDF</div>
-            <div className="text-[0.6rem] uppercase tracking-[0.32em] text-ink-500">
-              Dossier Toolkit
+            <div className="text-base font-display font-semibold text-ink-900">ZenPDF</div>
+            <div className="text-[0.65rem] uppercase tracking-[0.16em] text-ink-500">
+              Open PDF Workbench
             </div>
           </div>
         </Link>
-        <div className="flex items-center gap-3 text-sm">
-          <Link className="paper-button--ghost" href="/tools">
+
+        <nav className="flex flex-wrap items-center gap-2 text-sm" aria-label="Primary">
+          <Link className={`nav-link ${isTools ? "nav-link--active" : ""}`} href="/tools">
             Tools
           </Link>
-          <Link className="paper-button--ghost" href="/usage-capacity">
+          <Link
+            className={`nav-link ${isUsage ? "nav-link--active" : ""}`}
+            href="/usage-capacity"
+          >
             Usage & Capacity
           </Link>
+          <ThemeToggle />
           <SignedOut>
             <SignInButton mode="modal">
               <button className="paper-button" type="button">
@@ -41,24 +47,8 @@ export default function SiteHeader() {
           <SignedIn>
             <UserButton afterSignOutUrl="/" />
           </SignedIn>
-        </div>
+        </nav>
       </div>
-      {showSupporter && (
-        <div className="mx-auto w-full max-w-6xl px-6 pb-4">
-          <div className="flex flex-wrap items-center justify-between gap-4 rounded-[20px] border border-forest-600/30 bg-sage-200/70 px-5 py-4 text-forest-700">
-            <div>
-              <span className="ink-label">Supporter mode</span>
-              <p className="mt-1 max-w-2xl text-sm">
-                Unlock larger batches and remove this banner when supporter
-                mode is enabled.
-              </p>
-            </div>
-            <Link className="paper-button--ghost text-xs" href="/usage-capacity">
-              Review premium limits
-            </Link>
-          </div>
-        </div>
-      )}
     </header>
   );
 }

@@ -1,16 +1,18 @@
 import type { Metadata } from "next";
-import { Playfair_Display, Source_Serif_4 } from "next/font/google";
+import { Manrope, Public_Sans } from "next/font/google";
+
+import DonateBookmark from "@/components/DonateBookmark";
 
 import Providers from "./providers";
 import "./globals.css";
 
-const displayFont = Playfair_Display({
+const displayFont = Manrope({
   variable: "--font-display",
   subsets: ["latin"],
-  weight: ["600", "700"],
+  weight: ["600", "700", "800"],
 });
 
-const bodyFont = Source_Serif_4({
+const bodyFont = Public_Sans({
   variable: "--font-body",
   subsets: ["latin"],
   weight: ["400", "500", "600"],
@@ -19,8 +21,23 @@ const bodyFont = Source_Serif_4({
 export const metadata: Metadata = {
   title: "ZenPDF",
   description:
-    "ZenPDF is an open-source PDF workbench with clear usage limits and a tactile dossier-style interface.",
+    "ZenPDF is an open-source PDF workbench with clear usage limits and a clean, readable interface.",
 };
+
+const themeInitScript = `
+(() => {
+  try {
+    const key = "zenpdf-theme";
+    const saved = window.localStorage.getItem(key);
+    const theme = saved === "light" || saved === "dark"
+      ? saved
+      : "light";
+    document.documentElement.dataset.theme = theme;
+  } catch (_) {
+    document.documentElement.dataset.theme = "light";
+  }
+})();
+`;
 
 export default function RootLayout({
   children,
@@ -28,9 +45,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${displayFont.variable} ${bodyFont.variable}`}>
-      <body className="min-h-screen bg-paper-50 text-ink-900 antialiased">
-        <Providers>{children}</Providers>
+    <html
+      lang="en"
+      className={`${displayFont.variable} ${bodyFont.variable}`}
+      suppressHydrationWarning
+    >
+      <head>
+        <meta name="color-scheme" content="light dark" />
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="min-h-screen text-ink-900 antialiased">
+        <Providers>
+          {children}
+          <DonateBookmark />
+        </Providers>
       </body>
     </html>
   );

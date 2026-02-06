@@ -1,7 +1,7 @@
 import { makeFunctionReference } from "convex/server";
 
 import type { BudgetSnapshot } from "../../convex/lib/budget";
-import type { PlanLimits, PlanTier } from "./limits";
+import type { GlobalLimits, PlanLimits, PlanTier } from "./limits";
 
 type JobInput = { storageId: string; filename: string; sizeBytes?: number };
 
@@ -16,13 +16,14 @@ type UsageSnapshot = {
   tier: PlanTier;
   planLimits: PlanLimits;
   plans: Record<PlanTier, PlanLimits>;
+  globalLimits: GlobalLimits;
   usage: UsageCounter;
+  globalUsage: UsageCounter;
   budget: BudgetSnapshot;
 };
 
 type ViewerSnapshot = {
   tier: PlanTier;
-  adsFree: boolean;
   signedIn: boolean;
 };
 

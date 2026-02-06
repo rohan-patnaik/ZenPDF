@@ -4,7 +4,6 @@ import { v } from "convex/values";
 const tier = v.union(
   v.literal("ANON"),
   v.literal("FREE_ACCOUNT"),
-  v.literal("PREMIUM"),
 );
 
 const jobStatus = v.union(
@@ -20,8 +19,9 @@ export default defineSchema({
     clerkUserId: v.string(),
     email: v.optional(v.string()),
     name: v.optional(v.string()),
-    tier,
+    // Legacy field kept optional so existing records remain schema-valid.
     adsFree: v.optional(v.boolean()),
+    tier,
     createdAt: v.number(),
     updatedAt: v.number(),
   })

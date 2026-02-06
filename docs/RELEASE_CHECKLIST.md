@@ -5,7 +5,7 @@
 - Run web tests: `npm run lint` and `npm test` in `apps/web`.
 - Run worker tests: `pytest` in `apps/worker`.
 - Ensure Convex schema changes are deployed.
-- Verify premium allowlists are correct.
+- Verify donation link/QR env variables are set (if enabled).
 
 ## Deploy
 - Deploy the web app to Vercel.

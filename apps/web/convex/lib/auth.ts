@@ -10,48 +10,22 @@ type Ctx = MutationCtx | QueryCtx;
 export type ResolvedUser = {
   identity: UserIdentity | null;
   userId: Id<"users"> | undefined;
-  tier: "ANON" | "FREE_ACCOUNT" | "PREMIUM";
-  adsFree: boolean;
+  tier: "ANON" | "FREE_ACCOUNT";
 };
-
-const parseEnvList = (value: string | undefined) =>
-  value
-    ?.split(",")
-    .map((entry) => entry.trim())
-    .filter(Boolean) ?? [];
 
 const resolveTier = (identity: UserIdentity | null, storedTier?: ResolvedUser["tier"]) => {
   if (!identity) {
-    return { tier: "ANON" as const, adsFree: false };
+    return { tier: "ANON" as const };
   }
-
-  const premiumEmails = parseEnvList(process.env.ZENPDF_PREMIUM_EMAILS).map((email) =>
-    email.toLowerCase(),
-  );
-  const premiumClerkIds = parseEnvList(process.env.ZENPDF_PREMIUM_CLERK_IDS);
-  const hasAllowlist = premiumEmails.length > 0 || premiumClerkIds.length > 0;
-  const email = normalizeOptionalEmail(identity.email);
-  const isPremium =
-    (email ? premiumEmails.includes(email) : false) ||
-    premiumClerkIds.includes(identity.subject);
-
-  if (isPremium) {
-    return { tier: "PREMIUM" as const, adsFree: true };
-  }
-
-  if (hasAllowlist) {
-    return { tier: "FREE_ACCOUNT" as const, adsFree: false };
-  }
-
   const tier = storedTier ?? "FREE_ACCOUNT";
-  return { tier, adsFree: tier === "PREMIUM" };
+  return { tier };
 };
 
 export const resolveUser = async (ctx: Ctx): Promise<ResolvedUser> => {
   const identity = await ctx.auth.getUserIdentity();
 
   if (!identity) {
-    return { identity: null, userId: undefined, tier: "ANON", adsFree: false };
+    return { identity: null, userId: undefined, tier: "ANON" };
   }
 
   const clerkUserId = identity.subject;
@@ -60,13 +34,13 @@ export const resolveUser = async (ctx: Ctx): Promise<ResolvedUser> => {
     .withIndex("by_clerk_id", (q) => q.eq("clerkUserId", clerkUserId))
     .unique();
 
-  const { tier, adsFree } = resolveTier(identity, existing?.tier);
+  const { tier } = resolveTier(identity, existing?.tier);
 
   if (existing) {
-    return { identity, userId: existing._id, tier, adsFree };
+    return { identity, userId: existing._id, tier };
   }
 
-  return { identity, userId: undefined, tier, adsFree };
+  return { identity, userId: undefined, tier };
 };
 
 export const resolveOrCreateUser = async (
@@ -84,7 +58,6 @@ export const resolveOrCreateUser = async (
       email: normalizeOptionalEmail(resolved.identity.email),
       name: resolved.identity.name ?? resolved.identity.nickname,
       tier: resolved.tier,
-      adsFree: resolved.adsFree,
       createdAt: now,
       updatedAt: now,
     });
@@ -93,11 +66,9 @@ export const resolveOrCreateUser = async (
   }
 
   const existing = await ctx.db.get(resolved.userId);
-  const storedAdsFree = existing?.adsFree ?? false;
-  if (existing && (existing.tier !== resolved.tier || storedAdsFree !== resolved.adsFree)) {
+  if (existing && existing.tier !== resolved.tier) {
     await ctx.db.patch(resolved.userId, {
       tier: resolved.tier,
-      adsFree: resolved.adsFree,
       updatedAt: now,
     });
   }
