@@ -22,6 +22,11 @@ export const metadata: Metadata = {
   title: "ZenPDF",
   description:
     "ZenPDF is an open-source PDF workbench with clear usage limits and a clean, readable interface.",
+  icons: {
+    icon: [{ url: "/icon.svg?v=3", type: "image/svg+xml" }],
+    shortcut: [{ url: "/icon.svg?v=3", type: "image/svg+xml" }],
+    apple: [{ url: "/apple-touch-icon.png?v=1", type: "image/png", sizes: "180x180" }],
+  },
 };
 
 const themeInitScript = `

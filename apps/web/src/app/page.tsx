@@ -123,9 +123,9 @@ export default function Home() {
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
         <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-          <div className="paper-card p-8 fade-up">
+          <div className="paper-card p-5 fade-up sm:p-8">
             <span className="ink-label">Open-source PDF workbench</span>
-            <h1 className="mt-3 text-3xl leading-tight sm:text-4xl">
+            <h1 className="mt-3 text-2xl leading-tight sm:text-4xl">
               Clean, reliable PDF workflows with transparent limits.
             </h1>
             <p className="mt-4 max-w-2xl text-base text-ink-700">
@@ -143,7 +143,7 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="paper-stack p-6 fade-up" style={{ animationDelay: "0.08s" }}>
+          <div className="paper-stack p-4 fade-up sm:p-6" style={{ animationDelay: "0.08s" }}>
             <div className="space-y-4">
               <div className="paper-card p-4">
                 <div className="flex items-center justify-between gap-3">
@@ -180,7 +180,7 @@ export default function Home() {
 
         <section className="mt-10">
           <span className="ink-label">Choose your route</span>
-          <h2 className="mt-2 text-2xl">Go to the right place for your task.</h2>
+          <h2 className="mt-2 text-xl sm:text-2xl">Go to the right place for your task.</h2>
           <div className="mt-4 grid gap-3 md:grid-cols-3">
             {practicalRoutes.map((route) => (
               <div key={route.title} className="paper-card flex flex-col gap-3 p-5">
@@ -198,7 +198,7 @@ export default function Home() {
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div>
               <span className="ink-label">Tool shelf</span>
-              <h2 className="mt-2 text-2xl">Everyday PDF operations in one desk.</h2>
+              <h2 className="mt-2 text-xl sm:text-2xl">Everyday PDF operations in one desk.</h2>
             </div>
             <Link className="paper-button--ghost" href="/tools">
               Open tools
@@ -213,9 +213,9 @@ export default function Home() {
         </section>
 
         <section className="mt-10 grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-          <div className="paper-card p-6 sm:p-8">
+          <div className="paper-card p-5 sm:p-8">
             <span className="ink-label">Plans</span>
-            <h2 className="mt-2 text-2xl">Limits shown up front.</h2>
+            <h2 className="mt-2 text-xl sm:text-2xl">Limits shown up front.</h2>
             <p className="mt-3 text-sm text-ink-700">
               Every cap is visible and enforced server-side. If capacity tightens,
               heavy tools pause first.
@@ -238,9 +238,9 @@ export default function Home() {
             </div>
           </div>
 
-          <div className="paper-card p-6 sm:p-8">
+          <div className="paper-card p-5 sm:p-8">
             <span className="ink-label">Workflow</span>
-            <h2 className="mt-2 text-2xl">From upload to result.</h2>
+            <h2 className="mt-2 text-xl sm:text-2xl">From upload to result.</h2>
             <div className="mt-4 space-y-4">
               {steps.map((step, index) => (
                 <div key={step.title} className="flex items-start gap-3">

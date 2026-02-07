@@ -780,6 +780,34 @@ export default function ToolsPage() {
     () => TOOL_GROUPS.find((group) => group.toolIds.includes(activeTool)),
     [activeTool],
   );
+  const toolCatalog = (
+    <div>
+      {toolGroups.map((group) => (
+        <section key={group.id} aria-label={group.title}>
+          <div className="tool-group-label">{group.title}</div>
+          <p className="mb-2 text-xs text-ink-500">{group.description}</p>
+          <div className="space-y-2">
+            {group.tools.map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectTool(item.id)}
+                aria-pressed={item.id === activeTool}
+                className={`tool-card w-full rounded-xl border p-3 text-left transition focus-visible:outline-none ${
+                  item.id === activeTool
+                    ? "border-forest-600 bg-sage-200/45"
+                    : "border-paper-200 bg-paper-50 hover:border-forest-500/50"
+                }`}
+              >
+                <h3 className="text-sm font-semibold text-ink-900">{item.label}</h3>
+                <p className="mt-1 text-xs text-ink-500">{item.description}</p>
+              </button>
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
 
   const fileLabel = tool?.multiple ? "Choose files" : "Choose file";
   const requiredFields = tool?.fields?.filter((field) => field.required) ?? [];
@@ -1083,9 +1111,9 @@ export default function ToolsPage() {
     <div className="relative">
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
-        <section className="paper-card p-8">
+        <section className="paper-card p-5 sm:p-8">
           <span className="ink-label">Tool desk</span>
-          <h1 className="mt-2 text-3xl">Run a tool in a clear, guided flow.</h1>
+          <h1 className="mt-2 text-2xl sm:text-3xl">Run a tool in a clear, guided flow.</h1>
           <p className="mt-3 max-w-2xl text-sm text-ink-700">
             Each tool runs in the background worker, with limits enforced before
             processing begins. Choose a tool, upload files, then queue a job.
@@ -1110,7 +1138,7 @@ export default function ToolsPage() {
         </section>
 
         <section className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <aside className="paper-card p-4 sm:p-5">
+          <aside className="paper-card order-2 p-4 sm:p-5 lg:order-1">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">Tools</h2>
               <span className="status-pill">{TOOLS.length} available</span>
@@ -1118,35 +1146,16 @@ export default function ToolsPage() {
             <p className="text-xs text-ink-500">
               Grouped by workflow to make feature placement practical and predictable.
             </p>
-            <div className="mt-3">
-              {toolGroups.map((group) => (
-                <section key={group.id} aria-label={group.title}>
-                  <div className="tool-group-label">{group.title}</div>
-                  <p className="mb-2 text-xs text-ink-500">{group.description}</p>
-                  <div className="space-y-2">
-                    {group.tools.map((item) => (
-                      <button
-                        key={item.id}
-                        type="button"
-                        onClick={() => selectTool(item.id)}
-                        aria-pressed={item.id === activeTool}
-                        className={`tool-card w-full rounded-xl border p-3 text-left transition focus-visible:outline-none ${
-                          item.id === activeTool
-                            ? "border-forest-600 bg-sage-200/45"
-                            : "border-paper-200 bg-paper-50 hover:border-forest-500/50"
-                        }`}
-                      >
-                        <h3 className="text-sm font-semibold text-ink-900">{item.label}</h3>
-                        <p className="mt-1 text-xs text-ink-500">{item.description}</p>
-                      </button>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
+            <details className="mt-3 surface-muted p-3 lg:hidden">
+              <summary className="cursor-pointer text-sm font-semibold text-ink-900">
+                Browse full tool catalog
+              </summary>
+              <div className="mt-3">{toolCatalog}</div>
+            </details>
+            <div className="mt-3 hidden lg:block">{toolCatalog}</div>
           </aside>
 
-          <div ref={activeToolPanelRef} className="paper-card scroll-mt-28 p-6">
+          <div ref={activeToolPanelRef} className="paper-card order-1 scroll-mt-28 p-4 sm:p-6 lg:order-2">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <span className="ink-label">Active tool</span>
@@ -1162,6 +1171,26 @@ export default function ToolsPage() {
               </Link>
             </div>
             <p className="mt-3 text-sm text-ink-700">{tool?.description}</p>
+            <div className="mt-4 lg:hidden">
+              <p className="field-label">Quick switch</p>
+              <div className="mobile-scroll-row mt-2 flex gap-2 overflow-x-auto pb-1">
+                {TOOLS.map((item) => (
+                  <button
+                    key={item.id}
+                    type="button"
+                    onClick={() => selectTool(item.id)}
+                    aria-pressed={item.id === activeTool}
+                    className={`whitespace-nowrap rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                      item.id === activeTool
+                        ? "border-forest-700 bg-forest-600 text-white"
+                        : "border-paper-300 bg-paper-50 text-ink-700"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="mt-4 grid gap-2 sm:grid-cols-3">
               <div className="surface-muted p-3">
                 <p className="ink-label">Input mode</p>
@@ -1264,9 +1293,9 @@ export default function ToolsPage() {
               )}
             </div>
 
-            <div className="mt-6 flex flex-wrap items-center gap-3">
+            <div className="mt-6 flex flex-wrap items-start gap-3">
               <button
-                className="paper-button flex items-center gap-2"
+                className="paper-button flex w-full items-center justify-center gap-2 sm:w-auto"
                 type="button"
                 onClick={handleSubmit}
                 disabled={isSubmitting}
@@ -1279,7 +1308,7 @@ export default function ToolsPage() {
               {contextResult && (
                 <button
                   type="button"
-                  className="paper-button--ghost"
+                  className="paper-button--ghost w-full sm:w-auto"
                   onClick={() =>
                     handleDownload(
                       contextResult.jobId,
@@ -1292,7 +1321,7 @@ export default function ToolsPage() {
                 </button>
               )}
               {contextResult && (
-                <div className="surface-muted flex min-w-[19rem] flex-1 items-center gap-3 p-3">
+                <div className="surface-muted flex w-full items-center gap-3 p-3 sm:min-w-[19rem] sm:flex-1">
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
                       <p

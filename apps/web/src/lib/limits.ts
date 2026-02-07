@@ -33,3 +33,12 @@ export const DEFAULT_LIMITS: Record<PlanTier, PlanLimits> = {
     maxDailyMinutes: 60,
   },
 };
+
+export const DEFAULT_GLOBAL_LIMITS: GlobalLimits = {
+  maxConcurrentJobs: 3,
+  maxJobsPerDay: 200,
+  maxDailyMinutes: 120,
+  jobMaxAttempts: 3,
+  leaseDurationMs: 2 * 60 * 1000,
+  artifactTtlHours: 24,
+};

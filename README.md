@@ -2,6 +2,14 @@
 
 ZenPDF is a web app for running PDF operations with a background worker.
 
+## Live app
+- Primary: https://thezenpdf.vercel.app
+- Alternate alias: https://zenpdf.vercel.app
+
+## App preview
+
+![ZenPDF homepage](docs/images/homepage-preview.png)
+
 ## Project stages
 - Stage 1: Code is written.
 - Stage 2: Run locally with a dev deployment (Convex + Clerk + local worker).
@@ -66,4 +74,5 @@ Note: Cloud Run free tiers are limited by vCPU/GiB time and requests. A continuo
 See `docs/SELF_HOST.md` for Docker Compose and local setup details.
 
 ## Hosted usage
-If you are a casual user, use the hosted URL provided by the operator.
+If you are a casual user, use the hosted URL:
+- https://thezenpdf.vercel.app

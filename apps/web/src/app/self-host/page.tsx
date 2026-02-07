@@ -63,9 +63,9 @@ export default function SelfHostPage() {
     <div className="relative">
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
-        <section className="paper-card p-8">
+        <section className="paper-card p-5 sm:p-8">
           <span className="ink-label">Self-hosting Guide</span>
-          <h1 className="mt-2 text-3xl">Run ZenPDF locally, step by step.</h1>
+          <h1 className="mt-2 text-2xl sm:text-3xl">Run ZenPDF locally, step by step.</h1>
           <p className="mt-3 max-w-3xl text-sm text-ink-700">
             This setup runs Convex, the Next.js web app, and the Python worker on your own machine.
             Follow steps in order for the fastest path to a working local stack.
