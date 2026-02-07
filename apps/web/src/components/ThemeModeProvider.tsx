@@ -19,9 +19,13 @@ const getInitialTheme = (): ThemeMode => {
     return "light";
   }
 
-  const storedTheme = window.localStorage.getItem(STORAGE_KEY);
-  if (storedTheme === "dark" || storedTheme === "light") {
-    return storedTheme;
+  try {
+    const storedTheme = window.localStorage.getItem(STORAGE_KEY);
+    if (storedTheme === "dark" || storedTheme === "light") {
+      return storedTheme;
+    }
+  } catch {
+    // localStorage unavailable
   }
 
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";
@@ -32,7 +36,11 @@ const applyTheme = (theme: ThemeMode) => {
     document.documentElement.dataset.theme = theme;
   }
   if (typeof window !== "undefined") {
-    window.localStorage.setItem(STORAGE_KEY, theme);
+    try {
+      window.localStorage.setItem(STORAGE_KEY, theme);
+    } catch {
+      // localStorage unavailable (private mode / restricted context)
+    }
   }
 };
 

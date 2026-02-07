@@ -863,7 +863,7 @@ export default function ToolsPage() {
       status: normalizedStatus,
       outputSizeBytes: output.sizeBytes,
       inputSizeBytes: inputSize,
-      completedAt: matchingJob.finishedAt ?? matchingJob.createdAt,
+      completedAt: matchingJob.finishedAt,
       noChange,
       hasSavings,
       savingsBytes: compressionResult?.savings_bytes,
@@ -1331,23 +1331,15 @@ export default function ToolsPage() {
                         {contextResult.filename}
                       </p>
                       <span
-                        className={
-                          contextResult.status === "succeeded"
-                            ? "status-pill status-pill--success"
-                            : contextResult.status === "failed"
-                              ? "status-pill status-pill--error"
-                              : "status-pill"
-                        }
+                        className="status-pill status-pill--success"
                       >
-                        {contextResult.status === "succeeded"
-                          ? "Succeeded"
-                          : contextResult.status === "failed"
-                            ? "Failed"
-                            : "Running"}
+                        Succeeded
                       </span>
                     </div>
                     <p className="mt-1 text-xs text-ink-500">
-                      {formatJobTimestamp(contextResult.completedAt)} · {contextResultSummary}
+                      {contextResult.completedAt
+                        ? `${formatJobTimestamp(contextResult.completedAt)} · ${contextResultSummary}`
+                        : contextResultSummary}
                     </p>
                   </div>
                 </div>

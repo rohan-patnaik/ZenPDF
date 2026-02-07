@@ -53,7 +53,6 @@ export default function DonateBookmark() {
   );
   const upiNote = pickFirstNonEmptyValue(process.env.NEXT_PUBLIC_DONATE_UPI_NOTE, defaultUpiNote);
   const configuredQrUrl = (process.env.NEXT_PUBLIC_DONATE_UPI_QR_URL ?? "").trim();
-  const qrUrl = (configuredQrUrl || defaultUpiQrImage).trim();
   const cardEmbedUrl = (process.env.NEXT_PUBLIC_DONATE_CARD_EMBED_URL ?? "").trim();
   const lightIcon = (process.env.NEXT_PUBLIC_DONATE_ICON_LIGHT ?? defaultLightIcon).trim();
   const darkIcon = (process.env.NEXT_PUBLIC_DONATE_ICON_DARK ?? defaultDarkIcon).trim();
@@ -85,7 +84,7 @@ export default function DonateBookmark() {
     return lightIcon || darkIcon;
   }, [darkIcon, lightIcon, theme]);
 
-  const resolvedQrUrl = qrUrl || generatedQrUrl;
+  const resolvedQrUrl = configuredQrUrl || generatedQrUrl || defaultUpiQrImage;
 
   const resolvedCardEmbedUrl = useMemo(() => {
     if (!cardEmbedUrl) {
@@ -108,13 +107,13 @@ export default function DonateBookmark() {
     }
   }, [cardEmbedUrl]);
 
-  const canShowQr = Boolean(qrUrl || upiUri);
+  const canShowQr = Boolean(resolvedQrUrl || upiUri);
 
   useEffect(() => {
     setGeneratedQrUrl("");
     setQrGenerationError("");
     setIsGeneratingQr(false);
-  }, [qrUrl, upiUri]);
+  }, [configuredQrUrl, upiUri]);
 
   useEffect(() => {
     if (!open || !showQr || configuredQrUrl || !upiUri || generatedQrUrl || isGeneratingQr) {
@@ -191,7 +190,7 @@ export default function DonateBookmark() {
     }
 
     if (!isProbablyMobileDevice) {
-      setUpiLaunchMessage("Open UPI App works on phones with a UPI app installed.");
+      setUpiLaunchMessage("Pay via UPI works on phones with a UPI app installed.");
       return;
     }
 
@@ -438,7 +437,9 @@ export default function DonateBookmark() {
                 Pay by card
               </button>
             </div>
-            {showQr ? <p className="mt-2 text-xs text-ink-500">Scan this QR with any UPI app.</p> : null}
+            {showQr && resolvedQrUrl ? (
+              <p className="mt-2 text-xs text-ink-500">Scan this QR with any UPI app.</p>
+            ) : null}
             {upiLaunchMessage ? (
               <p className="mt-2 text-xs text-ink-500">{upiLaunchMessage}</p>
             ) : null}

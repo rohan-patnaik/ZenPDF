@@ -82,7 +82,7 @@ export default function SiteHeader() {
         <div className="mt-2 flex items-center gap-2 lg:hidden">
           <nav
             className="mobile-scroll-row flex min-w-0 flex-1 items-center gap-2 overflow-x-auto pb-1 text-sm"
-            aria-label="Primary"
+            aria-label="Primary mobile"
           >
             {navLinks}
           </nav>
