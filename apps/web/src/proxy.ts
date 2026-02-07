@@ -9,9 +9,18 @@ const isPublicRoute = createRouteMatcher([
   "/sign-up(.*)",
 ]);
 
-const shouldBypassAuth = () =>
-  process.env.ZENPDF_DISABLE_AUTH === "1" &&
-  process.env.NODE_ENV !== "production";
+const shouldBypassAuth = () => process.env.ZENPDF_DISABLE_AUTH === "1";
+
+const getMissingAuthEnvVars = () => {
+  const missing: string[] = [];
+  if (!process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY) {
+    missing.push("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY");
+  }
+  if (!process.env.CLERK_SECRET_KEY) {
+    missing.push("CLERK_SECRET_KEY");
+  }
+  return missing;
+};
 
 const clerkHandler = clerkMiddleware(async (auth, req) => {
   if (!isPublicRoute(req)) {
@@ -31,6 +40,14 @@ export function proxy(request: Request, event: NextFetchEvent) {
         headers: requestHeaders,
       },
     });
+  }
+
+  const missingAuthEnvVars = getMissingAuthEnvVars();
+  if (missingAuthEnvVars.length > 0) {
+    console.error(
+      `Authentication configuration error: missing ${missingAuthEnvVars.join(", ")}`,
+    );
+    return new NextResponse("Authentication configuration error", { status: 500 });
   }
 
   const sanitizedHeaders = new Headers(nextRequest.headers);

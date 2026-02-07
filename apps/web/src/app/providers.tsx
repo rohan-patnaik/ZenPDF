@@ -7,17 +7,26 @@ import { ConvexReactClient } from "convex/react";
 import { ThemeModeProvider } from "@/components/ThemeModeProvider";
 
 const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+const clerkPublishableKey = process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
 
-if (!convexUrl && process.env.NODE_ENV === "production") {
-  throw new Error("NEXT_PUBLIC_CONVEX_URL is required in production.");
+if (process.env.NODE_ENV === "production") {
+  if (!convexUrl) {
+    throw new Error("NEXT_PUBLIC_CONVEX_URL is required in production");
+  }
+  if (!clerkPublishableKey) {
+    throw new Error("NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY is required in production");
+  }
 }
 
-const convex = new ConvexReactClient(convexUrl ?? "http://localhost:3210");
+const convex = new ConvexReactClient(
+  convexUrl ?? "http://localhost:3210",
+);
 
 export default function Providers({ children }: { children: React.ReactNode }) {
   return (
     <ThemeModeProvider>
       <ClerkProvider
+        publishableKey={clerkPublishableKey}
         signInUrl="/sign-in"
         signUpUrl="/sign-up"
         appearance={{

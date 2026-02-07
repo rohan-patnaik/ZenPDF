@@ -200,13 +200,20 @@ export default function UsageCapacityPage() {
     <div className="relative">
       <SiteHeader />
       <main className="mx-auto w-full max-w-6xl px-4 pb-14 pt-5 sm:px-6">
-        <section className="paper-card p-8">
+        <section className="paper-card p-5 sm:p-8">
           <span className="ink-label">Usage & Capacity</span>
-          <h1 className="mt-2 text-3xl">Know every limit before you upload.</h1>
-          <p className="mt-3 max-w-2xl text-sm text-ink-700">
-            ZenPDF is fully free for all tools. Limits exist only to keep shared
-            infrastructure stable and available for everyone.
-          </p>
+          <div className="mt-2 flex flex-wrap items-start justify-between gap-4">
+            <div className="max-w-2xl">
+              <h1 className="text-2xl sm:text-3xl">Know every limit before you upload.</h1>
+              <p className="mt-3 text-sm text-ink-700">
+                ZenPDF is fully free for all tools. Limits exist only to keep shared
+                infrastructure stable and available for everyone.
+              </p>
+            </div>
+            <Link className="paper-button w-full sm:w-auto" href="/capacity-logic">
+              How limits are decided
+            </Link>
+          </div>
           <div className="mt-4 grid gap-2 sm:grid-cols-3">
             <div className="surface-muted p-3">
               <p className="ink-label">Use this page when</p>
@@ -235,7 +242,7 @@ export default function UsageCapacityPage() {
           <div className="space-y-6">
             <div>
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <h2 className="text-2xl">Your daily usage</h2>
+                <h2 className="text-xl sm:text-2xl">Your daily usage</h2>
                 <span className="status-pill">{TIER_LABELS[tier]}</span>
               </div>
               <p className="mt-2 text-sm text-ink-700">
@@ -288,7 +295,7 @@ export default function UsageCapacityPage() {
             </div>
 
             <div>
-              <h2 className="text-2xl">Shared daily pool</h2>
+              <h2 className="text-xl sm:text-2xl">Shared daily pool</h2>
               <p className="mt-2 text-sm text-ink-700">
                 This pool is shared across all users and is enforced server-side.
               </p>
@@ -321,7 +328,7 @@ export default function UsageCapacityPage() {
             </div>
           </div>
 
-          <aside className="paper-card flex flex-col gap-4 p-6">
+          <aside className="paper-card flex flex-col gap-4 p-5 sm:p-6">
             <span className="ink-label">Your access</span>
             <div>
               <h3 className="text-xl font-semibold text-ink-900">{tierDetails.name}</h3>
@@ -346,6 +353,9 @@ export default function UsageCapacityPage() {
             <Link className="paper-button--ghost" href="/self-host">
               Run ZenPDF locally
             </Link>
+            <Link className="paper-button--ghost" href="/capacity-logic">
+              How pooling works
+            </Link>
             <Link className="paper-button" href="/tools">
               Return to tools
             </Link>
@@ -354,7 +364,7 @@ export default function UsageCapacityPage() {
 
         <section className="mt-10">
           <span className="ink-label">Access tiers</span>
-          <h2 className="mt-2 text-2xl">Transparent limits for fair use.</h2>
+          <h2 className="mt-2 text-xl sm:text-2xl">Transparent limits for fair use.</h2>
           <p className="mt-2 max-w-2xl text-sm text-ink-700">
             Limits reset daily and are enforced server-side for every tool.
           </p>
@@ -366,7 +376,7 @@ export default function UsageCapacityPage() {
         </section>
 
         <section className="mt-10">
-          <h2 className="text-2xl">Friendly error catalog</h2>
+          <h2 className="text-xl sm:text-2xl">Friendly error catalog</h2>
           <p className="mt-2 text-sm text-ink-700">
             When a limit is hit, ZenPDF responds with a stable code and a plain-language message.
           </p>

@@ -5,11 +5,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useThemeMode } from "@/components/ThemeModeProvider";
 
+function pickFirstNonEmptyValue(...values: Array<string | undefined>): string {
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (trimmed) {
+      return trimmed;
+    }
+  }
+  return "";
+}
+
+function normalizeUpiId(value: string): string {
+  return value.replace(/\s+/g, "").toLowerCase();
+}
+
 export default function DonateBookmark() {
   const [open, setOpen] = useState(false);
   const [showQr, setShowQr] = useState(true);
   const [showCardCheckout, setShowCardCheckout] = useState(false);
   const [activePaymentAction, setActivePaymentAction] = useState<"qr" | "upi" | "card">("qr");
+  const [upiLaunchMessage, setUpiLaunchMessage] = useState("");
   const [generatedQrUrl, setGeneratedQrUrl] = useState("");
   const [isGeneratingQr, setIsGeneratingQr] = useState(false);
   const [qrGenerationError, setQrGenerationError] = useState("");
@@ -17,22 +32,27 @@ export default function DonateBookmark() {
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const modalRef = useRef<HTMLDivElement | null>(null);
   const lastFocusedElementRef = useRef<HTMLElement | null>(null);
+  const upiLaunchTimeoutRef = useRef<number | null>(null);
 
-  const defaultUpiName = "ZenPDF Creator";
-  const defaultUpiId = "";
+  const defaultUpiName = "Rohan Patnaik";
+  const defaultUpiId = "rohanpatnaik1997-1@okhdfcbank";
+  const defaultUpiNote = "Support ZenPDF";
+  const defaultUpiQrImage = "/qr/rohan-upi.png";
   // const defaultLightIcon = "/icons/chai-fab-light.png";
   // const defaultDarkIcon = "/icons/chai-fab-dark.png";
   const defaultLightIcon = "/icons/chai.png";
   const defaultDarkIcon = "/icons/chai.png";
 
-  const upiId = (process.env.NEXT_PUBLIC_DONATE_UPI_ID ?? defaultUpiId).trim();
-  const upiName = (
-    process.env.NEXT_PUBLIC_DONATE_PAYEE_NAME ??
-    process.env.NEXT_PUBLIC_DONATE_UPI_NAME ??
-    defaultUpiName
-  ).trim();
-  const upiNote = (process.env.NEXT_PUBLIC_DONATE_UPI_NOTE ?? "Support ZenPDF").trim();
-  const qrUrl = (process.env.NEXT_PUBLIC_DONATE_UPI_QR_URL ?? "").trim();
+  const upiId = normalizeUpiId(
+    pickFirstNonEmptyValue(process.env.NEXT_PUBLIC_DONATE_UPI_ID, defaultUpiId),
+  );
+  const upiName = pickFirstNonEmptyValue(
+    process.env.NEXT_PUBLIC_DONATE_PAYEE_NAME,
+    process.env.NEXT_PUBLIC_DONATE_UPI_NAME,
+    defaultUpiName,
+  );
+  const upiNote = pickFirstNonEmptyValue(process.env.NEXT_PUBLIC_DONATE_UPI_NOTE, defaultUpiNote);
+  const configuredQrUrl = (process.env.NEXT_PUBLIC_DONATE_UPI_QR_URL ?? "").trim();
   const cardEmbedUrl = (process.env.NEXT_PUBLIC_DONATE_CARD_EMBED_URL ?? "").trim();
   const lightIcon = (process.env.NEXT_PUBLIC_DONATE_ICON_LIGHT ?? defaultLightIcon).trim();
   const darkIcon = (process.env.NEXT_PUBLIC_DONATE_ICON_DARK ?? defaultDarkIcon).trim();
@@ -50,6 +70,13 @@ export default function DonateBookmark() {
     return `upi://pay?${params.toString()}`;
   }, [upiId, upiName, upiNote]);
 
+  const isProbablyMobileDevice = useMemo(() => {
+    if (typeof window === "undefined") {
+      return false;
+    }
+    return /Android|iPhone|iPad|iPod|Mobile/i.test(window.navigator.userAgent);
+  }, []);
+
   const iconUrl = useMemo(() => {
     if (theme === "dark") {
       return darkIcon || lightIcon;
@@ -57,7 +84,7 @@ export default function DonateBookmark() {
     return lightIcon || darkIcon;
   }, [darkIcon, lightIcon, theme]);
 
-  const resolvedQrUrl = qrUrl || generatedQrUrl;
+  const resolvedQrUrl = configuredQrUrl || generatedQrUrl || defaultUpiQrImage;
 
   const resolvedCardEmbedUrl = useMemo(() => {
     if (!cardEmbedUrl) {
@@ -80,17 +107,16 @@ export default function DonateBookmark() {
     }
   }, [cardEmbedUrl]);
 
-  const hasExternalQrUrl = Boolean(qrUrl);
-  const canShowQr = Boolean(qrUrl || upiUri);
+  const canShowQr = Boolean(resolvedQrUrl || upiUri);
 
   useEffect(() => {
     setGeneratedQrUrl("");
     setQrGenerationError("");
     setIsGeneratingQr(false);
-  }, [qrUrl, upiUri]);
+  }, [configuredQrUrl, upiUri]);
 
   useEffect(() => {
-    if (!open || !showQr || hasExternalQrUrl || !upiUri || generatedQrUrl || isGeneratingQr) {
+    if (!open || !showQr || configuredQrUrl || !upiUri || generatedQrUrl || isGeneratingQr) {
       return;
     }
 
@@ -125,7 +151,7 @@ export default function DonateBookmark() {
     return () => {
       cancelled = true;
     };
-  }, [generatedQrUrl, hasExternalQrUrl, isGeneratingQr, open, showQr, upiUri]);
+  }, [configuredQrUrl, generatedQrUrl, isGeneratingQr, open, showQr, upiUri]);
 
   const handleOpen = useCallback(() => {
     if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
@@ -134,6 +160,11 @@ export default function DonateBookmark() {
     setShowQr(true);
     setShowCardCheckout(false);
     setActivePaymentAction("qr");
+    setUpiLaunchMessage("");
+    if (upiLaunchTimeoutRef.current !== null) {
+      window.clearTimeout(upiLaunchTimeoutRef.current);
+      upiLaunchTimeoutRef.current = null;
+    }
     setOpen(true);
   }, []);
 
@@ -141,7 +172,47 @@ export default function DonateBookmark() {
     setShowQr(true);
     setShowCardCheckout(false);
     setActivePaymentAction("qr");
+    setUpiLaunchMessage("");
+    if (upiLaunchTimeoutRef.current !== null) {
+      window.clearTimeout(upiLaunchTimeoutRef.current);
+      upiLaunchTimeoutRef.current = null;
+    }
     setOpen(false);
+  }, []);
+
+  const launchUpiApp = useCallback(() => {
+    setActivePaymentAction("upi");
+    setShowCardCheckout(false);
+    setUpiLaunchMessage("");
+
+    if (!upiUri || typeof window === "undefined") {
+      return;
+    }
+
+    if (!isProbablyMobileDevice) {
+      setUpiLaunchMessage("Pay via UPI works on phones with a UPI app installed.");
+      return;
+    }
+
+    setUpiLaunchMessage("Trying to open your UPI app...");
+    window.location.href = upiUri;
+
+    if (upiLaunchTimeoutRef.current !== null) {
+      window.clearTimeout(upiLaunchTimeoutRef.current);
+    }
+    upiLaunchTimeoutRef.current = window.setTimeout(() => {
+      if (document.visibilityState === "visible") {
+        setUpiLaunchMessage("No UPI app responded. Use Show UPI QR instead.");
+      }
+    }, 1300);
+  }, [isProbablyMobileDevice, upiUri]);
+
+  useEffect(() => {
+    return () => {
+      if (upiLaunchTimeoutRef.current !== null) {
+        window.clearTimeout(upiLaunchTimeoutRef.current);
+      }
+    };
   }, []);
 
   useEffect(() => {
@@ -304,7 +375,7 @@ export default function DonateBookmark() {
             <div className="surface-muted mt-4 p-4 text-center">
               <div className="ink-label">UPI ID</div>
               <div className="mt-1 break-all text-sm text-ink-900">
-                {upiId || "Set NEXT_PUBLIC_DONATE_UPI_ID"}
+                {upiId || defaultUpiId}
               </div>
             </div>
 
@@ -337,6 +408,7 @@ export default function DonateBookmark() {
                   setActivePaymentAction("qr");
                   setShowCardCheckout(false);
                   setShowQr(true);
+                  setUpiLaunchMessage("");
                 }}
                 disabled={!canShowQr}
               >
@@ -345,17 +417,11 @@ export default function DonateBookmark() {
               <button
                 type="button"
                 className={activePaymentAction === "upi" ? "paper-button" : "paper-button--ghost"}
-                onClick={() => {
-                  setActivePaymentAction("upi");
-                  setShowCardCheckout(false);
-                  if (upiUri && typeof window !== "undefined") {
-                    window.location.href = upiUri;
-                  }
-                }}
+                onClick={launchUpiApp}
                 aria-pressed={activePaymentAction === "upi"}
                 disabled={!upiUri}
               >
-                Open UPI App
+                Pay via UPI
               </button>
               <button
                 type="button"
@@ -365,16 +431,18 @@ export default function DonateBookmark() {
                   setActivePaymentAction("card");
                   setShowQr(false);
                   setShowCardCheckout(true);
+                  setUpiLaunchMessage("");
                 }}
               >
                 Pay by card
               </button>
             </div>
-            <p className="mt-2 text-xs text-ink-500">
-              {hasExternalQrUrl
-                ? "QR is loaded from your configured image URL."
-                : "QR is generated locally on your device."}
-            </p>
+            {showQr && resolvedQrUrl ? (
+              <p className="mt-2 text-xs text-ink-500">Scan this QR with any UPI app.</p>
+            ) : null}
+            {upiLaunchMessage ? (
+              <p className="mt-2 text-xs text-ink-500">{upiLaunchMessage}</p>
+            ) : null}
 
             {showCardCheckout && (
               <div className="surface-muted mt-4 p-3 text-center">
