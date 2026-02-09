@@ -55,10 +55,7 @@ export default function Providers({ children }: { children: React.ReactNode }) {
               "zen-user-popover-action-iconbox !text-ink-700 !opacity-100",
             userButtonPopoverActionButtonIcon:
               "zen-user-popover-action-icon !text-ink-700 !opacity-100",
-            userButtonPopoverFooter:
-              "zen-user-popover-footer border-t border-paper-200 bg-paper-100 !text-ink-700",
-            userButtonPopoverFooterPagesLink:
-              "zen-user-popover-footer-link !text-ink-700 hover:!text-ink-900",
+            userButtonPopoverFooter: "hidden",
             userPreview: "zen-user-preview px-4 py-4",
             userPreviewAvatarContainer: "zen-user-preview-avatar-wrap",
             userPreviewAvatarBox: "zen-user-preview-avatar-box",

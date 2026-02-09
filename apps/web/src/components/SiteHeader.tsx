@@ -57,16 +57,21 @@ export default function SiteHeader() {
             </SignedIn>
           </div>
 
-          <nav
-            className="hidden min-w-0 flex-1 items-center justify-end gap-2 text-sm lg:flex lg:flex-wrap"
-            aria-label="Primary"
-          >
+          <nav className="hidden min-w-0 flex-1 items-center justify-end gap-1.5 text-sm lg:flex" aria-label="Primary">
             {navLinks}
-            <RuntimeEnvironmentIndicator />
+            <div className="shrink-0">
+              <RuntimeEnvironmentIndicator />
+            </div>
             <SignedOut>
               <SignInButton mode="modal">
-                <button className="paper-button hidden lg:inline-flex" type="button">
-                  Sign in with Google
+                <button className="paper-button hidden whitespace-nowrap lg:inline-flex" type="button">
+                  <span className="sr-only">Sign in with Google</span>
+                  <span aria-hidden="true" className="xl:hidden">
+                    Sign in
+                  </span>
+                  <span aria-hidden="true" className="hidden xl:inline">
+                    Sign in with Google
+                  </span>
                 </button>
               </SignInButton>
             </SignedOut>

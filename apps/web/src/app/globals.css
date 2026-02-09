@@ -510,6 +510,7 @@ h4 {
 }
 
 .cl-userButtonPopoverFooter {
+  display: none !important;
   border-top: 1px solid rgb(var(--paper-200)) !important;
   background: rgb(var(--paper-100)) !important;
   color: rgb(var(--ink-700)) !important;
@@ -568,16 +569,20 @@ h4 {
 }
 
 .zen-user-preview-name {
+  font-family: var(--font-body), sans-serif;
   color: rgb(var(--ink-900));
-  font-size: 1.02rem;
+  font-size: 0.9375rem;
+  line-height: 1.35;
   font-weight: 700;
   letter-spacing: -0.01em;
 }
 
 .zen-user-preview-email {
+  font-family: var(--font-body), sans-serif;
   color: rgb(var(--ink-700));
-  font-size: 0.9rem;
+  font-size: 0.9375rem;
   line-height: 1.35;
+  font-weight: 500;
 }
 
 .zen-user-popover-actions {
@@ -585,6 +590,9 @@ h4 {
 }
 
 .zen-user-popover-action {
+  font-family: var(--font-body), sans-serif;
+  font-size: 0.9375rem;
+  line-height: 1.35;
   min-height: 3.15rem;
   padding-inline: 1rem;
   color: rgb(var(--ink-900));
@@ -610,6 +618,7 @@ h4 {
 }
 
 .zen-user-popover-footer {
+  display: none !important;
   border-top: 1px solid rgb(var(--paper-200));
   color: rgb(var(--ink-700));
 }
