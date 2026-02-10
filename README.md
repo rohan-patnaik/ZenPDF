@@ -4,7 +4,6 @@ ZenPDF is a web app for running PDF operations with a background worker.
 
 ## Live app
 - Primary: https://thezenpdf.vercel.app
-- Alternate alias: https://zenpdf.vercel.app
 
 ## App preview
 
