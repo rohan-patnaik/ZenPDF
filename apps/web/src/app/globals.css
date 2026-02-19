@@ -227,6 +227,7 @@ h4 {
   border: 1px solid transparent;
   border-radius: 10px;
   padding: 0.5rem 0.75rem;
+  white-space: nowrap;
   font-size: 0.875rem;
   font-weight: 600;
   color: rgb(var(--ink-700));
