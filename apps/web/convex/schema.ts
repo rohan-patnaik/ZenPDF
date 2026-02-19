@@ -14,6 +14,11 @@ const jobStatus = v.union(
   v.literal("cancelled"),
 );
 
+const feedbackStatus = v.union(
+  v.literal("open"),
+  v.literal("resolved"),
+);
+
 export default defineSchema({
   users: defineTable({
     clerkUserId: v.string(),
@@ -135,4 +140,22 @@ export default defineSchema({
     status: v.string(),
     updatedAt: v.number(),
   }).index("by_month", ["month"]),
+
+  feedback: defineTable({
+    heading: v.string(),
+    message: v.string(),
+    status: feedbackStatus,
+    createdByUserId: v.optional(v.id("users")),
+    createdByAnonId: v.optional(v.string()),
+    createdByClerkId: v.optional(v.string()),
+    createdByEmail: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+    resolvedAt: v.optional(v.number()),
+    resolvedByClerkId: v.optional(v.string()),
+  })
+    .index("by_created", ["createdAt"])
+    .index("by_user_created", ["createdByUserId", "createdAt"])
+    .index("by_anon_created", ["createdByAnonId", "createdAt"])
+    .index("by_status_updated", ["status", "updatedAt"]),
 });

@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { SignInButton, SignedIn, SignedOut, UserButton } from "@clerk/nextjs";
 
+import FeedbackWidget from "@/components/FeedbackWidget";
 import RuntimeEnvironmentIndicator from "@/components/RuntimeEnvironmentIndicator";
 import ThemeToggle from "@/components/ThemeToggle";
 
@@ -59,6 +60,7 @@ export default function SiteHeader() {
 
           <nav className="hidden min-w-0 flex-1 items-center justify-end gap-1.5 text-sm lg:flex" aria-label="Primary">
             {navLinks}
+            <FeedbackWidget />
             <div className="shrink-0">
               <RuntimeEnvironmentIndicator />
             </div>
@@ -90,6 +92,7 @@ export default function SiteHeader() {
             aria-label="Primary mobile"
           >
             {navLinks}
+            <FeedbackWidget compact />
           </nav>
           <RuntimeEnvironmentIndicator compact />
         </div>

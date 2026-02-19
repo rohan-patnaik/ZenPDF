@@ -55,6 +55,15 @@ Add new items here whenever something is deferred.
   - Command: `cd apps/worker && python3.11 -m pip install -r requirements.txt`
   - Note: `fpdf2` pin is now `2.8.4` to avoid install failure.
 
+## Feedback Board Admin Controls
+
+- [ ] Configure who can resolve feedback items.
+  - File: `apps/web/.env.local` (and production env dashboard)
+  - Keys:
+    - `ZENPDF_FEEDBACK_ADMIN_CLERK_IDS` (comma-separated Clerk user IDs)
+    - `ZENPDF_FEEDBACK_ADMIN_EMAILS` (comma-separated lowercased emails)
+  - Behavior: if both keys are empty, resolving is allowed only in non-production.
+
 ## Release and Process
 
 - [ ] Before final production PR merge, run full smoke tests on all tools in local/dev.
