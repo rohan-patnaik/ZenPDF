@@ -27,6 +27,23 @@ type ViewerSnapshot = {
   signedIn: boolean;
 };
 
+type FeedbackItem = {
+  _id: string;
+  heading: string;
+  message: string;
+  status: "open" | "resolved";
+  createdAt: number;
+  updatedAt: number;
+  resolvedAt?: number;
+  authorLabel: string;
+  creatorEmail?: string;
+};
+
+type FeedbackListResponse = {
+  canResolve: boolean;
+  items: FeedbackItem[];
+};
+
 export const api = {
   files: {
     generateUploadUrl: makeFunctionReference<
@@ -68,5 +85,22 @@ export const api = {
     getViewer: makeFunctionReference<"query", Record<string, never>, ViewerSnapshot>(
       "users:getViewer",
     ),
+  },
+  feedback: {
+    createFeedback: makeFunctionReference<
+      "mutation",
+      { heading: string; message: string; anonId?: string },
+      { feedbackId: string }
+    >("feedback:createFeedback"),
+    listFeedback: makeFunctionReference<
+      "query",
+      { limit?: number },
+      FeedbackListResponse
+    >("feedback:listFeedback"),
+    setFeedbackResolved: makeFunctionReference<
+      "mutation",
+      { feedbackId: string; resolved: boolean },
+      unknown
+    >("feedback:setFeedbackResolved"),
   },
 };

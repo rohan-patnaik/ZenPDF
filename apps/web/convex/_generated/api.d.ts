@@ -11,6 +11,7 @@
 import type * as capacity from "../capacity.js";
 import type * as cleanup from "../cleanup.js";
 import type * as crons from "../crons.js";
+import type * as feedback from "../feedback.js";
 import type * as files from "../files.js";
 import type * as jobs from "../jobs.js";
 import type * as lib_auth from "../lib/auth.js";
@@ -35,6 +36,7 @@ declare const fullApi: ApiFromModules<{
   capacity: typeof capacity;
   cleanup: typeof cleanup;
   crons: typeof crons;
+  feedback: typeof feedback;
   files: typeof files;
   jobs: typeof jobs;
   "lib/auth": typeof lib_auth;

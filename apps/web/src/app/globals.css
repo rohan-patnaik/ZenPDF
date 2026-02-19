@@ -522,6 +522,16 @@ h4 {
   opacity: 1 !important;
 }
 
+/* Clerk auth modal/page cleanup */
+.cl-footerPages,
+.cl-lastAuthenticationStrategyBadge {
+  display: none !important;
+}
+
+.cl-footer > .cl-footerAction ~ * {
+  display: none !important;
+}
+
 .theme-toggle {
   width: 2rem;
   height: 2rem;
@@ -631,6 +641,61 @@ h4 {
 .zen-user-popover-footer-link:hover,
 .zen-user-popover-footer-link:focus-visible {
   color: rgb(var(--ink-900));
+}
+
+.feedback-trigger {
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  border-radius: 10px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: rgb(var(--ink-700));
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
+}
+
+.feedback-trigger:hover {
+  border-color: rgb(var(--paper-300));
+  background: rgb(var(--paper-50) / 0.85);
+}
+
+.feedback-trigger:active {
+  transform: translateY(0);
+}
+
+.feedback-trigger--compact {
+  padding: 0.45rem 0.68rem;
+  font-size: 0.82rem;
+}
+
+.feedback-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgb(var(--ink-900) / 0.42);
+  backdrop-filter: blur(4px);
+  padding: 1rem;
+}
+
+.feedback-modal {
+  position: relative;
+  width: 100%;
+  max-width: 34rem;
+  padding: 1.2rem;
+}
+
+.feedback-modal-close {
+  position: absolute;
+  top: 1.2rem;
+  right: 1.2rem;
+  width: auto;
+  padding-inline: 0.9rem;
 }
 
 .donate-fab {
@@ -922,6 +987,18 @@ h4 {
   color: rgb(var(--ink-700));
 }
 
+:root[data-theme="dark"] .feedback-trigger {
+  border-color: transparent;
+  background: transparent;
+  color: rgb(var(--ink-700));
+}
+
+:root[data-theme="dark"] .feedback-trigger:hover {
+  border-color: rgb(var(--paper-200));
+  background: rgb(var(--paper-100));
+  color: rgb(var(--ink-700));
+}
+
 :root[data-theme="dark"] .donate-fab {
   border-color: rgb(var(--forest-500) / 0.8);
   background: rgb(var(--forest-600));
@@ -1057,6 +1134,16 @@ h4 {
 
   .donate-close-button {
     width: auto;
+  }
+
+  .feedback-trigger {
+    padding: 0.45rem 0.68rem;
+    font-size: 0.82rem;
+  }
+
+  .feedback-modal {
+    max-width: 100%;
+    padding: 1rem;
   }
 
   .donate-fab-hint {
