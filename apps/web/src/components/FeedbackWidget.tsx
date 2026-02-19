@@ -140,17 +140,6 @@ export default function FeedbackWidget({ compact = false, className = "" }: Feed
         aria-label="Open feedback form"
         aria-expanded={open}
       >
-        <svg
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          strokeWidth="1.8"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          aria-hidden="true"
-        >
-          <path d="M7 16.5H5a2 2 0 0 1-2-2V6.2a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v8.3a2 2 0 0 1-2 2h-7l-4.4 3.6c-.4.3-.6.1-.6-.3v-3.3Z" />
-        </svg>
         <span>Feedback</span>
       </button>
 

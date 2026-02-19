@@ -646,43 +646,29 @@ h4 {
 .feedback-trigger {
   display: inline-flex;
   align-items: center;
-  gap: 0.45rem;
   white-space: nowrap;
   border-radius: 10px;
-  border: 1px solid rgb(var(--paper-300));
-  background: rgb(var(--paper-50));
+  border: 1px solid transparent;
+  background: transparent;
   color: rgb(var(--ink-700));
-  padding: 0.5rem 0.72rem;
-  font-size: 0.82rem;
+  padding: 0.5rem 0.75rem;
+  font-size: 0.875rem;
   font-weight: 600;
-  box-shadow:
-    0 8px 16px -14px rgb(var(--shadow-ink) / 0.7),
-    0 1px 0 rgb(255 255 255 / 0.18);
-  transition: transform 0.16s ease, box-shadow 0.16s ease, border-color 0.16s ease,
-    background-color 0.16s ease, color 0.16s ease;
+  transition: border-color 0.18s ease, background-color 0.18s ease, color 0.18s ease;
 }
 
 .feedback-trigger:hover {
-  border-color: rgb(var(--forest-500) / 0.65);
-  background: rgb(var(--sage-200) / 0.6);
-  color: rgb(var(--forest-700));
-  box-shadow:
-    0 10px 18px -14px rgb(var(--shadow-ink) / 0.72),
-    0 1px 0 rgb(255 255 255 / 0.22);
+  border-color: rgb(var(--paper-300));
+  background: rgb(var(--paper-50) / 0.85);
 }
 
 .feedback-trigger:active {
   transform: translateY(0);
 }
 
-.feedback-trigger svg {
-  width: 1rem;
-  height: 1rem;
-}
-
 .feedback-trigger--compact {
-  padding: 0.44rem 0.64rem;
-  font-size: 0.78rem;
+  padding: 0.45rem 0.68rem;
+  font-size: 0.82rem;
 }
 
 .feedback-overlay {
@@ -1002,21 +988,15 @@ h4 {
 }
 
 :root[data-theme="dark"] .feedback-trigger {
-  border-color: rgb(var(--paper-200));
-  background: rgb(var(--paper-50));
+  border-color: transparent;
+  background: transparent;
   color: rgb(var(--ink-700));
-  box-shadow:
-    0 8px 18px -14px rgb(0 0 0 / 0.84),
-    0 1px 0 rgb(255 255 255 / 0.06);
 }
 
 :root[data-theme="dark"] .feedback-trigger:hover {
-  border-color: rgb(var(--forest-500) / 0.66);
+  border-color: rgb(var(--paper-200));
   background: rgb(var(--paper-100));
-  color: rgb(var(--forest-500));
-  box-shadow:
-    0 10px 20px -12px rgb(0 0 0 / 0.88),
-    0 0 0 1px rgb(var(--forest-500) / 0.22);
+  color: rgb(var(--ink-700));
 }
 
 :root[data-theme="dark"] .donate-fab {
@@ -1157,13 +1137,8 @@ h4 {
   }
 
   .feedback-trigger {
-    padding: 0.42rem 0.58rem;
-    font-size: 0.74rem;
-  }
-
-  .feedback-trigger svg {
-    width: 0.9rem;
-    height: 0.9rem;
+    padding: 0.45rem 0.68rem;
+    font-size: 0.82rem;
   }
 
   .feedback-modal {
