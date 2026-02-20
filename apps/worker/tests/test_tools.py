@@ -18,6 +18,11 @@ from openpyxl import load_workbook
 from PIL import Image
 from pypdf import PdfReader, PdfWriter
 
+try:
+    from pptx import Presentation as PptxPresentation
+except ImportError:  # pragma: no cover - optional dependency for PPTX output
+    PptxPresentation = None
+
 from zenpdf_worker.tools import (
     MAX_WEB_BYTES,
     compare_pdfs,
@@ -25,7 +30,6 @@ from zenpdf_worker.tools import (
     crop_pdf,
     edit_pdf,
     excel_to_pdf,
-    highlight_pdf,
     html_to_pdf,
     image_to_pdf,
     merge_pdfs,
@@ -35,11 +39,8 @@ from zenpdf_worker.tools import (
     page_numbers_pdf,
     pdf_to_pdfa,
     pdf_to_docx,
-    pdf_to_docx_ocr,
     pdf_to_powerpoint,
-    pdf_to_text,
     pdf_to_xlsx,
-    pdf_to_xlsx_ocr,
     pdf_to_jpg,
     powerpoint_to_pdf,
     protect_pdf,
@@ -141,6 +142,16 @@ def test_rotate_pdf() -> None:
         assert output.exists()
 
 
+def test_rotate_pdf_rejects_invalid_pages() -> None:
+    """Reject malformed page range selections for rotate."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 2)
+        with pytest.raises(ValueError):
+            rotate_pdf(source, temp_path / "rotated.pdf", 90, "1,,2")
+
+
 def test_watermark_and_page_numbers() -> None:
     """Apply watermark and page numbers to a PDF."""
     with TemporaryDirectory() as temp:
@@ -155,6 +166,28 @@ def test_watermark_and_page_numbers() -> None:
         numbered_reader = PdfReader(str(numbered))
         assert "CONFIDENTIAL" in (watermarked_reader.pages[0].extract_text() or "")
         assert "3" in (numbered_reader.pages[0].extract_text() or "")
+
+
+def test_page_numbers_selection_mode() -> None:
+    """Selection indexing should increment only on selected pages."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 3)
+        numbered = page_numbers_pdf(
+            source,
+            temp_path / "numbered_selection.pdf",
+            10,
+            "2-3",
+            "selectionIndex",
+        )
+        reader = PdfReader(str(numbered))
+        page1 = reader.pages[0].extract_text() or ""
+        page2 = reader.pages[1].extract_text() or ""
+        page3 = reader.pages[2].extract_text() or ""
+        assert "10" not in page1
+        assert "10" in page2
+        assert "11" in page3
 
 
 def test_watermark_rejects_invalid_pages() -> None:
@@ -278,19 +311,23 @@ def test_redact_pdf() -> None:
         assert "CONFIDENTIAL" not in (reader.pages[0].extract_text() or "")
 
 
-def test_highlight_pdf() -> None:
-    """Highlight matching text in a PDF."""
+def test_redact_pdf_whole_word_mode() -> None:
+    """Whole-word redaction should not remove longer containing words."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
-        _make_text_pdf(source, "CONFIDENTIAL")
+        _make_text_pdf(source, "secret secretive")
 
-        highlighted = highlight_pdf(source, temp_path / "highlighted.pdf", "CONFIDENTIAL", None)
-        document = fitz.open(str(highlighted))
-        page = document.load_page(0)
-        annotations = list(page.annots() or [])
-        document.close()
-        assert annotations
+        redacted = redact_pdf(
+            source,
+            temp_path / "redacted.pdf",
+            "secret",
+            None,
+            whole_word=True,
+        )
+        reader = PdfReader(str(redacted))
+        page_text = reader.pages[0].extract_text() or ""
+        assert "secretive" in page_text
 
 
 def test_compare_pdfs() -> None:
@@ -305,17 +342,7 @@ def test_compare_pdfs() -> None:
         report = compare_pdfs(first, second, temp_path / "report.txt")
         report_text = report.read_text(encoding="utf-8")
         assert "text differs" in report_text
-
-
-def test_pdf_to_text() -> None:
-    """Extract PDF text into a TXT file."""
-    with TemporaryDirectory() as temp:
-        temp_path = Path(temp)
-        source = temp_path / "source.pdf"
-        _make_text_pdf(source, "Hello")
-
-        output = pdf_to_text(source, temp_path / "output.txt")
-        assert "Hello" in output.read_text(encoding="utf-8")
+        assert "Visual comparison" in report_text
 
 
 def test_html_to_pdf() -> None:
@@ -336,8 +363,37 @@ def test_web_to_pdf_fetches_html() -> None:
         with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
         ):
-            output = web_to_pdf("https://example.com", temp_path / "site.pdf")
+            output = web_to_pdf(
+                "https://example.com",
+                temp_path / "site.pdf",
+                render_mode="text",
+            )
         assert output.exists()
+
+
+def test_web_to_pdf_browser_mode() -> None:
+    """Browser mode should call the chromium render path."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"<p>Example</p>")
+        session = _DummySession(response)
+        output = temp_path / "site_browser.pdf"
+
+        def fake_run(*_args, **_kwargs):
+            output.write_bytes(b"%PDF-1.7\n")
+            return subprocess.CompletedProcess(["chromium"], 0, stdout="", stderr="")
+
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
+        ), patch("zenpdf_worker.tools._resolve_browser_binary", return_value="/usr/bin/chromium"), patch(
+            "zenpdf_worker.tools._run_command", side_effect=fake_run
+        ):
+            rendered = web_to_pdf(
+                "https://example.com",
+                output,
+                render_mode="browser",
+            )
+        assert rendered.exists()
 
 
 def test_web_to_pdf_blocks_private_host() -> None:
@@ -349,7 +405,11 @@ def test_web_to_pdf_blocks_private_host() -> None:
             side_effect=ValueError("URL host is not allowed"),
         ):
             with pytest.raises(ValueError):
-                web_to_pdf("http://127.0.0.1", temp_path / "blocked.pdf")
+                web_to_pdf(
+                    "http://127.0.0.1",
+                    temp_path / "blocked.pdf",
+                    render_mode="text",
+                )
 
 
 def test_web_to_pdf_blocks_redirects() -> None:
@@ -362,7 +422,11 @@ def test_web_to_pdf_blocks_redirects() -> None:
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
         ):
             with pytest.raises(ValueError):
-                web_to_pdf("https://example.com", temp_path / "redirect.pdf")
+                web_to_pdf(
+                    "https://example.com",
+                    temp_path / "redirect.pdf",
+                    render_mode="text",
+                )
 
 
 def test_web_to_pdf_fallbacks_to_hostname() -> None:
@@ -393,7 +457,11 @@ def test_web_to_pdf_fallbacks_to_hostname() -> None:
             os.environ,
             {"ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK": "1", "ZENPDF_DEV_MODE": "1"},
         ):
-            output = web_to_pdf("https://example.com", temp_path / "site.pdf")
+            output = web_to_pdf(
+                "https://example.com",
+                temp_path / "site.pdf",
+                render_mode="text",
+            )
 
         assert output.exists()
 
@@ -408,25 +476,35 @@ def test_web_to_pdf_limits_body_size() -> None:
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
         ):
             with pytest.raises(ValueError):
-                web_to_pdf("https://example.com", temp_path / "large.pdf")
+                web_to_pdf(
+                    "https://example.com",
+                    temp_path / "large.pdf",
+                    render_mode="text",
+                )
 
 
 def test_pdf_to_docx_and_xlsx() -> None:
-    """Convert PDF text to DOCX and XLSX files."""
+    """Convert PDF text to DOCX and XLSX files in text mode."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
-        _make_pdf(source, 1)
+        _make_text_pdf(source, "Hello ZenPDF")
 
-        docx_path = pdf_to_docx(source, temp_path / "output.docx")
-        xlsx_path = pdf_to_xlsx(source, temp_path / "output.xlsx")
+        docx_path = pdf_to_docx(source, temp_path / "output.docx", mode="text")
+        xlsx_path = pdf_to_xlsx(source, temp_path / "output.xlsx", mode="text")
 
         assert docx_path.exists()
         assert xlsx_path.exists()
+        document = Document(str(docx_path))
+        doc_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        assert "Hello ZenPDF" in doc_text
+        workbook = load_workbook(xlsx_path)
+        values = [cell.value for cell in workbook.active["A"] if cell.value]
+        assert "Hello ZenPDF" in values
 
 
-def test_pdf_to_docx_and_xlsx_ocr() -> None:
-    """Convert a PDF to DOCX/XLSX using OCR."""
+def test_pdf_to_docx_and_xlsx_ocr_modes() -> None:
+    """Convert a PDF to DOCX/XLSX using OCR mode."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         source = temp_path / "source.pdf"
@@ -436,13 +514,13 @@ def test_pdf_to_docx_and_xlsx_ocr() -> None:
             "zenpdf_worker.tools._ocr_image",
             side_effect=["First page", "Second page"],
         ):
-            docx_path = pdf_to_docx_ocr(source, temp_path / "ocr.docx")
+            docx_path = pdf_to_docx(source, temp_path / "ocr.docx", mode="ocr")
 
         with patch(
             "zenpdf_worker.tools._ocr_image",
             side_effect=["First sheet", "Second sheet"],
         ):
-            xlsx_path = pdf_to_xlsx_ocr(source, temp_path / "ocr.xlsx")
+            xlsx_path = pdf_to_xlsx(source, temp_path / "ocr.xlsx", mode="ocr")
 
         document = Document(str(docx_path))
         doc_text = "\n".join(paragraph.text for paragraph in document.paragraphs)
@@ -454,6 +532,20 @@ def test_pdf_to_docx_and_xlsx_ocr() -> None:
         values = [cell.value for cell in sheet["A"] if cell.value]
         assert "First sheet" in values
         assert "Second sheet" in values
+
+
+def test_pdf_to_docx_auto_uses_ocr_for_text_light(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Auto mode should choose OCR for text-light PDFs."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 1)
+        monkeypatch.setattr("zenpdf_worker.tools._is_text_light_pdf", lambda _path: True)
+        with patch("zenpdf_worker.tools._ocr_image", return_value="OCR line"):
+            docx_path = pdf_to_docx(source, temp_path / "auto.docx", mode="auto")
+        document = Document(str(docx_path))
+        values = "\n".join(paragraph.text for paragraph in document.paragraphs)
+        assert "OCR line" in values
 
 
 def test_compress_pdf_detects_image_heavy(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -529,12 +621,20 @@ def test_pdfa_conversion_runs_ghostscript(monkeypatch: pytest.MonkeyPatch) -> No
         output = temp_path / "output.pdf"
         _make_pdf(source, 1)
 
-        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", lambda _: "/usr/bin/gs")
+        def fake_which(name: str):
+            if name == "gs":
+                return "/usr/bin/gs"
+            return None
+
+        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", fake_which)
 
         def fake_run(command, **_kwargs):
             if "--version" in command:
                 return subprocess.CompletedProcess(command, 0, stdout="10.03.1", stderr="")
-            output.write_bytes(b"%PDF-1.7\n")
+            writer = PdfWriter()
+            writer.add_blank_page(width=300, height=300)
+            with output.open("wb") as handle:
+                writer.write(handle)
             return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
 
         monkeypatch.setattr("zenpdf_worker.tools.subprocess.run", fake_run)
@@ -688,6 +788,40 @@ def test_pdf_to_powerpoint() -> None:
             return
         assert result.exists()
         assert result.stat().st_size > 0
+
+
+def test_pdf_to_powerpoint_preserves_page_aspect_ratio() -> None:
+    """Use slide dimensions from the source PDF and avoid image distortion."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "wide.pdf"
+        writer = PdfWriter()
+        writer.add_blank_page(width=640, height=360)
+        with source.open("wb") as handle:
+            writer.write(handle)
+
+        output = temp_path / "wide_slides.pptx"
+        try:
+            result = pdf_to_powerpoint(source, output)
+        except RuntimeError as error:
+            assert "python-pptx is required" in str(error)
+            return
+        assert result.exists()
+        assert result.stat().st_size > 0
+        if PptxPresentation is None:
+            return
+
+        presentation = PptxPresentation(str(result))
+        assert len(presentation.slides) == 1
+        expected_ratio = 640 / 360
+        slide_ratio = presentation.slide_width / presentation.slide_height
+        assert slide_ratio == pytest.approx(expected_ratio, rel=0.01)
+
+        slide = presentation.slides[0]
+        assert len(slide.shapes) == 1
+        picture = slide.shapes[0]
+        picture_ratio = picture.width / picture.height
+        assert picture_ratio == pytest.approx(expected_ratio, rel=0.02)
 
 
 class _DummySocket:

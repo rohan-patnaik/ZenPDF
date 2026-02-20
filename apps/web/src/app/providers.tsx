@@ -64,6 +64,8 @@ export default function Providers({ children }: { children: React.ReactNode }) {
               "zen-user-preview-name !text-ink-900 !opacity-100",
             userPreviewSecondaryIdentifier:
               "zen-user-preview-email !text-ink-700 !opacity-100",
+            footerPages: "hidden",
+            lastAuthenticationStrategyBadge: "hidden",
           },
         }}
       >

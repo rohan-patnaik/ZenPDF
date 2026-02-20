@@ -1,6 +1,6 @@
 # Owner Action Items (Living Checklist)
 
-Last updated: 2026-02-06
+Last updated: 2026-02-20
 Owner: Rohan Patnaik
 
 Use this file as the single source of truth for remaining manual/non-code tasks.
@@ -50,6 +50,27 @@ Add new items here whenever something is deferred.
   - File: `apps/worker/.env`
   - Key: `ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK=1`
   - Scope: local/dev usage only with `ZENPDF_DEV_MODE=1`.
+
+- [ ] Ensure Chromium is available in all worker runtimes.
+  - Why: `html-to-pdf` browser mode requires a headless browser binary.
+  - Optional env override:
+    - `ZENPDF_BROWSER_PATH`
+  - Local check:
+    - `chromium --version` or `google-chrome --version`
+
+- [ ] (Optional but recommended) Install and enable veraPDF in production worker images.
+  - Why: stronger PDF/A conformance verification.
+  - Current behavior without veraPDF:
+    - structural validation fallback still runs.
+
+- [ ] Tune OCR/office env knobs for your workload profile.
+  - OCR:
+    - `ZENPDF_OCR_TEXT_DENSITY_THRESHOLD`
+    - `ZENPDF_OCR_PREPROCESS_THRESHOLD`
+  - Office conversion:
+    - `ZENPDF_OFFICE_TIMEOUT_BASE_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_PER_MB_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS`
 
 - [ ] Reinstall worker dependencies after requirement updates.
   - Command: `cd apps/worker && python3.11 -m pip install -r requirements.txt`

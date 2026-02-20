@@ -38,6 +38,11 @@
 
 ## Tool-by-tool expectations
 
+### Baseline fidelity methodology
+- Every tool should be validated against expected vs actual output behavior.
+- Use fixture-driven tests in `apps/worker/tests/fixtures/` for repeatable regression checks.
+- Assertions must include correctness signals (not only output file existence).
+
 ### Merge PDF
 - Input: 2+ PDFs.
 - Output: `*_merged.pdf`.
@@ -51,16 +56,25 @@
 - Output: `*_compressed.pdf` (may return no change when already optimized).
 
 ### PDF to Word
-- Input: 1 PDF.
+- Input: 1 PDF + optional `mode` (`auto`/`text`/`ocr`).
 - Output: `*_word.docx`.
+- Notes:
+  - `auto` prefers OCR for text-light PDFs.
+  - `text` preserves text extraction only.
+  - `ocr` forces OCR pipeline.
 
 ### PDF to PowerPoint
 - Input: 1 PDF.
 - Output: `*_powerpoint.pptx`.
 
 ### PDF to Excel
-- Input: 1 PDF.
+- Input: 1 PDF + optional `mode` (`auto`/`table`/`text`/`ocr`).
 - Output: `*_excel.xlsx`.
+- Notes:
+  - `auto` prefers table extraction, then OCR for text-light pages, then text fallback.
+  - `table` preserves row/column extraction when tables are detected.
+  - `text` extracts plain text content without table-aware column preservation.
+  - `ocr` forces OCR on all pages, useful for scanned/image-only PDFs.
 
 ### Word to PDF
 - Input: `.doc`/`.docx`.
@@ -87,7 +101,7 @@
 - Output: `*_images.pdf`.
 
 ### Sign PDF
-- Input: 1 PDF + signature text.
+- Input: 1 PDF + signature text + optional `anchor`/`x`/`y`.
 - Output: `*_signed.pdf`.
 
 ### Watermark
@@ -97,10 +111,16 @@
 ### Rotate PDF
 - Input: 1 PDF, `angle`, optional `pages`.
 - Output: `*_rotated.pdf`.
+- Validation:
+  - `angle` must be exactly `90`, `180`, or `270`.
+  - Invalid angles fail with user input error (no silent coercion).
 
 ### HTML to PDF
-- Input: URL.
+- Input: URL + optional `renderMode` (`browser`/`text`).
 - Output: `<domain>_<timestamp>_html.pdf`.
+- Notes:
+  - `browser` mode preserves page layout from headless browser render.
+  - `text` mode extracts readable text content.
 
 ### Unlock PDF
 - Input: 1 PDF; prompt for password only when the file is encrypted.
@@ -117,14 +137,21 @@
 ### PDF to PDF/A
 - Input: 1 PDF.
 - Output: `*_pdfa.pdf`.
+- Validation:
+  - Post-conversion conformance validation runs when validator is available.
 
 ### Repair PDF
 - Input: 1 PDF.
 - Output: `*_repaired.pdf`.
+- Notes:
+  - Repair pipeline stages: `qpdf` -> `mutool` -> `pypdf` fallback.
 
 ### Page numbers
-- Input: 1 PDF + optional `start`, `pages`.
+- Input: 1 PDF + optional `start`, `pages`, `numberingMode`.
 - Output: `*_numbered.pdf`.
+- Modes:
+  - `documentIndex` (default): numbering follows original page index.
+  - `selectionIndex`: numbering increments only for selected pages.
 
 ### Scan to PDF
 - Input: 1+ images.
@@ -135,12 +162,18 @@
 - Output: `*_ocr.pdf`.
 
 ### Compare PDF
-- Input: 2 PDFs.
+- Input: 2 PDFs + optional `includeVisualDiff` boolean.
 - Output: `*_compare.txt`.
+- Notes:
+  - Report includes text-diff summary.
+  - Optional visual-diff section includes page-level delta percentages.
 
 ### Redact PDF
-- Input: 1 PDF + text + optional pages.
+- Input: 1 PDF + text + optional pages + optional matching options.
 - Output: `*_redacted.pdf`.
+- Options:
+  - `caseSensitive`, `wholeWord`, `regex`, `ocrAssist`.
+  - `ocrAssist` can redact scanned pages when direct text matching fails.
 
 ### Crop PDF
 - Input: 1 PDF + margins + optional pages.
@@ -149,6 +182,7 @@
 ## Error handling
 - Friendly errors render for limits, invalid input, and capacity.
 - Retry guidance appears for transient failures.
+- Page range parsing is strict (malformed range tokens fail deterministically).
 
 ## Worker
 - Worker claims jobs, updates progress, and uploads outputs.

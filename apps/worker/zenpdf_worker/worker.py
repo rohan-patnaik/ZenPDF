@@ -138,6 +138,22 @@ def _parse_int(value: Any, default: int) -> int:
         return default
 
 
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    """Parse a boolean from common string/number forms."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
+
 MAX_DPI = 300
 
 
@@ -338,7 +354,7 @@ class ZenPdfWorker:
         if tool == "rotate":
             angle = _parse_int(config.get("angle"), 90)
             if angle not in (90, 180, 270):
-                angle = 90
+                raise ValueError("Angle must be 90, 180, or 270")
             return ToolRunResult(
                 [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
             )
@@ -368,7 +384,15 @@ class ZenPdfWorker:
         if tool == "page-numbers":
             start = _parse_int(config.get("start"), 1)
             return ToolRunResult(
-                [page_numbers_pdf(inputs[0], output_path, start, config.get("pages"))]
+                [
+                    page_numbers_pdf(
+                        inputs[0],
+                        output_path,
+                        start,
+                        config.get("pages"),
+                        str(config.get("numberingMode") or "documentIndex"),
+                    )
+                ]
             )
         if tool == "crop":
             margins = config.get("margins") or ""
@@ -382,14 +406,36 @@ class ZenPdfWorker:
             if not str(text).strip():
                 raise ValueError("Text to redact is required")
             return ToolRunResult(
-                [redact_pdf(inputs[0], output_path, str(text), config.get("pages"))]
+                [
+                    redact_pdf(
+                        inputs[0],
+                        output_path,
+                        str(text),
+                        config.get("pages"),
+                        case_sensitive=_parse_bool(config.get("caseSensitive"), False),
+                        whole_word=_parse_bool(config.get("wholeWord"), False),
+                        use_regex=_parse_bool(config.get("regex"), False),
+                        ocr_assist=_parse_bool(config.get("ocrAssist"), False),
+                    )
+                ]
             )
         if tool == "edit-pdf":
             return ToolRunResult([edit_pdf(inputs[0], output_path, config.get("operations"))])
         if tool == "compare":
             if len(inputs) != 2:
                 raise ValueError("Two PDF files are required")
-            return ToolRunResult([compare_pdfs(inputs[0], inputs[1], output_path)])
+            return ToolRunResult(
+                [
+                    compare_pdfs(
+                        inputs[0],
+                        inputs[1],
+                        output_path,
+                        include_visual_diff=_parse_bool(
+                            config.get("includeVisualDiff"), True
+                        ),
+                    )
+                ]
+            )
         if tool == "unlock":
             password = config.get("password") if config else ""
             return ToolRunResult([unlock_pdf(inputs[0], output_path, str(password or ""))])
@@ -408,6 +454,7 @@ class ZenPdfWorker:
                 raise ValueError("Signature text is required")
             x = _parse_int(config.get("x"), 36)
             y = _parse_int(config.get("y"), 36)
+            anchor = str(config.get("anchor") or "custom").strip().lower()
             return ToolRunResult(
                 [
                     sign_pdf(
@@ -417,6 +464,7 @@ class ZenPdfWorker:
                         config.get("pages"),
                         float(x),
                         float(y),
+                        anchor=anchor,
                     )
                 ]
             )
@@ -433,7 +481,12 @@ class ZenPdfWorker:
             if not url:
                 raise ValueError("URL is required")
             html_output = _build_html_output_path(str(url), temp)
-            return ToolRunResult([web_to_pdf(str(url), html_output)])
+            render_mode = str(config.get("renderMode") or "browser").strip().lower()
+            if render_mode not in {"browser", "text"}:
+                raise ValueError("Render mode must be browser or text")
+            return ToolRunResult(
+                [web_to_pdf(str(url), html_output, render_mode=render_mode)]
+            )
         if tool == "word-to-pdf":
             if not inputs:
                 raise ValueError("Word document is required")
@@ -456,7 +509,10 @@ class ZenPdfWorker:
         if tool == "pdf-to-word":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([pdf_to_docx(inputs[0], output_path)])
+            mode = str(config.get("mode") or "auto").strip().lower()
+            if mode not in {"auto", "text", "ocr"}:
+                raise ValueError("Mode must be auto, text, or ocr")
+            return ToolRunResult([pdf_to_docx(inputs[0], output_path, mode=mode)])
         if tool == "pdf-to-powerpoint":
             if not inputs:
                 raise ValueError("PDF file is required")
@@ -464,7 +520,10 @@ class ZenPdfWorker:
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([pdf_to_xlsx(inputs[0], output_path)])
+            mode = str(config.get("mode") or "auto").strip().lower()
+            if mode not in {"auto", "table", "text", "ocr"}:
+                raise ValueError("Mode must be auto, table, text, or ocr")
+            return ToolRunResult([pdf_to_xlsx(inputs[0], output_path, mode=mode)])
         if tool == "ocr-pdf":
             if not inputs:
                 raise ValueError("PDF file is required")

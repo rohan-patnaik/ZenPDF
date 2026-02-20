@@ -13,6 +13,10 @@ export default function SignInPage() {
               colorBackground: "rgb(var(--paper-50))",
               colorText: "rgb(var(--ink-900))",
             },
+            elements: {
+              footerPages: "hidden",
+              lastAuthenticationStrategyBadge: "hidden",
+            },
           }}
         />
       </div>

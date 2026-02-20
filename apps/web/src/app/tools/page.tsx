@@ -44,11 +44,12 @@ type ToolField = {
   label: string;
   placeholder: string;
   helper?: string;
-  type?: "text" | "number" | "password" | "textarea";
+  type?: "text" | "number" | "password" | "textarea" | "select";
   required?: boolean;
   min?: number;
   max?: number;
   step?: number;
+  options?: Array<{ label: string; value: string }>;
 };
 
 type ToolDefinition = {
@@ -103,6 +104,20 @@ const TOOLS: ToolDefinition[] = [
     description: "Convert PDF content into DOCX.",
     accept: PDF_ACCEPT,
     multiple: false,
+    fields: [
+      {
+        key: "mode",
+        label: "Mode",
+        placeholder: "auto",
+        helper: "Auto picks OCR for text-light pages.",
+        type: "select",
+        options: [
+          { label: "Auto", value: "auto" },
+          { label: "Text", value: "text" },
+          { label: "OCR", value: "ocr" },
+        ],
+      },
+    ],
   },
   {
     id: "pdf-to-powerpoint",
@@ -117,6 +132,21 @@ const TOOLS: ToolDefinition[] = [
     description: "Extract PDF content into XLSX.",
     accept: PDF_ACCEPT,
     multiple: false,
+    fields: [
+      {
+        key: "mode",
+        label: "Mode",
+        placeholder: "auto",
+        helper: "Auto tries tables first, then OCR when needed.",
+        type: "select",
+        options: [
+          { label: "Auto", value: "auto" },
+          { label: "Table", value: "table" },
+          { label: "Text", value: "text" },
+          { label: "OCR", value: "ocr" },
+        ],
+      },
+    ],
   },
   {
     id: "word-to-pdf",
@@ -203,6 +233,20 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "36",
         type: "number",
       },
+      {
+        key: "anchor",
+        label: "Anchor",
+        placeholder: "custom",
+        helper: "Use an anchor preset or custom x/y.",
+        type: "select",
+        options: [
+          { label: "Custom", value: "custom" },
+          { label: "Top left", value: "top-left" },
+          { label: "Top right", value: "top-right" },
+          { label: "Bottom left", value: "bottom-left" },
+          { label: "Bottom right", value: "bottom-right" },
+        ],
+      },
     ],
   },
   {
@@ -264,6 +308,17 @@ const TOOLS: ToolDefinition[] = [
         label: "Web address",
         placeholder: "https://example.com",
         required: true,
+      },
+      {
+        key: "renderMode",
+        label: "Render mode",
+        placeholder: "browser",
+        helper: "Browser mode keeps page layout; text mode extracts readable content.",
+        type: "select",
+        options: [
+          { label: "Browser", value: "browser" },
+          { label: "Text", value: "text" },
+        ],
       },
     ],
   },
@@ -350,6 +405,17 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "1-3,6",
         helper: "Leave blank to number every page.",
       },
+      {
+        key: "numberingMode",
+        label: "Numbering mode",
+        placeholder: "documentIndex",
+        helper: "Document index keeps original page count; selection index counts selected pages only.",
+        type: "select",
+        options: [
+          { label: "Document index", value: "documentIndex" },
+          { label: "Selection index", value: "selectionIndex" },
+        ],
+      },
     ],
   },
   {
@@ -380,6 +446,19 @@ const TOOLS: ToolDefinition[] = [
     description: "Generate a comparison report for two PDFs.",
     accept: PDF_ACCEPT,
     multiple: true,
+    fields: [
+      {
+        key: "includeVisualDiff",
+        label: "Visual diff",
+        placeholder: "true",
+        helper: "Include a low-resolution visual delta summary.",
+        type: "select",
+        options: [
+          { label: "On", value: "true" },
+          { label: "Off", value: "false" },
+        ],
+      },
+    ],
   },
   {
     id: "redact",
@@ -392,7 +471,7 @@ const TOOLS: ToolDefinition[] = [
         key: "text",
         label: "Text to redact",
         placeholder: "CONFIDENTIAL",
-        helper: "Case-sensitive match.",
+        helper: "Default mode uses case-insensitive partial matching.",
         required: true,
       },
       {
@@ -400,6 +479,47 @@ const TOOLS: ToolDefinition[] = [
         label: "Pages",
         placeholder: "1-3,6",
         helper: "Leave blank to scan every page.",
+      },
+      {
+        key: "caseSensitive",
+        label: "Case sensitive",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "wholeWord",
+        label: "Whole word",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "regex",
+        label: "Regex",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "ocrAssist",
+        label: "OCR assist",
+        placeholder: "false",
+        helper: "When no direct text match is found, OCR can redact matching scanned pages.",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
       },
     ],
   },
@@ -940,10 +1060,22 @@ export default function ToolsPage() {
     if (!tool) {
       return undefined;
     }
-    const config: Record<string, string | number> = {};
+    const config: Record<string, string | number | boolean> = {};
     const numberKeys = new Set(
       tool.fields
         ?.filter((field) => field.type === "number")
+        .map((field) => field.key) ?? [],
+    );
+    const booleanSelectKeys = new Set(
+      tool.fields
+        ?.filter(
+          (field) =>
+            field.type === "select" &&
+            (field.options?.length ?? 0) > 0 &&
+            field.options?.every(
+              (option) => option.value === "true" || option.value === "false",
+            ),
+        )
         .map((field) => field.key) ?? [],
     );
     for (const [key, value] of Object.entries(configValues)) {
@@ -953,6 +1085,8 @@ export default function ToolsPage() {
       if (numberKeys.has(key)) {
         const numericValue = Number(value);
         config[key] = Number.isNaN(numericValue) ? value.trim() : numericValue;
+      } else if (booleanSelectKeys.has(key)) {
+        config[key] = value.trim() === "true";
       } else {
         config[key] = value.trim();
       }
@@ -1089,6 +1223,20 @@ export default function ToolsPage() {
           rows={4}
           className="field-input"
         />
+      ) : field.type === "select" ? (
+        <select
+          id={field.key}
+          value={configValues[field.key] ?? ""}
+          onChange={(event) => updateConfig(field.key, event.target.value)}
+          className="field-input"
+        >
+          <option value="">{field.placeholder || "Select an option"}</option>
+          {(field.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       ) : (
         <input
           id={field.key}

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import ipaddress
+import logging
 import math
 import os
 import json
+import re
 import shlex
 import shutil
 import socket
@@ -27,7 +29,7 @@ import requests
 from docx import Document
 from fpdf import FPDF
 from openpyxl import Workbook
-from PIL import Image
+from PIL import Image, ImageChops, ImageFilter, ImageOps
 from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
 from requests_toolbelt.adapters.host_header_ssl import HostHeaderSSLAdapter
@@ -42,33 +44,75 @@ try:
 except ImportError:  # pragma: no cover - optional dependency for PPTX output
     Presentation = None
 
+try:
+    import pdfplumber
+except ImportError:  # pragma: no cover - optional dependency for structured table extraction
+    pdfplumber = None
+
 
 OCR_DPI = 300
 DEFAULT_OCR_LANG = os.getenv("ZENPDF_OCR_LANG", "eng")
+LOGGER = logging.getLogger(__name__)
+
+OCR_TEXT_DENSITY_THRESHOLD = float(os.getenv("ZENPDF_OCR_TEXT_DENSITY_THRESHOLD", "60"))
+OCR_PREPROCESS_THRESHOLD = int(os.getenv("ZENPDF_OCR_PREPROCESS_THRESHOLD", "180"))
 
 
 def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
-    """Parse a comma-separated list of page ranges."""
+    """
+    Parse a comma-separated list of page ranges strictly.
+
+    Examples:
+    - "1,3-5"
+    - "2-4,6"
+    """
     ranges: List[Tuple[int, int]] = []
-    for part in value.split(","):
-        cleaned = part.strip()
-        if not cleaned:
-            continue
-        if "-" in cleaned:
-            start, end = cleaned.split("-", 1)
+    tokens = [part.strip() for part in value.split(",")]
+    if not tokens or all(not token for token in tokens):
+        return ranges
+
+    for token in tokens:
+        if not token:
+            raise ValueError("Page ranges cannot contain empty items")
+        if "-" in token:
+            pieces = token.split("-")
+            if len(pieces) != 2:
+                raise ValueError(f"Invalid page range token: {token!r}")
+            start_text, end_text = pieces[0].strip(), pieces[1].strip()
         else:
-            start, end = cleaned, cleaned
+            start_text = token
+            end_text = token
+        if not start_text or not end_text:
+            raise ValueError(f"Invalid page range token: {token!r}")
         try:
-            start_i = max(1, int(start))
-            end_i = min(total_pages, int(end))
-        except ValueError:
-            continue
-        if start_i <= end_i:
-            ranges.append((start_i, end_i))
+            start_i = int(start_text)
+            end_i = int(end_text)
+        except ValueError as error:
+            raise ValueError(f"Invalid page number in token: {token!r}") from error
+        if start_i < 1 or end_i < 1:
+            raise ValueError("Page numbers must be >= 1")
+        if start_i > end_i:
+            raise ValueError(f"Range start is greater than end: {token!r}")
+        if start_i > total_pages:
+            raise ValueError(f"Page {start_i} exceeds document page count ({total_pages})")
+        clamped_end = min(end_i, total_pages)
+        ranges.append((start_i, clamped_end))
     return ranges
 
 
-def _parse_page_list(value: str, total_pages: int) -> List[int]:
+def _dedupe_preserve_order(values: Iterable[int]) -> List[int]:
+    """Remove duplicate integers while preserving first-seen order."""
+    deduped: List[int] = []
+    seen: set[int] = set()
+    for value in values:
+        if value in seen:
+            continue
+        seen.add(value)
+        deduped.append(value)
+    return deduped
+
+
+def _parse_page_list(value: str, total_pages: int, dedupe: bool = True) -> List[int]:
     """
     Expand a comma-separated page range string into an ordered list of page numbers.
     
@@ -83,7 +127,8 @@ def _parse_page_list(value: str, total_pages: int) -> List[int]:
     pages: List[int] = []
     for start, end in _parse_ranges(value, total_pages):
         pages.extend(range(start, end + 1))
-    return [page for page in pages if 1 <= page <= total_pages]
+    clamped = [page for page in pages if 1 <= page <= total_pages]
+    return _dedupe_preserve_order(clamped) if dedupe else clamped
 
 
 def _load_pdf(input_path: Path, allow_encrypted: bool = False) -> PdfReader:
@@ -108,6 +153,44 @@ def _resolve_page_selection(pages: str | None, total_pages: int) -> set[int] | N
     if not selection:
         raise ValueError("No valid pages selected")
     return set(selection)
+
+
+def _parse_bool(value: Any, default: bool = False) -> bool:
+    """Parse booleans from string/int forms."""
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "yes", "on", "y"}:
+        return True
+    if normalized in {"0", "false", "no", "off", "n"}:
+        return False
+    return default
+
+
+def _safe_text_length(page: Any) -> int:
+    """Return extracted text length for a page without raising."""
+    try:
+        return len((page.extract_text() or "").strip())
+    except Exception:
+        return 0
+
+
+def _pdf_text_density(input_path: Path) -> float:
+    """Estimate average extracted text length per page."""
+    reader = _load_pdf(input_path)
+    if not reader.pages:
+        return 0.0
+    total_chars = sum(_safe_text_length(page) for page in reader.pages)
+    return total_chars / max(1, len(reader.pages))
+
+
+def _is_text_light_pdf(input_path: Path) -> bool:
+    """Heuristic to decide if OCR assistance should be preferred."""
+    return _pdf_text_density(input_path) < OCR_TEXT_DENSITY_THRESHOLD
 
 
 def _copy_metadata(writer: PdfWriter, reader: PdfReader) -> None:
@@ -1078,17 +1161,90 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
 
     return final_path, result_payload
 
+
+def _run_command(
+    command: Sequence[str],
+    timeout: int,
+    error_prefix: str,
+) -> subprocess.CompletedProcess[str]:
+    """Run a shell command and raise a friendly error on timeout."""
+    try:
+        return subprocess.run(
+            list(command),
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise RuntimeError(f"{error_prefix} timed out") from error
+
+
+def _is_valid_pdf(path: Path) -> bool:
+    """Basic PDF integrity check using qpdf when available plus pypdf parsing."""
+    if not path.exists() or path.stat().st_size == 0:
+        return False
+    qpdf = shutil.which("qpdf")
+    if qpdf:
+        try:
+            result = _run_command(
+                [qpdf, "--check", str(path)],
+                timeout=30,
+                error_prefix="PDF validation",
+            )
+        except RuntimeError:
+            return False
+        if result.returncode != 0:
+            return False
+    try:
+        reader = PdfReader(str(path))
+        _ = len(reader.pages)
+    except Exception:
+        return False
+    return True
+
 def repair_pdf(input_path: Path, output_path: Path) -> Path:
-    """Rewrite a PDF to rebuild its internal structure."""
-    reader = PdfReader(str(input_path))
-    if reader.is_encrypted:
-        raise ValueError("PDF is encrypted")
+    """Repair a PDF via staged strategies (qpdf -> mutool -> pypdf rewrite)."""
+    reader: PdfReader | None = None
+    try:
+        reader = PdfReader(str(input_path))
+        if reader.is_encrypted:
+            raise ValueError("PDF is encrypted")
+    except PdfReadError:
+        # Corrupt PDFs should still get a chance through external repair tools.
+        reader = None
+
+    qpdf = shutil.which("qpdf")
+    if qpdf:
+        result = _run_command(
+            [qpdf, "--linearize", str(input_path), str(output_path)],
+            timeout=90,
+            error_prefix="QPDF repair",
+        )
+        if result.returncode == 0 and _is_valid_pdf(output_path):
+            return output_path
+
+    mutool = shutil.which("mutool")
+    if mutool:
+        result = _run_command(
+            [mutool, "clean", str(input_path), str(output_path)],
+            timeout=90,
+            error_prefix="MuPDF repair",
+        )
+        if result.returncode == 0 and _is_valid_pdf(output_path):
+            return output_path
+
+    if reader is None:
+        raise RuntimeError("PDF is corrupted and could not be repaired")
+
     writer = PdfWriter()
     for page in reader.pages:
         writer.add_page(page)
     writer.add_metadata(reader.metadata or {})
     with output_path.open("wb") as handle:
         writer.write(handle)
+    if not _is_valid_pdf(output_path):
+        raise RuntimeError("Repair failed to produce a valid PDF")
     return output_path
 
 
@@ -1108,53 +1264,6 @@ def rotate_pdf(
             _rotate_page(page, angle)
         writer.add_page(page)
     _copy_metadata(writer, reader)
-    with output_path.open("wb") as handle:
-        writer.write(handle)
-    return output_path
-
-
-def remove_pages(
-    input_path: Path,
-    output_path: Path,
-    pages: str,
-) -> Path:
-    """Remove pages listed in the range string."""
-    reader = PdfReader(str(input_path))
-    total_pages = len(reader.pages)
-    remove_set = set(_parse_page_list(pages, total_pages))
-    writer = PdfWriter()
-    for index, page in enumerate(reader.pages, start=1):
-        if index not in remove_set:
-            writer.add_page(page)
-    with output_path.open("wb") as handle:
-        writer.write(handle)
-    return output_path
-
-
-def reorder_pages(
-    input_path: Path,
-    output_path: Path,
-    order: str,
-) -> Path:
-    """
-    Reorder pages of a PDF file according to a page-order specification.
-    
-    The `order` string specifies individual pages and ranges (for example, "1,3-5"); page numbers are 1-indexed. If the parsed order is empty, the original page order is preserved. The reordered PDF is written to `output_path`.
-    
-    Parameters:
-        order (str): A comma-separated page list and ranges defining the desired page order.
-    
-    Returns:
-        Path: The path to the written output PDF.
-    """
-    reader = PdfReader(str(input_path))
-    total_pages = len(reader.pages)
-    order_list = _parse_page_list(order, total_pages) or list(
-        range(1, total_pages + 1)
-    )
-    writer = PdfWriter()
-    for page_index in order_list:
-        writer.add_page(reader.pages[page_index - 1])
     with output_path.open("wb") as handle:
         writer.write(handle)
     return output_path
@@ -1224,6 +1333,7 @@ def page_numbers_pdf(
     output_path: Path,
     start: int,
     pages: str | None,
+    numbering_mode: str = "documentIndex",
 ) -> Path:
     """
     Add sequential page numbers as footers to selected pages of a PDF.
@@ -1241,12 +1351,20 @@ def page_numbers_pdf(
     writer = PdfWriter()
     total_pages = len(reader.pages)
     target_pages = _resolve_page_selection(pages, total_pages)
+    numbering_mode_normalized = numbering_mode.strip() or "documentIndex"
+    if numbering_mode_normalized not in {"documentIndex", "selectionIndex"}:
+        raise ValueError("Numbering mode must be documentIndex or selectionIndex")
+    selection_counter = 0
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             box = page.cropbox if hasattr(page, "cropbox") else page.mediabox
             width = float(box.upper_right[0] - box.lower_left[0])
             height = float(box.upper_right[1] - box.lower_left[1])
-            number = start + index - 1
+            if numbering_mode_normalized == "selectionIndex":
+                selection_counter += 1
+                number = start + selection_counter - 1
+            else:
+                number = start + index - 1
 
             def _draw(pdf: FPDF, width_mm: float, height_mm: float) -> None:
                 """
@@ -1437,6 +1555,10 @@ def redact_pdf(
     output_path: Path,
     text: str,
     pages: str | None,
+    case_sensitive: bool = False,
+    whole_word: bool = False,
+    use_regex: bool = False,
+    ocr_assist: bool = False,
 ) -> Path:
     """
     Redact all occurrences of a given text in a PDF, optionally restricted to specific pages.
@@ -1449,9 +1571,24 @@ def redact_pdf(
         text (str): Text to search for and redact; matches are searched as exact occurrences.
         pages (str | None): Optional page selection string (e.g., "1-3,5") restricting which pages to process; if `None`, all pages are searched.
     
+    When `ocr_assist` is enabled and searchable text is not present, OCR bounding boxes
+    are used for redaction candidates. If OCR locations cannot be derived reliably but a
+    text match is detected, the function falls back to full-page redaction and logs a warning.
+
     Returns:
         Path: The `output_path` of the saved redacted PDF.
     """
+    query = text.strip()
+    if not query:
+        raise ValueError("Text to redact is required")
+
+    regex: re.Pattern[str] | None = None
+    if use_regex:
+        try:
+            regex = re.compile(query, 0 if case_sensitive else re.IGNORECASE)
+        except re.error as error:
+            raise ValueError(f"Invalid regex pattern: {query!r}") from error
+
     with fitz.open(str(input_path)) as document:
         _assert_fitz_unencrypted(document)
         total_pages = document.page_count
@@ -1461,7 +1598,105 @@ def redact_pdf(
             if target_pages is not None and page_number not in target_pages:
                 continue
             page = document.load_page(index)
-            rectangles = page.search_for(text)
+            rectangles: list[fitz.Rect] = []
+
+            if not use_regex and not whole_word and not case_sensitive:
+                rectangles = page.search_for(query)
+            else:
+                words = page.get_text("words") or []
+                for item in words:
+                    if len(item) < 5:
+                        continue
+                    rect = fitz.Rect(item[0], item[1], item[2], item[3])
+                    token = str(item[4])
+                    candidate = token if case_sensitive else token.lower()
+                    target = query if case_sensitive else query.lower()
+                    if use_regex:
+                        if regex is not None and regex.search(token):
+                            rectangles.append(rect)
+                    elif whole_word:
+                        if candidate == target:
+                            rectangles.append(rect)
+                    else:
+                        if target in candidate:
+                            rectangles.append(rect)
+
+            if not rectangles and ocr_assist and pytesseract is not None:
+                image = _render_page_image(page, OCR_DPI)
+                matched_text = False
+                try:
+                    ocr_data = pytesseract.image_to_data(
+                        image,
+                        lang=DEFAULT_OCR_LANG,
+                        output_type=getattr(pytesseract, "Output", object()).DICT,
+                    )
+                    texts = ocr_data.get("text", [])
+                    lefts = ocr_data.get("left", [])
+                    tops = ocr_data.get("top", [])
+                    widths = ocr_data.get("width", [])
+                    heights = ocr_data.get("height", [])
+                    if (
+                        texts
+                        and len(texts) == len(lefts) == len(tops) == len(widths) == len(heights)
+                    ):
+                        img_w, img_h = image.size
+                        page_rect = page.rect
+                        scale_x = page_rect.width / max(1, img_w)
+                        scale_y = page_rect.height / max(1, img_h)
+                        for token, left, top, width, height in zip(
+                            texts, lefts, tops, widths, heights
+                        ):
+                            token_text = str(token).strip()
+                            if not token_text:
+                                continue
+                            if use_regex and regex is not None:
+                                token_match = regex.search(token_text) is not None
+                            elif whole_word:
+                                if case_sensitive:
+                                    token_match = token_text == query
+                                else:
+                                    token_match = token_text.lower() == query.lower()
+                            else:
+                                if case_sensitive:
+                                    token_match = query in token_text
+                                else:
+                                    token_match = query.lower() in token_text.lower()
+                            if not token_match:
+                                continue
+                            matched_text = True
+                            x0 = page_rect.x0 + float(left) * scale_x
+                            y0 = page_rect.y0 + float(top) * scale_y
+                            x1 = x0 + float(width) * scale_x
+                            y1 = y0 + float(height) * scale_y
+                            if x1 > x0 and y1 > y0:
+                                rectangles.append(fitz.Rect(x0, y0, x1, y1))
+                except Exception:
+                    # Continue with text-level fallback below.
+                    pass
+
+                if not rectangles:
+                    page_text = _ocr_image(image, DEFAULT_OCR_LANG)
+                    if use_regex and regex is not None:
+                        matched_text = regex.search(page_text) is not None
+                    elif whole_word:
+                        words = re.findall(r"\b\w+\b", page_text)
+                        if case_sensitive:
+                            matched_text = query in words
+                        else:
+                            matched_text = query.lower() in [word.lower() for word in words]
+                    else:
+                        if case_sensitive:
+                            matched_text = query in page_text
+                        else:
+                            matched_text = query.lower() in page_text.lower()
+                    if matched_text:
+                        LOGGER.warning(
+                            "OCR assist fell back to full-page redaction on page %s for query %r",
+                            page_number,
+                            query,
+                        )
+                        rectangles = [page.rect]
+
             if not rectangles:
                 continue
             for rect in rectangles:
@@ -1471,45 +1706,12 @@ def redact_pdf(
     return output_path
 
 
-def highlight_pdf(
-    input_path: Path,
+def compare_pdfs(
+    first_path: Path,
+    second_path: Path,
     output_path: Path,
-    text: str,
-    pages: str | None,
+    include_visual_diff: bool = True,
 ) -> Path:
-    """
-    Highlight occurrences of a given text in a PDF, optionally restricted to specific pages.
-    
-    Searches each targeted page for exact occurrences of `text`, adds highlight annotations over matches, and writes the modified PDF to `output_path`.
-    
-    Parameters:
-        input_path (Path): Path to the source PDF.
-        output_path (Path): Path where the highlighted PDF will be written.
-        text (str): Text to search for and highlight; matches are searched as exact occurrences.
-        pages (str | None): Optional page selection string (e.g., "1-3,5") restricting which pages to process; if `None`, all pages are searched.
-    
-    Returns:
-        Path: The `output_path` of the saved highlighted PDF.
-    """
-    with fitz.open(str(input_path)) as document:
-        _assert_fitz_unencrypted(document)
-        total_pages = document.page_count
-        target_pages = _resolve_page_selection(pages, total_pages)
-        for index in range(total_pages):
-            page_number = index + 1
-            if target_pages is not None and page_number not in target_pages:
-                continue
-            page = document.load_page(index)
-            rectangles = page.search_for(text)
-            if not rectangles:
-                continue
-            for rect in rectangles:
-                page.add_highlight_annot(rect)
-        document.save(str(output_path), deflate=True)
-    return output_path
-
-
-def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path:
     """
     Produce a plain-text comparison report summarizing page counts and per-page text differences between two PDFs.
     
@@ -1535,6 +1737,7 @@ def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path
         "",
     ]
     differences: List[str] = []
+    visual_notes: List[str] = []
     if pages_a != pages_b:
         differences.append("Page counts differ.")
     for index in range(max(pages_a, pages_b)):
@@ -1548,10 +1751,52 @@ def compare_pdfs(first_path: Path, second_path: Path, output_path: Path) -> Path
         text_b = (reader_b.pages[index].extract_text() or "").strip()
         if text_a != text_b:
             differences.append(f"Page {index + 1}: text differs")
+
+    if include_visual_diff:
+        try:
+            with fitz.open(str(first_path)) as doc_a, fitz.open(str(second_path)) as doc_b:
+                max_pages = max(doc_a.page_count, doc_b.page_count)
+                matrix = fitz.Matrix(1, 1)
+                for page_index in range(max_pages):
+                    if page_index >= doc_a.page_count or page_index >= doc_b.page_count:
+                        continue
+                    pix_a = doc_a.load_page(page_index).get_pixmap(
+                        matrix=matrix, colorspace=fitz.csGRAY, alpha=False
+                    )
+                    pix_b = doc_b.load_page(page_index).get_pixmap(
+                        matrix=matrix, colorspace=fitz.csGRAY, alpha=False
+                    )
+                    image_a = Image.open(BytesIO(pix_a.tobytes("png"))).convert("L")
+                    image_b = Image.open(BytesIO(pix_b.tobytes("png"))).convert("L")
+                    if image_a.size != image_b.size:
+                        visual_notes.append(
+                            f"Page {page_index + 1}: visual size differs ({image_a.size} vs {image_b.size})"
+                        )
+                        continue
+                    diff = ImageChops.difference(image_a, image_b)
+                    histogram = diff.histogram()
+                    changed = sum(histogram[1:])
+                    total_pixels = image_a.size[0] * image_a.size[1]
+                    if total_pixels == 0:
+                        continue
+                    percent = (changed / total_pixels) * 100
+                    if percent > 0.1:
+                        visual_notes.append(
+                            f"Page {page_index + 1}: visual delta {percent:.2f}%"
+                        )
+        except Exception as error:
+            visual_notes.append(f"Visual diff unavailable: {error}")
     if not differences:
         lines.append("No text differences detected.")
     else:
         lines.extend(differences)
+    if include_visual_diff:
+        lines.append("")
+        lines.append("Visual comparison")
+        if visual_notes:
+            lines.extend(visual_notes)
+        else:
+            lines.append("No visual differences detected.")
     output_path.write_text("\n".join(lines), encoding="utf-8")
     return output_path
 
@@ -1720,11 +1965,85 @@ def html_to_pdf(html: str, output_path: Path) -> Path:
     return output_path
 
 
-def web_to_pdf(url: str, output_path: Path) -> Path:
-    """Fetch a URL and convert its HTML to PDF."""
+def _resolve_browser_binary() -> str | None:
+    """Return a browser executable that supports --print-to-pdf."""
+    env_value = os.getenv("ZENPDF_BROWSER_PATH")
+    if env_value:
+        candidate = shutil.which(env_value) if not Path(env_value).is_absolute() else env_value
+        if candidate:
+            return str(candidate)
+    for candidate in (
+        "chromium",
+        "chromium-browser",
+        "google-chrome",
+        "google-chrome-stable",
+        "chrome",
+    ):
+        resolved = shutil.which(candidate)
+        if resolved:
+            return resolved
+    return None
+
+
+def _browser_url_to_pdf(url: str, output_path: Path) -> Path:
+    """Render a URL into PDF using headless Chromium."""
+    browser = _resolve_browser_binary()
+    if not browser:
+        raise RuntimeError("Browser rendering requires Chromium/Chrome in worker runtime")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    command = [
+        browser,
+        "--headless=new",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--disable-features=TranslateUI",
+        "--print-to-pdf-no-header",
+        f"--print-to-pdf={output_path}",
+        url,
+    ]
+    result = _run_command(command, timeout=120, error_prefix="Browser PDF render")
+    if result.returncode != 0 or not output_path.exists():
+        message = result.stderr.strip() or result.stdout.strip() or "Browser PDF render failed"
+        raise RuntimeError(message)
+    return output_path
+
+
+def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Path:
+    """Fetch a URL and convert it to PDF via browser render or text extraction."""
     parsed = urlparse(url)
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("Only http/https URLs are supported")
+    render_mode_normalized = render_mode.strip().lower() or "browser"
+    if render_mode_normalized not in {"browser", "text"}:
+        raise ValueError("Render mode must be browser or text")
+
+    _ = _resolve_public_ip(parsed.hostname)
+
+    # Preflight to prevent redirect-based bypass and unsupported responses.
+    allow_hostname_fallback = parsed.scheme == "https" and (
+        os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
+        and (
+            os.getenv("ZENPDF_DEV_MODE") == "1"
+            or os.getenv("NODE_ENV") == "development"
+        )
+    )
+
+    try:
+        with requests.Session() as preflight:
+            response = preflight.get(url, allow_redirects=False, timeout=20, stream=True)
+            with response:
+                if 300 <= response.status_code < 400:
+                    raise ValueError("Redirects are not allowed")
+                response.raise_for_status()
+    except requests.exceptions.SSLError:
+        if not allow_hostname_fallback:
+            raise
+
+    if render_mode_normalized == "browser":
+        return _browser_url_to_pdf(parsed.geturl(), output_path)
+
     target_ip = _resolve_public_ip(parsed.hostname)
     is_ipv6 = isinstance(ipaddress.ip_address(target_ip), ipaddress.IPv6Address)
     host = f"[{target_ip}]" if is_ipv6 else target_ip
@@ -1823,6 +2142,12 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    size_mb = max(1, math.ceil(input_path.stat().st_size / (1024 * 1024)))
+    timeout_base = int(os.getenv("ZENPDF_OFFICE_TIMEOUT_BASE_SECONDS", "120"))
+    timeout_per_mb = int(os.getenv("ZENPDF_OFFICE_TIMEOUT_PER_MB_SECONDS", "4"))
+    timeout_max = int(os.getenv("ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS", "480"))
+    timeout_seconds = min(timeout_max, timeout_base + size_mb * timeout_per_mb)
+
     try:
         result = subprocess.run(
             [
@@ -1837,12 +2162,15 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
             capture_output=True,
             text=True,
             check=False,
-            timeout=120,
+            timeout=timeout_seconds,
         )
     except subprocess.TimeoutExpired as error:
-        raise RuntimeError("Office conversion timed out") from error
+        raise RuntimeError("Office conversion timed out. Try a smaller file.") from error
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout or "Office conversion failed")
+        detail = (result.stderr or result.stdout or "").strip()
+        if "password" in detail.lower() or "encrypted" in detail.lower():
+            raise ValueError("Office file appears password-protected or encrypted")
+        raise RuntimeError("Office conversion failed. Please verify the source file format.")
 
     output_path = output_dir / f"{input_path.stem}.pdf"
     if not output_path.exists():
@@ -1880,6 +2208,28 @@ def pdf_to_powerpoint(input_path: Path, output_path: Path, dpi: int = 150) -> Pa
     """Convert each PDF page into a PPTX slide with a full-slide rendered image."""
     if Presentation is None:
         raise RuntimeError("python-pptx is required for PDF to PowerPoint")
+
+    def _fit_image_to_slide(
+        image_width: int,
+        image_height: int,
+        target_width: int,
+        target_height: int,
+    ) -> tuple[int, int, int, int]:
+        """Return centered (left, top, width, height) preserving image aspect ratio."""
+        image_ratio = image_width / image_height
+        target_ratio = target_width / target_height
+        if image_ratio > target_ratio:
+            width = target_width
+            height = max(1, int(round(width / image_ratio)))
+            left = 0
+            top = max(0, (target_height - height) // 2)
+        else:
+            height = target_height
+            width = max(1, int(round(height * image_ratio)))
+            top = 0
+            left = max(0, (target_width - width) // 2)
+        return left, top, width, height
+
     with fitz.open(str(input_path)) as document:
         _assert_fitz_unencrypted(document)
         if document.page_count == 0:
@@ -1891,19 +2241,29 @@ def pdf_to_powerpoint(input_path: Path, output_path: Path, dpi: int = 150) -> Pa
         blank_layout = layouts[6] if len(layouts) > 6 else layouts[len(layouts) - 1]
         scale = dpi / 72
         matrix = fitz.Matrix(scale, scale)
-        slide_width = presentation.slide_width
-        slide_height = presentation.slide_height
+        first_page = document.load_page(0)
+        # PDF points (1/72 inch) -> EMU (914400/72 = 12700)
+        presentation.slide_width = max(1, int(round(first_page.rect.width * 12700)))
+        presentation.slide_height = max(1, int(round(first_page.rect.height * 12700)))
+        slide_width = int(presentation.slide_width)
+        slide_height = int(presentation.slide_height)
         for index in range(document.page_count):
             page = document.load_page(index)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
             image_bytes = pix.tobytes("png")
             slide = presentation.slides.add_slide(blank_layout)
+            left, top, width, height = _fit_image_to_slide(
+                pix.width,
+                pix.height,
+                slide_width,
+                slide_height,
+            )
             slide.shapes.add_picture(
                 BytesIO(image_bytes),
-                0,
-                0,
-                width=slide_width,
-                height=slide_height,
+                left,
+                top,
+                width=width,
+                height=height,
             )
     presentation.save(str(output_path))
     return output_path
@@ -1922,6 +2282,7 @@ def sign_pdf(
     x: float = 36.0,
     y: float = 36.0,
     font_size: float = 18.0,
+    anchor: str = "custom",
 ) -> Path:
     """Apply an electronic text signature stamp to selected pages."""
     signature_text = text.strip()
@@ -1940,10 +2301,37 @@ def sign_pdf(
             box_width = max(160.0, min(text_width + 16.0, 420.0))
             box_height = max(40.0, min(font_size + 22.0, 120.0))
             page_rect = page.rect
+            anchor_mode = anchor.strip().lower() or "custom"
+            supported_anchors = {
+                "custom",
+                "bottom-right",
+                "bottom-left",
+                "top-right",
+                "top-left",
+            }
+            if anchor_mode not in supported_anchors:
+                raise ValueError(
+                    f"Unsupported anchor: {anchor!r}. Use one of: {', '.join(sorted(supported_anchors))}"
+                )
+            margin = 24.0
+            if anchor_mode == "bottom-right":
+                x = page_rect.x1 - box_width - margin
+                y = page_rect.y1 - box_height - margin
+            elif anchor_mode == "bottom-left":
+                x = page_rect.x0 + margin
+                y = page_rect.y1 - box_height - margin
+            elif anchor_mode == "top-right":
+                x = page_rect.x1 - box_width - margin
+                y = page_rect.y0 + margin
+            elif anchor_mode == "top-left":
+                x = page_rect.x0 + margin
+                y = page_rect.y0 + margin
+            x = min(max(x, page_rect.x0 + 1), max(page_rect.x0 + 1, page_rect.x1 - 41))
+            y = min(max(y, page_rect.y0 + 1), max(page_rect.y0 + 1, page_rect.y1 - 25))
             if x + box_width > page_rect.x1:
-                box_width = max(40.0, page_rect.x1 - x)
+                box_width = max(40.0, page_rect.x1 - x - 1)
             if y + box_height > page_rect.y1:
-                box_height = max(24.0, page_rect.y1 - y)
+                box_height = max(24.0, page_rect.y1 - y - 1)
             rect = fitz.Rect(x, y, x + box_width, y + box_height)
             page.draw_rect(rect, color=(0.22, 0.35, 0.22), width=1)
             text_x = min(rect.x0 + 8, max(rect.x0, rect.x1 - 8))
@@ -2202,11 +2590,19 @@ def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Pat
         for index in range(document.page_count):
             page = document.load_page(index)
             image = _render_page_image(page, OCR_DPI)
-            pdf_bytes = pytesseract.image_to_pdf_or_hocr(
-                image,
-                extension="pdf",
-                lang=language,
-            )
+            try:
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                    image,
+                    extension="pdf",
+                    lang=language,
+                    timeout=90,
+                )
+            except TypeError:
+                pdf_bytes = pytesseract.image_to_pdf_or_hocr(
+                    image,
+                    extension="pdf",
+                    lang=language,
+                )
             page_path = (
                 output_path.parent
                 / f"{output_path.stem}_ocr_{run_id}_page_{index + 1}.pdf"
@@ -2240,6 +2636,26 @@ def _parse_version_tuple(raw: str) -> Tuple[int, int, int]:
     while len(numbers) < 3:
         numbers.append(0)
     return (numbers[0], numbers[1], numbers[2])
+
+
+def _verify_pdfa_conformance(output_path: Path) -> None:
+    """Verify PDF/A output using veraPDF if available, else qpdf structural check."""
+    verapdf = shutil.which("verapdf")
+    if verapdf:
+        result = _run_command(
+            [verapdf, "--format", "text", str(output_path)],
+            timeout=60,
+            error_prefix="veraPDF validation",
+        )
+        stdout = (result.stdout or "").lower()
+        if result.returncode != 0:
+            raise RuntimeError("PDF/A conformance validation failed")
+        if "non-compliant" in stdout or "failed" in stdout:
+            raise RuntimeError("Output is not PDF/A compliant")
+        return
+
+    if not _is_valid_pdf(output_path):
+        raise RuntimeError("PDF/A output failed structural validation")
 
 
 def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
@@ -2317,41 +2733,70 @@ def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
     if not output_path.exists():
         raise RuntimeError("PDF/A conversion produced no output")
 
+    _verify_pdfa_conformance(output_path)
+
     return output_path
 
 
-def pdf_to_docx(input_path: Path, output_path: Path) -> Path:
-    """Convert a PDF into a Word document by extracting text."""
+def _extract_text_lines_by_page(input_path: Path) -> List[List[str]]:
+    """Return non-empty extracted text lines per page."""
     reader = _load_pdf(input_path)
-    document = Document()
-    for index, page in enumerate(reader.pages, start=1):
+    lines_by_page: List[List[str]] = []
+    for page in reader.pages:
         text = page.extract_text() or ""
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        lines_by_page.append(lines)
+    return lines_by_page
+
+
+def _write_docx_from_pages(lines_by_page: List[List[str]], output_path: Path) -> Path:
+    """Write per-page text lines into a DOCX file."""
+    document = Document()
+    for index, lines in enumerate(lines_by_page, start=1):
         if index > 1:
             document.add_page_break()
-        if text.strip():
-            for line in text.splitlines():
-                if line.strip():
-                    document.add_paragraph(line)
+        if lines:
+            for line in lines:
+                document.add_paragraph(line)
         else:
             document.add_paragraph("")
     document.save(str(output_path))
     return output_path
 
 
-def pdf_to_text(input_path: Path, output_path: Path) -> Path:
-    """Extract PDF text into a plain UTF-8 text file."""
-    reader = _load_pdf(input_path)
-    lines: List[str] = []
-    for index, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        if index > 1:
-            lines.append("")
-        if text.strip():
-            lines.extend(line.rstrip() for line in text.splitlines())
+def _ocr_lines_by_page(input_path: Path, lang: str, dpi: int) -> List[List[str]]:
+    """Extract OCR text lines per page."""
+    document = fitz.open(str(input_path))
+    lines_by_page: List[List[str]] = []
+    try:
+        for index in range(document.page_count):
+            page = document.load_page(index)
+            image = _render_page_image(page, dpi)
+            page_text = _ocr_image(image, lang)
+            lines_by_page.append(
+                [line.strip() for line in page_text.splitlines() if line.strip()]
+            )
+    finally:
+        document.close()
+    return lines_by_page
+
+
+def pdf_to_docx(input_path: Path, output_path: Path, mode: str = "auto") -> Path:
+    """Convert a PDF into DOCX using text extraction, OCR, or auto selection."""
+    normalized_mode = (mode or "auto").strip().lower()
+    if normalized_mode not in {"auto", "text", "ocr"}:
+        raise ValueError("Mode must be auto, text, or ocr")
+
+    if normalized_mode == "ocr":
+        lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
+    elif normalized_mode == "text":
+        lines_by_page = _extract_text_lines_by_page(input_path)
+    else:
+        if _is_text_light_pdf(input_path):
+            lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
         else:
-            lines.append("")
-    output_path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    return output_path
+            lines_by_page = _extract_text_lines_by_page(input_path)
+    return _write_docx_from_pages(lines_by_page, output_path)
 
 def _render_page_image(page: fitz.Page, dpi: int) -> Image.Image:
     """Render a PDF page to a PIL image for OCR."""
@@ -2359,7 +2804,13 @@ def _render_page_image(page: fitz.Page, dpi: int) -> Image.Image:
     matrix = fitz.Matrix(scale, scale)
     pix = page.get_pixmap(matrix=matrix, alpha=False)
     image = Image.open(BytesIO(pix.tobytes("png")))
-    return image.convert("RGB")
+    image = image.convert("L")
+    image = ImageOps.autocontrast(image)
+    image = image.filter(ImageFilter.MedianFilter(size=3))
+    image = image.point(
+        lambda px: 255 if px >= OCR_PREPROCESS_THRESHOLD else 0, mode="1"
+    ).convert("RGB")
+    return image
 
 
 def _ocr_image(image: Image.Image, lang: str) -> str:
@@ -2368,50 +2819,35 @@ def _ocr_image(image: Image.Image, lang: str) -> str:
         raise RuntimeError("pytesseract is required for OCR conversions")
     if not shutil.which("tesseract"):
         raise RuntimeError("Tesseract is required for OCR conversions")
-    return pytesseract.image_to_string(image, lang=lang)
+    safe_lang = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
+    return pytesseract.image_to_string(image, lang=safe_lang)
 
 
-def _ocr_pdf_pages(input_path: Path, lang: str, dpi: int) -> List[str]:
-    """Extract OCR text for each page in a PDF."""
-    document = fitz.open(str(input_path))
-    page_texts: List[str] = []
-    try:
-        for index in range(document.page_count):
-            page = document.load_page(index)
-            image = _render_page_image(page, dpi)
-            page_texts.append(_ocr_image(image, lang).strip())
-    finally:
-        document.close()
-    return page_texts
+def _extract_table_rows_by_page(input_path: Path) -> List[List[List[str]]]:
+    """Extract table rows for each page via pdfplumber if available."""
+    if pdfplumber is None:
+        return []
+    rows_by_page: List[List[List[str]]] = []
+    with pdfplumber.open(str(input_path)) as pdf:
+        for page in pdf.pages:
+            page_rows: List[List[str]] = []
+            for table in page.extract_tables() or []:
+                for raw_row in table:
+                    if raw_row is None:
+                        continue
+                    row = [str(cell).strip() if cell is not None else "" for cell in raw_row]
+                    if any(value for value in row):
+                        page_rows.append(row)
+            rows_by_page.append(page_rows)
+    return rows_by_page
 
 
-def pdf_to_docx_ocr(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
-    """Convert a PDF into a Word document using OCR."""
-    language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
-    page_texts = _ocr_pdf_pages(input_path, language, OCR_DPI)
-    document = Document()
-    for index, text in enumerate(page_texts, start=1):
-        if index > 1:
-            document.add_page_break()
-        if text.strip():
-            for line in text.splitlines():
-                if line.strip():
-                    document.add_paragraph(line)
-        else:
-            document.add_paragraph("")
-    document.save(str(output_path))
-    return output_path
-
-
-def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
-    """Convert a PDF into an Excel workbook by extracting text."""
-    reader = _load_pdf(input_path)
+def _write_xlsx_from_text(lines_by_page: List[List[str]], output_path: Path) -> Path:
+    """Write text lines into an XLSX workbook."""
     workbook = Workbook()
     sheet = workbook.active
     row = 1
-    for index, page in enumerate(reader.pages, start=1):
-        text = page.extract_text() or ""
-        lines = [line for line in text.splitlines() if line.strip()]
+    for index, lines in enumerate(lines_by_page, start=1):
         if not lines:
             sheet.cell(row=row, column=1, value=f"Page {index}")
             row += 1
@@ -2424,25 +2860,53 @@ def pdf_to_xlsx(input_path: Path, output_path: Path) -> Path:
     return output_path
 
 
-def pdf_to_xlsx_ocr(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
-    """Convert a PDF into an Excel workbook using OCR."""
-    language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
-    page_texts = _ocr_pdf_pages(input_path, language, OCR_DPI)
+def _write_xlsx_from_tables(
+    table_rows_by_page: List[List[List[str]]], output_path: Path
+) -> Path:
+    """Write extracted table rows into XLSX preserving columns."""
     workbook = Workbook()
     sheet = workbook.active
     row = 1
-    for index, text in enumerate(page_texts, start=1):
-        lines = [line for line in text.splitlines() if line.strip()]
-        if not lines:
+    for index, table_rows in enumerate(table_rows_by_page, start=1):
+        if not table_rows:
             sheet.cell(row=row, column=1, value=f"Page {index}")
             row += 1
         else:
-            for line in lines:
-                sheet.cell(row=row, column=1, value=line)
+            for table_row in table_rows:
+                for col, value in enumerate(table_row, start=1):
+                    sheet.cell(row=row, column=col, value=value)
                 row += 1
         row += 1
     workbook.save(str(output_path))
     return output_path
+
+
+def pdf_to_xlsx(input_path: Path, output_path: Path, mode: str = "auto") -> Path:
+    """Convert a PDF into XLSX via table, text, OCR, or auto strategy."""
+    normalized_mode = (mode or "auto").strip().lower()
+    if normalized_mode not in {"auto", "table", "text", "ocr"}:
+        raise ValueError("Mode must be auto, table, text, or ocr")
+
+    if normalized_mode == "table":
+        table_rows = _extract_table_rows_by_page(input_path)
+        if table_rows:
+            return _write_xlsx_from_tables(table_rows, output_path)
+        return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
+
+    if normalized_mode == "text":
+        return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
+
+    if normalized_mode == "ocr":
+        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
+        return _write_xlsx_from_text(ocr_lines, output_path)
+
+    table_rows = _extract_table_rows_by_page(input_path)
+    if table_rows and any(page_rows for page_rows in table_rows):
+        return _write_xlsx_from_tables(table_rows, output_path)
+    if _is_text_light_pdf(input_path):
+        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
+        return _write_xlsx_from_text(ocr_lines, output_path)
+    return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
 
 
 def _resolve_public_ip(hostname: str) -> str:
