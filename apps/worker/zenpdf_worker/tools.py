@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import ipaddress
+import json
 import logging
 import math
 import os
-import json
 import re
 import shlex
 import shutil
@@ -29,6 +29,7 @@ import requests
 from docx import Document
 from fpdf import FPDF
 from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
 from PIL import Image, ImageChops, ImageFilter, ImageOps
 from pypdf import PdfReader, PdfWriter, Transformation
 from pypdf.errors import PdfReadError
@@ -45,9 +46,28 @@ except ImportError:  # pragma: no cover - optional dependency for PPTX output
     Presentation = None
 
 try:
+    from pptx.util import Emu, Pt
+except ImportError:  # pragma: no cover - optional dependency for PPTX output
+    Emu = None
+    Pt = None
+
+try:
     import pdfplumber
 except ImportError:  # pragma: no cover - optional dependency for structured table extraction
     pdfplumber = None
+
+try:
+    from playwright.sync_api import Error as PlaywrightError, sync_playwright
+except ImportError:  # pragma: no cover - optional dependency for hardened browser rendering
+    PlaywrightError = RuntimeError
+    sync_playwright = None
+
+try:
+    from pyhanko.pdf_utils.incremental_writer import IncrementalPdfFileWriter
+    from pyhanko.sign import signers
+except ImportError:  # pragma: no cover - optional dependency for cryptographic signatures
+    IncrementalPdfFileWriter = None
+    signers = None
 
 
 OCR_DPI = 300
@@ -56,9 +76,20 @@ LOGGER = logging.getLogger(__name__)
 
 OCR_TEXT_DENSITY_THRESHOLD = float(os.getenv("ZENPDF_OCR_TEXT_DENSITY_THRESHOLD", "60"))
 OCR_PREPROCESS_THRESHOLD = int(os.getenv("ZENPDF_OCR_PREPROCESS_THRESHOLD", "180"))
+DEFAULT_PAGE_RANGE_MODE = os.getenv("ZENPDF_PAGE_RANGE_MODE", "strict").strip().lower()
+DEFAULT_OCR_PROFILE = os.getenv("ZENPDF_OCR_PROFILE", "balanced").strip().lower()
+OCR_PROFILE_CONFIG: dict[str, dict[str, int]] = {
+    "fast": {"dpi": 220, "median_filter": 1, "threshold": 168},
+    "balanced": {"dpi": 300, "median_filter": 3, "threshold": OCR_PREPROCESS_THRESHOLD},
+    "accurate": {"dpi": 420, "median_filter": 5, "threshold": 194},
+}
 
 
-def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
+def _parse_ranges(
+    value: str,
+    total_pages: int,
+    tolerant: bool = False,
+) -> List[Tuple[int, int]]:
     """
     Parse a comma-separated list of page ranges strictly.
 
@@ -71,32 +102,45 @@ def _parse_ranges(value: str, total_pages: int) -> List[Tuple[int, int]]:
     if not tokens or all(not token for token in tokens):
         return ranges
 
+    invalid_tokens: list[str] = []
     for token in tokens:
-        if not token:
-            raise ValueError("Page ranges cannot contain empty items")
-        if "-" in token:
-            pieces = token.split("-")
-            if len(pieces) != 2:
-                raise ValueError(f"Invalid page range token: {token!r}")
-            start_text, end_text = pieces[0].strip(), pieces[1].strip()
-        else:
-            start_text = token
-            end_text = token
-        if not start_text or not end_text:
-            raise ValueError(f"Invalid page range token: {token!r}")
         try:
-            start_i = int(start_text)
-            end_i = int(end_text)
-        except ValueError as error:
-            raise ValueError(f"Invalid page number in token: {token!r}") from error
-        if start_i < 1 or end_i < 1:
-            raise ValueError("Page numbers must be >= 1")
-        if start_i > end_i:
-            raise ValueError(f"Range start is greater than end: {token!r}")
-        if start_i > total_pages:
-            raise ValueError(f"Page {start_i} exceeds document page count ({total_pages})")
-        clamped_end = min(end_i, total_pages)
-        ranges.append((start_i, clamped_end))
+            if not token:
+                raise ValueError("Page ranges cannot contain empty items")
+            if "-" in token:
+                pieces = token.split("-")
+                if len(pieces) != 2:
+                    raise ValueError(f"Invalid page range token: {token!r}")
+                start_text, end_text = pieces[0].strip(), pieces[1].strip()
+            else:
+                start_text = token
+                end_text = token
+            if not start_text or not end_text:
+                raise ValueError(f"Invalid page range token: {token!r}")
+            try:
+                start_i = int(start_text)
+                end_i = int(end_text)
+            except ValueError as error:
+                raise ValueError(f"Invalid page number in token: {token!r}") from error
+            if start_i < 1 or end_i < 1:
+                raise ValueError("Page numbers must be >= 1")
+            if start_i > end_i:
+                raise ValueError(f"Range start is greater than end: {token!r}")
+            if start_i > total_pages:
+                raise ValueError(
+                    f"Page {start_i} exceeds document page count ({total_pages})"
+                )
+            clamped_end = min(end_i, total_pages)
+            ranges.append((start_i, clamped_end))
+        except ValueError:
+            if not tolerant:
+                raise
+            invalid_tokens.append(token)
+            LOGGER.warning("Ignoring invalid range token in tolerant mode: %r", token)
+            continue
+    if tolerant and invalid_tokens and not ranges:
+        joined = ", ".join(repr(token) for token in invalid_tokens)
+        raise ValueError(f"No valid page ranges found; invalid tokens: {joined}")
     return ranges
 
 
@@ -112,7 +156,12 @@ def _dedupe_preserve_order(values: Iterable[int]) -> List[int]:
     return deduped
 
 
-def _parse_page_list(value: str, total_pages: int, dedupe: bool = True) -> List[int]:
+def _parse_page_list(
+    value: str,
+    total_pages: int,
+    dedupe: bool = True,
+    tolerant: bool = False,
+) -> List[int]:
     """
     Expand a comma-separated page range string into an ordered list of page numbers.
     
@@ -125,7 +174,7 @@ def _parse_page_list(value: str, total_pages: int, dedupe: bool = True) -> List[
                    Each page is within 1 and `total_pages` inclusive; overlapping ranges may produce duplicates.
     """
     pages: List[int] = []
-    for start, end in _parse_ranges(value, total_pages):
+    for start, end in _parse_ranges(value, total_pages, tolerant=tolerant):
         pages.extend(range(start, end + 1))
     clamped = [page for page in pages if 1 <= page <= total_pages]
     return _dedupe_preserve_order(clamped) if dedupe else clamped
@@ -142,14 +191,21 @@ def _load_pdf(input_path: Path, allow_encrypted: bool = False) -> PdfReader:
     return reader
 
 
-def _resolve_page_selection(pages: str | None, total_pages: int) -> set[int] | None:
+def _resolve_page_selection(
+    pages: str | None,
+    total_pages: int,
+    tolerant: bool | None = None,
+) -> set[int] | None:
     """Return a validated set of target pages or None for all."""
     if pages is None:
         return None
     value = str(pages).strip()
     if not value:
         return None
-    selection = _parse_page_list(value, total_pages)
+    tolerant_mode = (
+        DEFAULT_PAGE_RANGE_MODE == "tolerant" if tolerant is None else bool(tolerant)
+    )
+    selection = _parse_page_list(value, total_pages, tolerant=tolerant_mode)
     if not selection:
         raise ValueError("No valid pages selected")
     return set(selection)
@@ -169,6 +225,19 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
     if normalized in {"0", "false", "no", "off", "n"}:
         return False
     return default
+
+
+def _normalize_ocr_profile(profile: str | None) -> str:
+    """Return a supported OCR profile name."""
+    normalized = (profile or DEFAULT_OCR_PROFILE).strip().lower()
+    if normalized not in OCR_PROFILE_CONFIG:
+        return "balanced"
+    return normalized
+
+
+def _ocr_profile_settings(profile: str | None) -> dict[str, int]:
+    """Return OCR preprocessing settings for a profile."""
+    return OCR_PROFILE_CONFIG[_normalize_ocr_profile(profile)]
 
 
 def _safe_text_length(page: Any) -> int:
@@ -348,6 +417,7 @@ def split_pdf(
     input_path: Path,
     output_dir: Path,
     ranges: str | None,
+    tolerant_ranges: bool = False,
 ) -> List[Path]:
     """Split a PDF into multiple files based on ranges."""
     reader = PdfReader(str(input_path))
@@ -355,7 +425,7 @@ def split_pdf(
     output_files: List[Path] = []
 
     if ranges:
-        page_ranges = _parse_ranges(ranges, total_pages)
+        page_ranges = _parse_ranges(ranges, total_pages, tolerant=tolerant_ranges)
         if not page_ranges:
             raise ValueError("No valid page ranges provided")
     else:
@@ -1253,12 +1323,17 @@ def rotate_pdf(
     output_path: Path,
     angle: int,
     pages: str | None,
+    tolerant_ranges: bool = False,
 ) -> Path:
     """Rotate selected pages by the provided angle."""
     reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = _resolve_page_selection(pages, total_pages)
+    target_pages = _resolve_page_selection(
+        pages,
+        total_pages,
+        tolerant=tolerant_ranges,
+    )
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             _rotate_page(page, angle)
@@ -1274,6 +1349,7 @@ def watermark_pdf(
     output_path: Path,
     text: str,
     pages: str | None,
+    tolerant_ranges: bool = False,
 ) -> Path:
     """
     Apply a centered text watermark to selected pages of a PDF.
@@ -1291,7 +1367,11 @@ def watermark_pdf(
     reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = _resolve_page_selection(pages, total_pages)
+    target_pages = _resolve_page_selection(
+        pages,
+        total_pages,
+        tolerant=tolerant_ranges,
+    )
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             box = page.cropbox if hasattr(page, "cropbox") else page.mediabox
@@ -1333,7 +1413,8 @@ def page_numbers_pdf(
     output_path: Path,
     start: int,
     pages: str | None,
-    numbering_mode: str = "documentIndex",
+    numbering_mode: str = "selectionIndex",
+    tolerant_ranges: bool = False,
 ) -> Path:
     """
     Add sequential page numbers as footers to selected pages of a PDF.
@@ -1350,8 +1431,12 @@ def page_numbers_pdf(
     reader = _load_pdf(input_path)
     writer = PdfWriter()
     total_pages = len(reader.pages)
-    target_pages = _resolve_page_selection(pages, total_pages)
-    numbering_mode_normalized = numbering_mode.strip() or "documentIndex"
+    target_pages = _resolve_page_selection(
+        pages,
+        total_pages,
+        tolerant=tolerant_ranges,
+    )
+    numbering_mode_normalized = numbering_mode.strip() or "selectionIndex"
     if numbering_mode_normalized not in {"documentIndex", "selectionIndex"}:
         raise ValueError("Numbering mode must be documentIndex or selectionIndex")
     selection_counter = 0
@@ -1401,6 +1486,7 @@ def crop_pdf(
     output_path: Path,
     margins: str,
     pages: str | None,
+    tolerant_ranges: bool = False,
 ) -> Path:
     """
     Crop selected pages of a PDF by the specified margins (measured in PDF points).
@@ -1423,7 +1509,11 @@ def crop_pdf(
     top, right, bottom, left = _parse_margins(margins)
     if any(value < 0 for value in (top, right, bottom, left)):
         raise ValueError("Margins must be zero or positive")
-    target_pages = _resolve_page_selection(pages, total_pages)
+    target_pages = _resolve_page_selection(
+        pages,
+        total_pages,
+        tolerant=tolerant_ranges,
+    )
     for index, page in enumerate(reader.pages, start=1):
         if target_pages is None or index in target_pages:
             lower_left_x = float(page.mediabox.lower_left[0]) + left
@@ -1559,6 +1649,7 @@ def redact_pdf(
     whole_word: bool = False,
     use_regex: bool = False,
     ocr_assist: bool = False,
+    tolerant_ranges: bool = False,
 ) -> Path:
     """
     Redact all occurrences of a given text in a PDF, optionally restricted to specific pages.
@@ -1592,7 +1683,11 @@ def redact_pdf(
     with fitz.open(str(input_path)) as document:
         _assert_fitz_unencrypted(document)
         total_pages = document.page_count
-        target_pages = _resolve_page_selection(pages, total_pages)
+        target_pages = _resolve_page_selection(
+            pages,
+            total_pages,
+            tolerant=tolerant_ranges,
+        )
         for index in range(total_pages):
             page_number = index + 1
             if target_pages is not None and page_number not in target_pages:
@@ -1702,7 +1797,13 @@ def redact_pdf(
             for rect in rectangles:
                 page.add_redact_annot(rect, fill=(0, 0, 0))
             page.apply_redactions()
-        document.save(str(output_path), deflate=True)
+        document.save(
+            str(output_path),
+            deflate=True,
+            garbage=4,
+            clean=True,
+            incremental=False,
+        )
     return output_path
 
 
@@ -1725,6 +1826,47 @@ def compare_pdfs(
     Returns:
         Path: The path to the written report (output_path).
     """
+    def _regions_from_diff(diff_image: Image.Image, tile_size: int = 48) -> list[tuple[int, int, int, int]]:
+        """Return merged changed regions from a grayscale diff image."""
+        binary = diff_image.point(lambda px: 255 if px > 12 else 0, mode="L")
+        width, height = binary.size
+        if width <= 0 or height <= 0:
+            return []
+        tiles: list[tuple[int, int, int, int]] = []
+        for y in range(0, height, tile_size):
+            for x in range(0, width, tile_size):
+                x2 = min(width, x + tile_size)
+                y2 = min(height, y + tile_size)
+                tile = binary.crop((x, y, x2, y2))
+                histogram = tile.histogram()
+                changed = histogram[255] if len(histogram) > 255 else 0
+                tile_pixels = max(1, tile.width * tile.height)
+                if changed / tile_pixels >= 0.03:
+                    tiles.append((x, y, x2, y2))
+        if not tiles:
+            return []
+
+        merged: list[tuple[int, int, int, int]] = []
+        for tile in tiles:
+            tx0, ty0, tx1, ty1 = tile
+            merged_any = False
+            for index, region in enumerate(merged):
+                rx0, ry0, rx1, ry1 = region
+                if tx0 <= rx1 + tile_size and tx1 >= rx0 - tile_size and ty0 <= ry1 + tile_size and ty1 >= ry0 - tile_size:
+                    merged[index] = (
+                        min(rx0, tx0),
+                        min(ry0, ty0),
+                        max(rx1, tx1),
+                        max(ry1, ty1),
+                    )
+                    merged_any = True
+                    break
+            if not merged_any:
+                merged.append(tile)
+
+        merged.sort(key=lambda item: (item[2] - item[0]) * (item[3] - item[1]), reverse=True)
+        return merged[:8]
+
     reader_a = _load_pdf(first_path)
     reader_b = _load_pdf(second_path)
     pages_a = len(reader_a.pages)
@@ -1781,9 +1923,14 @@ def compare_pdfs(
                         continue
                     percent = (changed / total_pixels) * 100
                     if percent > 0.1:
+                        regions = _regions_from_diff(diff)
                         visual_notes.append(
-                            f"Page {page_index + 1}: visual delta {percent:.2f}%"
+                            f"Page {page_index + 1}: visual delta {percent:.2f}% ({len(regions)} region(s))"
                         )
+                        for region_index, (x0, y0, x1, y1) in enumerate(regions, start=1):
+                            visual_notes.append(
+                                f"Page {page_index + 1}: region {region_index} bbox=({x0},{y0})-({x1},{y1})"
+                            )
         except Exception as error:
             visual_notes.append(f"Visual diff unavailable: {error}")
     if not differences:
@@ -1985,28 +2132,87 @@ def _resolve_browser_binary() -> str | None:
     return None
 
 
+def _is_dev_mode() -> bool:
+    """Return True for local/dev runtime toggles."""
+    return os.getenv("ZENPDF_DEV_MODE") == "1" or os.getenv("NODE_ENV") == "development"
+
+
+def _validate_browser_request_url(request_url: str) -> None:
+    """Validate browser network targets against SSRF policy."""
+    parsed = urlparse(request_url)
+    if parsed.scheme in {"data", "blob", "about"}:
+        return
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"Unsupported browser request URL: {request_url!r}")
+    _resolve_public_ip(parsed.hostname)
+
+
 def _browser_url_to_pdf(url: str, output_path: Path) -> Path:
-    """Render a URL into PDF using headless Chromium."""
+    """Render a URL into PDF using Playwright with strict network policy."""
+    if sync_playwright is None:
+        raise RuntimeError("Browser mode requires Playwright in worker runtime")
+
     browser = _resolve_browser_binary()
-    if not browser:
-        raise RuntimeError("Browser rendering requires Chromium/Chrome in worker runtime")
+    blocked_requests: list[str] = []
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    command = [
-        browser,
-        "--headless=new",
+    allow_insecure = (
+        os.getenv("ZENPDF_WEB_ALLOW_INSECURE_SSL") == "1"
+        and _is_dev_mode()
+    )
+
+    launch_args = [
         "--disable-gpu",
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
         "--disable-features=TranslateUI",
-        "--print-to-pdf-no-header",
-        f"--print-to-pdf={output_path}",
-        url,
     ]
-    result = _run_command(command, timeout=120, error_prefix="Browser PDF render")
-    if result.returncode != 0 or not output_path.exists():
-        message = result.stderr.strip() or result.stdout.strip() or "Browser PDF render failed"
-        raise RuntimeError(message)
+
+    try:
+        with sync_playwright() as playwright:
+            launch_kwargs: dict[str, Any] = {
+                "headless": True,
+                "args": launch_args,
+            }
+            if browser:
+                launch_kwargs["executable_path"] = browser
+            browser_instance = playwright.chromium.launch(**launch_kwargs)
+            context = browser_instance.new_context(ignore_https_errors=allow_insecure)
+            page = context.new_page()
+
+            def _route_handler(route, request) -> None:  # type: ignore[no-untyped-def]
+                request_url = request.url
+                try:
+                    _validate_browser_request_url(request_url)
+                except Exception:
+                    blocked_requests.append(request_url)
+                    route.abort()
+                    return
+                route.continue_()
+
+            page.route("**/*", _route_handler)
+            response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
+            if response and response.status >= 400:
+                raise RuntimeError(f"Browser render failed with status {response.status}")
+            page.wait_for_load_state("networkidle", timeout=30_000)
+            if blocked_requests:
+                blocked_sample = ", ".join(blocked_requests[:3])
+                raise ValueError(
+                    f"Blocked private or unsupported browser request(s): {blocked_sample}"
+                )
+            page.emulate_media(media="screen")
+            page.pdf(
+                path=str(output_path),
+                print_background=True,
+                prefer_css_page_size=True,
+            )
+            context.close()
+            browser_instance.close()
+    except PlaywrightError as error:
+        raise RuntimeError(f"Browser PDF render failed: {error}") from error
+
+    if not output_path.exists() or output_path.stat().st_size == 0:
+        raise RuntimeError("Browser PDF render produced no output")
     return output_path
 
 
@@ -2024,10 +2230,7 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
     # Preflight to prevent redirect-based bypass and unsupported responses.
     allow_hostname_fallback = parsed.scheme == "https" and (
         os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
-        and (
-            os.getenv("ZENPDF_DEV_MODE") == "1"
-            or os.getenv("NODE_ENV") == "development"
-        )
+        and _is_dev_mode()
     )
 
     try:
@@ -2093,10 +2296,7 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
     encoding: str
     allow_insecure = (
         os.getenv("ZENPDF_WEB_ALLOW_INSECURE_SSL") == "1"
-        and (
-            os.getenv("ZENPDF_DEV_MODE") == "1"
-            or os.getenv("NODE_ENV") == "development"
-        )
+        and _is_dev_mode()
     )
 
     with requests.Session() as session:
@@ -2113,10 +2313,7 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
         except requests.exceptions.SSLError:
             allow_fallback = parsed.scheme == "https" and (
                 os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
-                and (
-                    os.getenv("ZENPDF_DEV_MODE") == "1"
-                    or os.getenv("NODE_ENV") == "development"
-                )
+                and _is_dev_mode()
             )
             if not allow_fallback:
                 raise
@@ -2148,34 +2345,74 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
     timeout_max = int(os.getenv("ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS", "480"))
     timeout_seconds = min(timeout_max, timeout_base + size_mb * timeout_per_mb)
 
-    try:
-        result = subprocess.run(
-            [
-                soffice,
-                "--headless",
-                "--convert-to",
-                "pdf",
-                "--outdir",
-                str(output_dir),
-                str(input_path),
-            ],
-            capture_output=True,
-            text=True,
-            check=False,
-            timeout=timeout_seconds,
-        )
-    except subprocess.TimeoutExpired as error:
-        raise RuntimeError("Office conversion timed out. Try a smaller file.") from error
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "").strip()
-        if "password" in detail.lower() or "encrypted" in detail.lower():
-            raise ValueError("Office file appears password-protected or encrypted")
-        raise RuntimeError("Office conversion failed. Please verify the source file format.")
-
     output_path = output_dir / f"{input_path.stem}.pdf"
-    if not output_path.exists():
-        raise RuntimeError("Office conversion produced no output")
-    return output_path
+    command = [
+        soffice,
+        "--headless",
+        "--nologo",
+        "--norestore",
+        "--nolockcheck",
+        "--nodefault",
+        "--convert-to",
+        "pdf",
+        "--outdir",
+        str(output_dir),
+        str(input_path),
+    ]
+
+    last_error_detail = ""
+    attempts = [
+        ("primary", timeout_seconds, {}),
+        (
+            "retry-safe",
+            min(timeout_max * 2, max(timeout_seconds + 60, int(timeout_seconds * 1.8))),
+            {"SAL_USE_VCLPLUGIN": "svp", "SAL_DISABLE_OPENCL": "1"},
+        ),
+    ]
+    for index, (attempt_name, attempt_timeout, env_patch) in enumerate(attempts, start=1):
+        if output_path.exists():
+            output_path.unlink(missing_ok=True)
+        env = os.environ.copy()
+        env.update(env_patch)
+        try:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                check=False,
+                timeout=attempt_timeout,
+                env=env,
+            )
+        except subprocess.TimeoutExpired:
+            last_error_detail = f"{attempt_name} timed out after {attempt_timeout}s"
+            if index < len(attempts):
+                LOGGER.warning("Office conversion attempt %s timed out; retrying", attempt_name)
+                continue
+            raise RuntimeError("Office conversion timed out. Try a smaller file.")
+
+        detail = (result.stderr or result.stdout or "").strip()
+        if result.returncode == 0 and output_path.exists():
+            return output_path
+        last_error_detail = detail or f"{attempt_name} failed with exit code {result.returncode}"
+        detail_lower = last_error_detail.lower()
+        if "password" in detail_lower or "encrypted" in detail_lower:
+            raise ValueError("Office file appears password-protected or encrypted")
+        if "font" in detail_lower:
+            raise RuntimeError(
+                "Office conversion failed due to missing fonts. Install font packs (e.g. DejaVu/Noto/Liberation) and retry."
+            )
+        if index < len(attempts):
+            LOGGER.warning(
+                "Office conversion attempt %s failed (%s); retrying",
+                attempt_name,
+                last_error_detail,
+            )
+            continue
+
+    raise RuntimeError(
+        "Office conversion failed. Please verify the source file format."
+        + (f" Details: {last_error_detail}" if last_error_detail else "")
+    )
 
 
 def _ensure_extension(input_path: Path, allowed_extensions: set[str], label: str) -> None:
@@ -2204,10 +2441,20 @@ def excel_to_pdf(input_path: Path, output_dir: Path) -> Path:
     return office_to_pdf(input_path, output_dir)
 
 
-def pdf_to_powerpoint(input_path: Path, output_path: Path, dpi: int = 150) -> Path:
-    """Convert each PDF page into a PPTX slide with a full-slide rendered image."""
+def pdf_to_powerpoint(
+    input_path: Path,
+    output_path: Path,
+    dpi: int = 150,
+    mode: str = "visual",
+) -> Path:
+    """Convert PDF pages to PPTX in visual-fidelity or editable best-effort mode."""
     if Presentation is None:
         raise RuntimeError("python-pptx is required for PDF to PowerPoint")
+    normalized_mode = (mode or "visual").strip().lower()
+    if normalized_mode not in {"visual", "editable"}:
+        raise ValueError("Mode must be visual or editable")
+    if normalized_mode == "editable" and (Emu is None or Pt is None):
+        raise RuntimeError("Editable PPT mode requires python-pptx utilities")
 
     def _fit_image_to_slide(
         image_width: int,
@@ -2249,22 +2496,63 @@ def pdf_to_powerpoint(input_path: Path, output_path: Path, dpi: int = 150) -> Pa
         slide_height = int(presentation.slide_height)
         for index in range(document.page_count):
             page = document.load_page(index)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-            image_bytes = pix.tobytes("png")
             slide = presentation.slides.add_slide(blank_layout)
-            left, top, width, height = _fit_image_to_slide(
-                pix.width,
-                pix.height,
-                slide_width,
-                slide_height,
-            )
-            slide.shapes.add_picture(
-                BytesIO(image_bytes),
-                left,
-                top,
-                width=width,
-                height=height,
-            )
+            if normalized_mode == "visual":
+                pix = page.get_pixmap(matrix=matrix, alpha=False)
+                image_bytes = pix.tobytes("png")
+                left, top, width, height = _fit_image_to_slide(
+                    pix.width,
+                    pix.height,
+                    slide_width,
+                    slide_height,
+                )
+                slide.shapes.add_picture(
+                    BytesIO(image_bytes),
+                    left,
+                    top,
+                    width=width,
+                    height=height,
+                )
+                continue
+
+            # Editable mode: place text boxes and extracted images as a best-effort mapping.
+            page_dict = page.get_text("dict")
+            blocks = page_dict.get("blocks", [])
+            for block in blocks:
+                block_type = int(block.get("type", -1))
+                x0 = max(0.0, float(block.get("bbox", [0, 0, 0, 0])[0]))
+                y0 = max(0.0, float(block.get("bbox", [0, 0, 0, 0])[1]))
+                x1 = max(x0 + 1.0, float(block.get("bbox", [0, 0, 1, 1])[2]))
+                y1 = max(y0 + 1.0, float(block.get("bbox", [0, 0, 1, 1])[3]))
+                left = Emu(int(round(x0 * 12700)))
+                top = Emu(int(round(y0 * 12700)))
+                width = Emu(int(round((x1 - x0) * 12700)))
+                height = Emu(int(round((y1 - y0) * 12700)))
+
+                if block_type == 0:
+                    lines: list[str] = []
+                    for line in block.get("lines", []):
+                        spans = line.get("spans", [])
+                        line_text = "".join(str(span.get("text", "")) for span in spans).strip()
+                        if line_text:
+                            lines.append(line_text)
+                    text = "\n".join(lines).strip()
+                    if not text:
+                        continue
+                    textbox = slide.shapes.add_textbox(left, top, width, height)
+                    frame = textbox.text_frame
+                    frame.clear()
+                    frame.word_wrap = True
+                    frame.text = text
+                    for paragraph in frame.paragraphs:
+                        for run in paragraph.runs:
+                            run.font.size = Pt(11)
+                    continue
+
+                if block_type == 1:
+                    image_bytes = block.get("image")
+                    if isinstance(image_bytes, (bytes, bytearray)):
+                        slide.shapes.add_picture(BytesIO(bytes(image_bytes)), left, top, width, height)
     presentation.save(str(output_path))
     return output_path
 
@@ -2283,23 +2571,95 @@ def sign_pdf(
     y: float = 36.0,
     font_size: float = 18.0,
     anchor: str = "custom",
+    mode: str = "visual",
+    signature_image_path: Path | None = None,
+    pkcs12_path: Path | None = None,
+    pkcs12_password: str | None = None,
+    tolerant_ranges: bool = False,
 ) -> Path:
-    """Apply an electronic text signature stamp to selected pages."""
+    """Sign a PDF using either visual stamp mode or cryptographic signature mode."""
+
+    def _resolve_signature_rect(
+        page_rect: fitz.Rect,
+        anchor_mode: str,
+        box_width: float,
+        box_height: float,
+        x_pos: float,
+        y_pos: float,
+    ) -> fitz.Rect:
+        margin = 24.0
+        target_x = x_pos
+        target_y = y_pos
+        if anchor_mode == "bottom-right":
+            target_x = page_rect.x1 - box_width - margin
+            target_y = page_rect.y1 - box_height - margin
+        elif anchor_mode == "bottom-left":
+            target_x = page_rect.x0 + margin
+            target_y = page_rect.y1 - box_height - margin
+        elif anchor_mode == "top-right":
+            target_x = page_rect.x1 - box_width - margin
+            target_y = page_rect.y0 + margin
+        elif anchor_mode == "top-left":
+            target_x = page_rect.x0 + margin
+            target_y = page_rect.y0 + margin
+
+        target_x = min(max(target_x, page_rect.x0 + 1), max(page_rect.x0 + 1, page_rect.x1 - 41))
+        target_y = min(max(target_y, page_rect.y0 + 1), max(page_rect.y0 + 1, page_rect.y1 - 25))
+        if target_x + box_width > page_rect.x1:
+            box_width = max(40.0, page_rect.x1 - target_x - 1)
+        if target_y + box_height > page_rect.y1:
+            box_height = max(24.0, page_rect.y1 - target_y - 1)
+        return fitz.Rect(target_x, target_y, target_x + box_width, target_y + box_height)
+
+    normalized_mode = (mode or "visual").strip().lower()
+    if normalized_mode not in {"visual", "cryptographic"}:
+        raise ValueError("Sign mode must be visual or cryptographic")
+
+    if normalized_mode == "cryptographic":
+        if signers is None or IncrementalPdfFileWriter is None:
+            raise RuntimeError("Cryptographic signing requires pyHanko")
+        if pkcs12_path is None:
+            raise ValueError("PKCS#12 certificate (.p12/.pfx) is required for cryptographic signing")
+        if not pkcs12_path.exists():
+            raise ValueError("PKCS#12 certificate file was not found")
+        # Ensure the input is parseable and not encrypted before attempting signature.
+        _ = _load_pdf(input_path)
+        passphrase = (pkcs12_password or "").encode("utf-8") if pkcs12_password else None
+        with input_path.open("rb") as source, output_path.open("wb") as sink:
+            writer = IncrementalPdfFileWriter(source)
+            try:
+                signer = signers.SimpleSigner.load_pkcs12(str(pkcs12_path), passphrase=passphrase)
+            except TypeError:
+                signer = signers.SimpleSigner.load_pkcs12(str(pkcs12_path), passphrase)
+            signature_meta = signers.PdfSignatureMetadata(field_name="Signature1")
+            pdf_signer = signers.PdfSigner(signature_meta, signer=signer)
+            pdf_signer.sign_pdf(writer, output=sink)
+        return output_path
+
     signature_text = text.strip()
-    if not signature_text:
-        raise ValueError("Signature text is required")
+    image_path = signature_image_path if signature_image_path and signature_image_path.exists() else None
+    if not signature_text and image_path is None:
+        raise ValueError("Provide signature text or a signature image for visual signing")
+
     with fitz.open(str(input_path)) as document:
         _assert_fitz_unencrypted(document)
-        target_pages = _resolve_page_selection(pages, document.page_count)
+        target_pages = _resolve_page_selection(
+            pages,
+            document.page_count,
+            tolerant=tolerant_ranges,
+        )
         for index in range(document.page_count):
             page_number = index + 1
             if target_pages is not None and page_number not in target_pages:
                 continue
             page = document.load_page(index)
-            stamp_text = f"Signed: {signature_text}"
-            text_width = fitz.get_text_length(stamp_text, fontsize=font_size)
-            box_width = max(160.0, min(text_width + 16.0, 420.0))
-            box_height = max(40.0, min(font_size + 22.0, 120.0))
+            stamp_text = f"Signed: {signature_text}" if signature_text else ""
+            text_width = fitz.get_text_length(stamp_text, fontsize=font_size) if stamp_text else 0.0
+            base_width = max(160.0, min(text_width + 16.0, 420.0))
+            base_height = max(40.0, min(font_size + 22.0, 120.0))
+            if image_path is not None:
+                base_width = max(base_width, 220.0)
+                base_height = max(base_height, 80.0 if stamp_text else 56.0)
             page_rect = page.rect
             anchor_mode = anchor.strip().lower() or "custom"
             supported_anchors = {
@@ -2313,36 +2673,29 @@ def sign_pdf(
                 raise ValueError(
                     f"Unsupported anchor: {anchor!r}. Use one of: {', '.join(sorted(supported_anchors))}"
                 )
-            margin = 24.0
-            if anchor_mode == "bottom-right":
-                x = page_rect.x1 - box_width - margin
-                y = page_rect.y1 - box_height - margin
-            elif anchor_mode == "bottom-left":
-                x = page_rect.x0 + margin
-                y = page_rect.y1 - box_height - margin
-            elif anchor_mode == "top-right":
-                x = page_rect.x1 - box_width - margin
-                y = page_rect.y0 + margin
-            elif anchor_mode == "top-left":
-                x = page_rect.x0 + margin
-                y = page_rect.y0 + margin
-            x = min(max(x, page_rect.x0 + 1), max(page_rect.x0 + 1, page_rect.x1 - 41))
-            y = min(max(y, page_rect.y0 + 1), max(page_rect.y0 + 1, page_rect.y1 - 25))
-            if x + box_width > page_rect.x1:
-                box_width = max(40.0, page_rect.x1 - x - 1)
-            if y + box_height > page_rect.y1:
-                box_height = max(24.0, page_rect.y1 - y - 1)
-            rect = fitz.Rect(x, y, x + box_width, y + box_height)
+            rect = _resolve_signature_rect(page_rect, anchor_mode, base_width, base_height, x, y)
             page.draw_rect(rect, color=(0.22, 0.35, 0.22), width=1)
-            text_x = min(rect.x0 + 8, max(rect.x0, rect.x1 - 8))
-            text_y = min(rect.y0 + font_size + 6, max(rect.y0 + 1, rect.y1 - 2))
-            page.insert_text(
-                (text_x, text_y),
-                stamp_text,
-                fontsize=font_size,
-                color=(0.1, 0.2, 0.1),
-            )
-        document.save(str(output_path), deflate=True)
+            if image_path is not None:
+                image_bottom = rect.y1 - (font_size + 10 if stamp_text else 4)
+                image_rect = fitz.Rect(rect.x0 + 4, rect.y0 + 4, rect.x1 - 4, image_bottom)
+                if image_rect.width > 2 and image_rect.height > 2:
+                    page.insert_image(image_rect, filename=str(image_path), keep_proportion=True)
+            if stamp_text:
+                text_x = min(rect.x0 + 8, max(rect.x0, rect.x1 - 8))
+                text_y = min(rect.y0 + font_size + 6, max(rect.y0 + 1, rect.y1 - 2))
+                page.insert_text(
+                    (text_x, text_y),
+                    stamp_text,
+                    fontsize=font_size,
+                    color=(0.1, 0.2, 0.1),
+                )
+        document.save(
+            str(output_path),
+            deflate=True,
+            garbage=4,
+            clean=True,
+            incremental=False,
+        )
     return output_path
 
 
@@ -2496,15 +2849,24 @@ def organize_pdf(
     order: str | None = None,
     delete: str | None = None,
     rotate: str | None = None,
+    tolerant_ranges: bool = False,
 ) -> Path:
     """Apply remove, reorder, and rotate in one deterministic operation."""
     reader = _load_pdf(input_path)
     total_pages = len(reader.pages)
-    delete_pages_set = _resolve_page_selection(delete, total_pages) or set()
+    delete_pages_set = _resolve_page_selection(
+        delete,
+        total_pages,
+        tolerant=tolerant_ranges,
+    ) or set()
     if order and order.strip():
         ordered_pages: list[int] = []
         seen: set[int] = set()
-        for page_number in _parse_page_list(order, total_pages):
+        for page_number in _parse_page_list(
+            order,
+            total_pages,
+            tolerant=tolerant_ranges,
+        ):
             if page_number in delete_pages_set or page_number in seen:
                 continue
             ordered_pages.append(page_number)
@@ -2549,13 +2911,26 @@ def organize_pdf(
     return output_path
 
 
-def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Path:
+def ocr_pdf(
+    input_path: Path,
+    output_path: Path,
+    lang: str | None = None,
+    profile: str | None = None,
+) -> Path:
     """Convert a PDF into a searchable OCR PDF."""
     language = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
+    normalized_profile = _normalize_ocr_profile(profile)
     if os.getenv("ZENPDF_OCR_USE_OCRMYPDF", "1") == "1":
         ocrmypdf = shutil.which("ocrmypdf")
         if ocrmypdf:
             try:
+                profile_settings = _ocr_profile_settings(normalized_profile)
+                image_dpi = profile_settings["dpi"]
+                ocrmypdf_flags: list[str] = []
+                if normalized_profile == "fast":
+                    ocrmypdf_flags.extend(["--optimize", "0", "--fast-web-view", "1"])
+                elif normalized_profile == "accurate":
+                    ocrmypdf_flags.extend(["--optimize", "2", "--deskew", "--clean-final"])
                 result = subprocess.run(
                     [
                         ocrmypdf,
@@ -2564,6 +2939,9 @@ def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Pat
                         "pdf",
                         "--language",
                         language,
+                        "--image-dpi",
+                        str(image_dpi),
+                        *ocrmypdf_flags,
                         str(input_path),
                         str(output_path),
                     ],
@@ -2589,7 +2967,7 @@ def ocr_pdf(input_path: Path, output_path: Path, lang: str | None = None) -> Pat
         _assert_fitz_unencrypted(document)
         for index in range(document.page_count):
             page = document.load_page(index)
-            image = _render_page_image(page, OCR_DPI)
+            image = _render_page_image(page, profile=normalized_profile)
             try:
                 pdf_bytes = pytesseract.image_to_pdf_or_hocr(
                     image,
@@ -2638,8 +3016,8 @@ def _parse_version_tuple(raw: str) -> Tuple[int, int, int]:
     return (numbers[0], numbers[1], numbers[2])
 
 
-def _verify_pdfa_conformance(output_path: Path) -> None:
-    """Verify PDF/A output using veraPDF if available, else qpdf structural check."""
+def _verify_pdfa_conformance(output_path: Path) -> dict[str, Any]:
+    """Verify PDF/A output and return conformance status details."""
     verapdf = shutil.which("verapdf")
     if verapdf:
         result = _run_command(
@@ -2652,13 +3030,30 @@ def _verify_pdfa_conformance(output_path: Path) -> None:
             raise RuntimeError("PDF/A conformance validation failed")
         if "non-compliant" in stdout or "failed" in stdout:
             raise RuntimeError("Output is not PDF/A compliant")
-        return
+        return {
+            "status": "success",
+            "standard": "PDF/A-2b",
+            "compliant": True,
+            "validator": "veraPDF",
+            "details": "veraPDF reported compliant output",
+        }
 
     if not _is_valid_pdf(output_path):
         raise RuntimeError("PDF/A output failed structural validation")
+    return {
+        "status": "success",
+        "standard": "PDF/A-2b",
+        "compliant": True,
+        "validator": "qpdf-structural",
+        "details": "veraPDF unavailable; structural PDF validation passed",
+    }
 
 
-def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
+def pdf_to_pdfa(
+    input_path: Path,
+    output_path: Path,
+    include_report: bool = False,
+) -> Path | tuple[Path, dict[str, Any]]:
     """
     Convert a PDF into PDF/A-2b using Ghostscript.
     
@@ -2733,8 +3128,9 @@ def pdf_to_pdfa(input_path: Path, output_path: Path) -> Path:
     if not output_path.exists():
         raise RuntimeError("PDF/A conversion produced no output")
 
-    _verify_pdfa_conformance(output_path)
-
+    conformance = _verify_pdfa_conformance(output_path)
+    if include_report:
+        return output_path, conformance
     return output_path
 
 
@@ -2764,14 +3160,91 @@ def _write_docx_from_pages(lines_by_page: List[List[str]], output_path: Path) ->
     return output_path
 
 
-def _ocr_lines_by_page(input_path: Path, lang: str, dpi: int) -> List[List[str]]:
+def _extract_tables_by_page(input_path: Path) -> List[List[List[List[str]]]]:
+    """Extract tables as page -> table -> row -> cell via pdfplumber."""
+    if pdfplumber is None:
+        return []
+    tables_by_page: List[List[List[List[str]]]] = []
+    with pdfplumber.open(str(input_path)) as pdf:
+        for page in pdf.pages:
+            page_tables: List[List[List[str]]] = []
+            for table in page.extract_tables() or []:
+                table_rows: List[List[str]] = []
+                for raw_row in table or []:
+                    if raw_row is None:
+                        continue
+                    row = [str(cell).strip() if cell is not None else "" for cell in raw_row]
+                    if any(value for value in row):
+                        table_rows.append(row)
+                if table_rows:
+                    page_tables.append(table_rows)
+            tables_by_page.append(page_tables)
+    return tables_by_page
+
+
+def _write_docx_layout(input_path: Path, output_path: Path) -> Path:
+    """Write DOCX using layout-aware text blocks, extracted tables, and page images."""
+    document = Document()
+    tables_by_page = _extract_tables_by_page(input_path)
+    with fitz.open(str(input_path)) as pdf:
+        for page_index in range(pdf.page_count):
+            if page_index > 0:
+                document.add_page_break()
+            page = pdf.load_page(page_index)
+            emitted = False
+
+            page_tables: List[List[List[str]]] = []
+            if page_index < len(tables_by_page):
+                page_tables = tables_by_page[page_index]
+            for table_rows in page_tables:
+                if not table_rows:
+                    continue
+                col_count = max(len(row) for row in table_rows)
+                doc_table = document.add_table(rows=len(table_rows), cols=col_count)
+                for row_index, row_values in enumerate(table_rows):
+                    for col_index in range(col_count):
+                        value = row_values[col_index] if col_index < len(row_values) else ""
+                        doc_table.cell(row_index, col_index).text = value
+                document.add_paragraph("")
+                emitted = True
+
+            page_blocks = page.get_text("dict").get("blocks", [])
+            for block in page_blocks:
+                block_type = int(block.get("type", -1))
+                if block_type == 0:
+                    lines: list[str] = []
+                    for line in block.get("lines", []):
+                        spans = line.get("spans", [])
+                        line_text = "".join(str(span.get("text", "")) for span in spans).strip()
+                        if line_text:
+                            lines.append(line_text)
+                    text = "\n".join(lines).strip()
+                    if text:
+                        document.add_paragraph(text)
+                        emitted = True
+                elif block_type == 1:
+                    image_bytes = block.get("image")
+                    if isinstance(image_bytes, (bytes, bytearray)):
+                        try:
+                            document.add_picture(BytesIO(bytes(image_bytes)))
+                            emitted = True
+                        except Exception:
+                            continue
+
+            if not emitted:
+                document.add_paragraph("")
+    document.save(str(output_path))
+    return output_path
+
+
+def _ocr_lines_by_page(input_path: Path, lang: str, profile: str | None) -> List[List[str]]:
     """Extract OCR text lines per page."""
     document = fitz.open(str(input_path))
     lines_by_page: List[List[str]] = []
     try:
         for index in range(document.page_count):
             page = document.load_page(index)
-            image = _render_page_image(page, dpi)
+            image = _render_page_image(page, profile=profile)
             page_text = _ocr_image(image, lang)
             lines_by_page.append(
                 [line.strip() for line in page_text.splitlines() if line.strip()]
@@ -2781,34 +3254,52 @@ def _ocr_lines_by_page(input_path: Path, lang: str, dpi: int) -> List[List[str]]
     return lines_by_page
 
 
-def pdf_to_docx(input_path: Path, output_path: Path, mode: str = "auto") -> Path:
-    """Convert a PDF into DOCX using text extraction, OCR, or auto selection."""
+def pdf_to_docx(
+    input_path: Path,
+    output_path: Path,
+    mode: str = "auto",
+    ocr_profile: str | None = None,
+) -> Path:
+    """Convert PDF to DOCX via layout/text extraction with OCR fallback."""
     normalized_mode = (mode or "auto").strip().lower()
-    if normalized_mode not in {"auto", "text", "ocr"}:
-        raise ValueError("Mode must be auto, text, or ocr")
+    normalized_profile = _normalize_ocr_profile(ocr_profile)
+    if normalized_mode not in {"auto", "layout", "text", "ocr"}:
+        raise ValueError("Mode must be auto, layout, text, or ocr")
 
     if normalized_mode == "ocr":
-        lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
-    elif normalized_mode == "text":
+        lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, normalized_profile)
+        return _write_docx_from_pages(lines_by_page, output_path)
+    if normalized_mode == "text":
         lines_by_page = _extract_text_lines_by_page(input_path)
-    else:
-        if _is_text_light_pdf(input_path):
-            lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
-        else:
-            lines_by_page = _extract_text_lines_by_page(input_path)
-    return _write_docx_from_pages(lines_by_page, output_path)
+        return _write_docx_from_pages(lines_by_page, output_path)
+    if normalized_mode == "layout":
+        return _write_docx_layout(input_path, output_path)
+    if _is_text_light_pdf(input_path):
+        lines_by_page = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, normalized_profile)
+        return _write_docx_from_pages(lines_by_page, output_path)
+    return _write_docx_layout(input_path, output_path)
 
-def _render_page_image(page: fitz.Page, dpi: int) -> Image.Image:
+
+def _render_page_image(
+    page: fitz.Page,
+    dpi: int | None = None,
+    profile: str | None = None,
+) -> Image.Image:
     """Render a PDF page to a PIL image for OCR."""
-    scale = dpi / 72
+    settings = _ocr_profile_settings(profile)
+    resolved_dpi = int(dpi or settings["dpi"])
+    median_filter_size = int(settings["median_filter"])
+    threshold = int(settings["threshold"])
+    scale = resolved_dpi / 72
     matrix = fitz.Matrix(scale, scale)
     pix = page.get_pixmap(matrix=matrix, alpha=False)
     image = Image.open(BytesIO(pix.tobytes("png")))
     image = image.convert("L")
     image = ImageOps.autocontrast(image)
-    image = image.filter(ImageFilter.MedianFilter(size=3))
+    if median_filter_size > 1:
+        image = image.filter(ImageFilter.MedianFilter(size=median_filter_size))
     image = image.point(
-        lambda px: 255 if px >= OCR_PREPROCESS_THRESHOLD else 0, mode="1"
+        lambda px: 255 if px >= threshold else 0, mode="1"
     ).convert("RGB")
     return image
 
@@ -2824,87 +3315,130 @@ def _ocr_image(image: Image.Image, lang: str) -> str:
 
 
 def _extract_table_rows_by_page(input_path: Path) -> List[List[List[str]]]:
-    """Extract table rows for each page via pdfplumber if available."""
-    if pdfplumber is None:
+    """Backwards-compatible page->rows table extraction view."""
+    flattened: List[List[List[str]]] = []
+    for page_tables in _extract_tables_by_page(input_path):
+        page_rows: List[List[str]] = []
+        for table_rows in page_tables:
+            page_rows.extend(table_rows)
+        flattened.append(page_rows)
+    return flattened
+
+
+def _split_line_into_cells(line: str) -> list[str]:
+    """Split a text line into probable tabular cells."""
+    stripped = line.strip()
+    if not stripped:
         return []
-    rows_by_page: List[List[List[str]]] = []
-    with pdfplumber.open(str(input_path)) as pdf:
-        for page in pdf.pages:
-            page_rows: List[List[str]] = []
-            for table in page.extract_tables() or []:
-                for raw_row in table:
-                    if raw_row is None:
-                        continue
-                    row = [str(cell).strip() if cell is not None else "" for cell in raw_row]
-                    if any(value for value in row):
-                        page_rows.append(row)
-            rows_by_page.append(page_rows)
-    return rows_by_page
+    if "\t" in stripped:
+        cells = [cell.strip() for cell in stripped.split("\t")]
+    elif "|" in stripped:
+        cells = [cell.strip() for cell in stripped.split("|")]
+    elif re.search(r"\s{2,}", stripped):
+        cells = [cell.strip() for cell in re.split(r"\s{2,}", stripped)]
+    elif stripped.count(",") >= 2:
+        cells = [cell.strip() for cell in stripped.split(",")]
+    else:
+        cells = [stripped]
+    return [cell for cell in cells if cell]
+
+
+def _autosize_sheet(sheet, max_columns: int) -> None:  # type: ignore[no-untyped-def]
+    """Apply simple width sizing for the first max_columns columns."""
+    for col_index in range(1, max_columns + 1):
+        max_length = 0
+        for row in sheet.iter_rows(min_col=col_index, max_col=col_index):
+            value = row[0].value
+            if value is None:
+                continue
+            max_length = max(max_length, len(str(value)))
+        sheet.column_dimensions[get_column_letter(col_index)].width = min(64, max(10, max_length + 2))
 
 
 def _write_xlsx_from_text(lines_by_page: List[List[str]], output_path: Path) -> Path:
-    """Write text lines into an XLSX workbook."""
+    """Write text lines into a structured XLSX workbook."""
     workbook = Workbook()
-    sheet = workbook.active
-    row = 1
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
     for index, lines in enumerate(lines_by_page, start=1):
-        if not lines:
-            sheet.cell(row=row, column=1, value=f"Page {index}")
-            row += 1
-        else:
-            for line in lines:
-                sheet.cell(row=row, column=1, value=line)
-                row += 1
-        row += 1
+        sheet = workbook.create_sheet(title=f"Page_{index}")
+        rows = [_split_line_into_cells(line) for line in lines if line.strip()]
+        rows = [row for row in rows if row]
+        if not rows:
+            sheet.cell(row=1, column=1, value=f"Page {index}")
+            _autosize_sheet(sheet, 1)
+            continue
+        max_columns = max(len(row) for row in rows)
+        for row_index, row_values in enumerate(rows, start=1):
+            for col_index, value in enumerate(row_values, start=1):
+                sheet.cell(row=row_index, column=col_index, value=value)
+        _autosize_sheet(sheet, max_columns)
+    if not workbook.sheetnames:
+        workbook.create_sheet("Page_1")
     workbook.save(str(output_path))
     return output_path
 
 
 def _write_xlsx_from_tables(
-    table_rows_by_page: List[List[List[str]]], output_path: Path
+    table_rows_by_page: List[List[List[List[str]]]], output_path: Path
 ) -> Path:
-    """Write extracted table rows into XLSX preserving columns."""
+    """Write extracted tables into structured XLSX sheets."""
     workbook = Workbook()
-    sheet = workbook.active
-    row = 1
-    for index, table_rows in enumerate(table_rows_by_page, start=1):
-        if not table_rows:
-            sheet.cell(row=row, column=1, value=f"Page {index}")
-            row += 1
-        else:
-            for table_row in table_rows:
-                for col, value in enumerate(table_row, start=1):
-                    sheet.cell(row=row, column=col, value=value)
-                row += 1
-        row += 1
+    default_sheet = workbook.active
+    workbook.remove(default_sheet)
+    created = False
+    for page_index, page_tables in enumerate(table_rows_by_page, start=1):
+        if not page_tables:
+            continue
+        for table_index, table_rows in enumerate(page_tables, start=1):
+            if not table_rows:
+                continue
+            sheet = workbook.create_sheet(title=f"P{page_index}_T{table_index}")
+            max_columns = max(len(row) for row in table_rows)
+            for row_index, row_values in enumerate(table_rows, start=1):
+                for col_index in range(1, max_columns + 1):
+                    value = row_values[col_index - 1] if col_index <= len(row_values) else ""
+                    sheet.cell(row=row_index, column=col_index, value=value)
+            _autosize_sheet(sheet, max_columns)
+            created = True
+    if not created:
+        fallback = workbook.create_sheet("Page_1")
+        fallback.cell(row=1, column=1, value="No tables detected")
+        _autosize_sheet(fallback, 1)
     workbook.save(str(output_path))
     return output_path
 
 
-def pdf_to_xlsx(input_path: Path, output_path: Path, mode: str = "auto") -> Path:
-    """Convert a PDF into XLSX via table, text, OCR, or auto strategy."""
+def pdf_to_xlsx(
+    input_path: Path,
+    output_path: Path,
+    mode: str = "auto",
+    ocr_profile: str | None = None,
+) -> Path:
+    """Convert PDF to XLSX via table extraction with OCR/text structured fallback."""
     normalized_mode = (mode or "auto").strip().lower()
+    normalized_profile = _normalize_ocr_profile(ocr_profile)
     if normalized_mode not in {"auto", "table", "text", "ocr"}:
         raise ValueError("Mode must be auto, table, text, or ocr")
 
     if normalized_mode == "table":
-        table_rows = _extract_table_rows_by_page(input_path)
-        if table_rows:
-            return _write_xlsx_from_tables(table_rows, output_path)
+        tables = _extract_tables_by_page(input_path)
+        if tables and any(page_tables for page_tables in tables):
+            return _write_xlsx_from_tables(tables, output_path)
         return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
 
     if normalized_mode == "text":
         return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
 
     if normalized_mode == "ocr":
-        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
+        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, normalized_profile)
         return _write_xlsx_from_text(ocr_lines, output_path)
 
-    table_rows = _extract_table_rows_by_page(input_path)
-    if table_rows and any(page_rows for page_rows in table_rows):
-        return _write_xlsx_from_tables(table_rows, output_path)
+    tables = _extract_tables_by_page(input_path)
+    if tables and any(page_tables for page_tables in tables):
+        return _write_xlsx_from_tables(tables, output_path)
     if _is_text_light_pdf(input_path):
-        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, OCR_DPI)
+        ocr_lines = _ocr_lines_by_page(input_path, DEFAULT_OCR_LANG, normalized_profile)
         return _write_xlsx_from_text(ocr_lines, output_path)
     return _write_xlsx_from_text(_extract_text_lines_by_page(input_path), output_path)
 

@@ -7,6 +7,8 @@ RUN apt-get update \
         ca-certificates \
         chromium \
         fonts-dejavu-core \
+        fonts-liberation \
+        fonts-noto-core \
         ghostscript \
         jbig2enc \
         libreoffice \

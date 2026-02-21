@@ -372,28 +372,255 @@ def test_web_to_pdf_fetches_html() -> None:
 
 
 def test_web_to_pdf_browser_mode() -> None:
-    """Browser mode should call the chromium render path."""
+    """Browser mode should render through the Playwright path."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         response = _DummyResponse(b"<p>Example</p>")
         session = _DummySession(response)
         output = temp_path / "site_browser.pdf"
 
-        def fake_run(*_args, **_kwargs):
-            output.write_bytes(b"%PDF-1.7\n")
-            return subprocess.CompletedProcess(["chromium"], 0, stdout="", stderr="")
+        class _FakePage:
+            def __init__(self) -> None:
+                self._route_handler = None
+
+            def route(self, _pattern: str, handler) -> None:
+                self._route_handler = handler
+
+            def goto(self, _url: str, **_kwargs):
+                class _Response:
+                    status = 200
+
+                return _Response()
+
+            def wait_for_load_state(self, *_args, **_kwargs) -> None:
+                return None
+
+            def emulate_media(self, **_kwargs) -> None:
+                return None
+
+            def pdf(self, path: str, **_kwargs) -> None:
+                Path(path).write_bytes(b"%PDF-1.7\n")
+
+        class _FakeContext:
+            def __init__(self) -> None:
+                self.page = _FakePage()
+
+            def new_page(self) -> _FakePage:
+                return self.page
+
+            def close(self) -> None:
+                return None
+
+        class _FakeBrowser:
+            def __init__(self) -> None:
+                self.context = _FakeContext()
+
+            def new_context(self, **_kwargs) -> _FakeContext:
+                return self.context
+
+            def close(self) -> None:
+                return None
+
+        class _FakePlaywright:
+            def __init__(self) -> None:
+                class _Chromium:
+                    @staticmethod
+                    def launch(**_kwargs):
+                        return _FakeBrowser()
+
+                self.chromium = _Chromium()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
 
         with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
-        ), patch("zenpdf_worker.tools._resolve_browser_binary", return_value="/usr/bin/chromium"), patch(
-            "zenpdf_worker.tools._run_command", side_effect=fake_run
         ):
-            rendered = web_to_pdf(
-                "https://example.com",
-                output,
-                render_mode="browser",
-            )
+            with patch("zenpdf_worker.tools.sync_playwright", return_value=_FakePlaywright()):
+                rendered = web_to_pdf(
+                    "https://example.com",
+                    output,
+                    render_mode="browser",
+                )
         assert rendered.exists()
+
+
+def test_web_to_pdf_browser_mode_blocks_private_subresource() -> None:
+    """Browser mode should reject blocked private network requests."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"<p>Example</p>")
+        session = _DummySession(response)
+
+        class _DummyRoute:
+            def __init__(self) -> None:
+                self.aborted = False
+
+            def abort(self) -> None:
+                self.aborted = True
+
+            def continue_(self) -> None:
+                return None
+
+        class _DummyRequest:
+            def __init__(self, url: str) -> None:
+                self.url = url
+
+        class _FakePage:
+            def __init__(self) -> None:
+                self._route_handler = None
+
+            def route(self, _pattern: str, handler) -> None:
+                self._route_handler = handler
+
+            def goto(self, _url: str, **_kwargs):
+                assert self._route_handler is not None
+                route = _DummyRoute()
+                request = _DummyRequest("http://127.0.0.1/internal")
+                self._route_handler(route, request)
+
+                class _Response:
+                    status = 200
+
+                return _Response()
+
+            def wait_for_load_state(self, *_args, **_kwargs) -> None:
+                return None
+
+            def emulate_media(self, **_kwargs) -> None:
+                return None
+
+            def pdf(self, path: str, **_kwargs) -> None:
+                Path(path).write_bytes(b"%PDF-1.7\n")
+
+        class _FakeContext:
+            def __init__(self) -> None:
+                self.page = _FakePage()
+
+            def new_page(self) -> _FakePage:
+                return self.page
+
+            def close(self) -> None:
+                return None
+
+        class _FakeBrowser:
+            def __init__(self) -> None:
+                self.context = _FakeContext()
+
+            def new_context(self, **_kwargs) -> _FakeContext:
+                return self.context
+
+            def close(self) -> None:
+                return None
+
+        class _FakePlaywright:
+            def __init__(self) -> None:
+                class _Chromium:
+                    @staticmethod
+                    def launch(**_kwargs):
+                        return _FakeBrowser()
+
+                self.chromium = _Chromium()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb):
+                return False
+
+        def _resolve_ip(host: str) -> str:
+            if host == "127.0.0.1":
+                raise ValueError("URL host is not allowed")
+            return "93.184.216.34"
+
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip", side_effect=_resolve_ip
+        ):
+            with patch("zenpdf_worker.tools.sync_playwright", return_value=_FakePlaywright()):
+                with pytest.raises(ValueError, match="Blocked private"):
+                    web_to_pdf(
+                        "https://example.com",
+                        temp_path / "site_browser.pdf",
+                        render_mode="browser",
+                    )
+
+
+def test_split_pdf_tolerant_ranges() -> None:
+    """Tolerant range mode should process valid tokens and skip invalid tokens."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_pdf(source, 3)
+        outputs = split_pdf(source, temp_path, "1-2,bad,3", tolerant_ranges=True)
+        assert len(outputs) == 2
+
+
+def test_sign_pdf_visual_image_mode() -> None:
+    """Visual signing should accept an uploaded signature image."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        image_path = temp_path / "signature.png"
+        _make_pdf(source, 1)
+        Image.new("RGB", (140, 48), color=(40, 40, 40)).save(image_path)
+        signed = sign_pdf(
+            source,
+            temp_path / "signed_image.pdf",
+            text="",
+            signature_image_path=image_path,
+        )
+        assert signed.exists()
+
+
+def test_pdfa_include_report(monkeypatch: pytest.MonkeyPatch) -> None:
+    """PDF/A conversion should return conformance metadata when requested."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        output = temp_path / "output.pdf"
+        _make_pdf(source, 1)
+
+        def fake_which(name: str):
+            if name == "gs":
+                return "/usr/bin/gs"
+            if name == "verapdf":
+                return None
+            return None
+
+        monkeypatch.setattr("zenpdf_worker.tools.shutil.which", fake_which)
+
+        def fake_run(command, **_kwargs):
+            if "--version" in command:
+                return subprocess.CompletedProcess(command, 0, stdout="10.03.1", stderr="")
+            writer = PdfWriter()
+            writer.add_blank_page(width=300, height=300)
+            with output.open("wb") as handle:
+                writer.write(handle)
+            return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+        monkeypatch.setattr("zenpdf_worker.tools.subprocess.run", fake_run)
+
+        converted, result = pdf_to_pdfa(source, output, include_report=True)
+        assert converted.exists()
+        assert result.get("compliant") is True
+
+
+def test_pdf_to_powerpoint_editable_mode() -> None:
+    """Editable mode should produce PPTX output or surface dependency errors."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        source = temp_path / "source.pdf"
+        _make_text_pdf(source, "Editable")
+        output = temp_path / "editable.pptx"
+        try:
+            result = pdf_to_powerpoint(source, output, mode="editable")
+        except RuntimeError as error:
+            assert "python-pptx is required" in str(error) or "utilities" in str(error)
+            return
+        assert result.exists()
 
 
 def test_web_to_pdf_blocks_private_host() -> None:
@@ -528,8 +755,9 @@ def test_pdf_to_docx_and_xlsx_ocr_modes() -> None:
         assert "Second page" in doc_text
 
         workbook = load_workbook(xlsx_path)
-        sheet = workbook.active
-        values = [cell.value for cell in sheet["A"] if cell.value]
+        values: list[str] = []
+        for sheet in workbook.worksheets:
+            values.extend(str(cell.value) for cell in sheet["A"] if cell.value)
         assert "First sheet" in values
         assert "Second sheet" in values
 

@@ -138,6 +138,18 @@ def _parse_int(value: Any, default: int) -> int:
         return default
 
 
+def _parse_int_strict(value: Any, field: str, default: int | None = None) -> int:
+    """Parse an integer and fail on invalid user-provided values."""
+    if value is None or (isinstance(value, str) and not value.strip()):
+        if default is None:
+            raise ValueError(f"{field} is required")
+        return default
+    try:
+        return int(value)
+    except (TypeError, ValueError) as error:
+        raise ValueError(f"{field} must be an integer") from error
+
+
 def _parse_bool(value: Any, default: bool = False) -> bool:
     """Parse a boolean from common string/number forms."""
     if value is None:
@@ -155,6 +167,19 @@ def _parse_bool(value: Any, default: bool = False) -> bool:
 
 
 MAX_DPI = 300
+
+SIGN_IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp"}
+SIGN_PKCS12_EXTENSIONS = {".p12", ".pfx"}
+
+
+def _select_sign_inputs(inputs: List[Path]) -> tuple[Path, Path | None, Path | None]:
+    """Return (source_pdf, signature_image, pkcs12_cert) from mixed sign inputs."""
+    pdfs = [path for path in inputs if path.suffix.lower() == ".pdf"]
+    if len(pdfs) != 1:
+        raise ValueError("Sign PDF requires exactly one PDF input")
+    images = [path for path in inputs if path.suffix.lower() in SIGN_IMAGE_EXTENSIONS]
+    pkcs12_files = [path for path in inputs if path.suffix.lower() in SIGN_PKCS12_EXTENSIONS]
+    return pdfs[0], (images[0] if images else None), (pkcs12_files[0] if pkcs12_files else None)
 
 
 @dataclass
@@ -343,7 +368,12 @@ class ZenPdfWorker:
         if tool == "merge":
             return ToolRunResult([merge_pdfs(inputs, output_path)])
         if tool == "split":
-            outputs = split_pdf(inputs[0], temp, config.get("ranges"))
+            outputs = split_pdf(
+                inputs[0],
+                temp,
+                config.get("ranges"),
+                tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
+            )
             zip_path = temp / "split_output.zip"
             return ToolRunResult([zip_outputs(outputs, zip_path)])
         if tool == "compress":
@@ -352,11 +382,19 @@ class ZenPdfWorker:
         if tool == "repair":
             return ToolRunResult([repair_pdf(inputs[0], output_path)])
         if tool == "rotate":
-            angle = _parse_int(config.get("angle"), 90)
+            angle = _parse_int_strict(config.get("angle"), "Angle", default=90)
             if angle not in (90, 180, 270):
                 raise ValueError("Angle must be 90, 180, or 270")
             return ToolRunResult(
-                [rotate_pdf(inputs[0], output_path, angle, config.get("pages"))]
+                [
+                    rotate_pdf(
+                        inputs[0],
+                        output_path,
+                        angle,
+                        config.get("pages"),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
+                    )
+                ]
             )
         if tool == "organize-pdf":
             return ToolRunResult(
@@ -367,6 +405,7 @@ class ZenPdfWorker:
                         config.get("order"),
                         config.get("delete"),
                         config.get("rotate"),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
                     )
                 ]
             )
@@ -377,7 +416,11 @@ class ZenPdfWorker:
             return ToolRunResult(
                 [
                     watermark_pdf(
-                        inputs[0], output_path, str(text), config.get("pages")
+                        inputs[0],
+                        output_path,
+                        str(text),
+                        config.get("pages"),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
                     )
                 ]
             )
@@ -390,7 +433,8 @@ class ZenPdfWorker:
                         output_path,
                         start,
                         config.get("pages"),
-                        str(config.get("numberingMode") or "documentIndex"),
+                        str(config.get("numberingMode") or "selectionIndex"),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
                     )
                 ]
             )
@@ -399,7 +443,15 @@ class ZenPdfWorker:
             if not str(margins).strip():
                 raise ValueError("Margins are required")
             return ToolRunResult(
-                [crop_pdf(inputs[0], output_path, str(margins), config.get("pages"))]
+                [
+                    crop_pdf(
+                        inputs[0],
+                        output_path,
+                        str(margins),
+                        config.get("pages"),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
+                    )
+                ]
             )
         if tool == "redact":
             text = config.get("text") or ""
@@ -416,6 +468,7 @@ class ZenPdfWorker:
                         whole_word=_parse_bool(config.get("wholeWord"), False),
                         use_regex=_parse_bool(config.get("regex"), False),
                         ocr_assist=_parse_bool(config.get("ocrAssist"), False),
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
                     )
                 ]
             )
@@ -449,22 +502,31 @@ class ZenPdfWorker:
         if tool == "scan-to-pdf":
             return ToolRunResult([scan_to_pdf(inputs, output_path)])
         if tool == "sign-pdf":
+            sign_source, signature_image, pkcs12_cert = _select_sign_inputs(inputs)
             text = str(config.get("text") or "").strip()
-            if not text:
-                raise ValueError("Signature text is required")
             x = _parse_int(config.get("x"), 36)
             y = _parse_int(config.get("y"), 36)
             anchor = str(config.get("anchor") or "custom").strip().lower()
+            sign_mode = str(config.get("mode") or "visual").strip().lower()
+            if sign_mode not in {"visual", "cryptographic"}:
+                raise ValueError("Sign mode must be visual or cryptographic")
+            pkcs12_password = str(config.get("pkcs12Password") or "")
+            sign_output = temp / f"{_strip_input_prefix(sign_source).stem}_signed.pdf"
             return ToolRunResult(
                 [
                     sign_pdf(
-                        inputs[0],
-                        output_path,
+                        sign_source,
+                        sign_output,
                         text,
                         config.get("pages"),
                         float(x),
                         float(y),
                         anchor=anchor,
+                        mode=sign_mode,
+                        signature_image_path=signature_image,
+                        pkcs12_path=pkcs12_cert,
+                        pkcs12_password=pkcs12_password,
+                        tolerant_ranges=_parse_bool(config.get("tolerantRanges"), False),
                     )
                 ]
             )
@@ -505,29 +567,64 @@ class ZenPdfWorker:
         if tool == "pdfa":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([pdf_to_pdfa(inputs[0], output_path)])
+            converted, pdfa_result = pdf_to_pdfa(inputs[0], output_path, include_report=True)
+            return ToolRunResult([converted], pdfa_result)
         if tool == "pdf-to-word":
             if not inputs:
                 raise ValueError("PDF file is required")
             mode = str(config.get("mode") or "auto").strip().lower()
-            if mode not in {"auto", "text", "ocr"}:
-                raise ValueError("Mode must be auto, text, or ocr")
-            return ToolRunResult([pdf_to_docx(inputs[0], output_path, mode=mode)])
+            if mode not in {"auto", "layout", "text", "ocr"}:
+                raise ValueError("Mode must be auto, layout, text, or ocr")
+            return ToolRunResult(
+                [
+                    pdf_to_docx(
+                        inputs[0],
+                        output_path,
+                        mode=mode,
+                        ocr_profile=str(config.get("ocrProfile") or "balanced"),
+                    )
+                ]
+            )
         if tool == "pdf-to-powerpoint":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([pdf_to_powerpoint(inputs[0], output_path)])
+            mode = str(config.get("mode") or "visual").strip().lower()
+            if mode not in {"visual", "editable"}:
+                raise ValueError("Mode must be visual or editable")
+            return ToolRunResult([pdf_to_powerpoint(inputs[0], output_path, mode=mode)])
         if tool == "pdf-to-excel":
             if not inputs:
                 raise ValueError("PDF file is required")
             mode = str(config.get("mode") or "auto").strip().lower()
             if mode not in {"auto", "table", "text", "ocr"}:
                 raise ValueError("Mode must be auto, table, text, or ocr")
-            return ToolRunResult([pdf_to_xlsx(inputs[0], output_path, mode=mode)])
+            return ToolRunResult(
+                [
+                    pdf_to_xlsx(
+                        inputs[0],
+                        output_path,
+                        mode=mode,
+                        ocr_profile=str(config.get("ocrProfile") or "balanced"),
+                    )
+                ]
+            )
         if tool == "ocr-pdf":
             if not inputs:
                 raise ValueError("PDF file is required")
-            return ToolRunResult([ocr_pdf(inputs[0], output_path, config.get("lang"))])
+            return ToolRunResult(
+                [
+                    ocr_pdf(
+                        inputs[0],
+                        output_path,
+                        config.get("lang"),
+                        profile=str(
+                            config.get("ocrProfile")
+                            or config.get("profile")
+                            or "balanced"
+                        ),
+                    )
+                ]
+            )
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:
