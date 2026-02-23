@@ -29,14 +29,13 @@ ZenPDF is an open-source PDF tools web app with a Next.js frontend, Convex backe
    - `apps/web/.env.example` -> `apps/web/.env.local`
    - `apps/worker/.env.example` -> `apps/worker/.env`
 2. Ensure `ZENPDF_WORKER_TOKEN` matches in both env files.
-3. Start Convex:
+3. Start Convex (terminal 1, long-running):
    - `cd apps/web && npx convex dev`
-4. Start web app:
+4. Start web app (terminal 2, long-running):
    - `cd apps/web && npm install && npm run dev`
-5. Start worker:
+5. Start worker (terminal 3, long-running):
    - `cd apps/worker && python -m pip install -r requirements.txt && python main.py`
-
-Open `http://localhost:3000`.
+6. Open `http://localhost:3000`.
 
 ## Core docs
 - Product scope: `docs/PRD.md`

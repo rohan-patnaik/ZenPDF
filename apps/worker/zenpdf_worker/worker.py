@@ -179,6 +179,12 @@ def _select_sign_inputs(inputs: List[Path]) -> tuple[Path, Path | None, Path | N
         raise ValueError("Sign PDF requires exactly one PDF input")
     images = [path for path in inputs if path.suffix.lower() in SIGN_IMAGE_EXTENSIONS]
     pkcs12_files = [path for path in inputs if path.suffix.lower() in SIGN_PKCS12_EXTENSIONS]
+    if len(images) > 1:
+        allowed = ", ".join(sorted(SIGN_IMAGE_EXTENSIONS))
+        raise ValueError(f"Sign PDF accepts at most one signature image ({allowed})")
+    if len(pkcs12_files) > 1:
+        allowed = ", ".join(sorted(SIGN_PKCS12_EXTENSIONS))
+        raise ValueError(f"Sign PDF accepts at most one PKCS12 certificate ({allowed})")
     return pdfs[0], (images[0] if images else None), (pkcs12_files[0] if pkcs12_files else None)
 
 

@@ -24,7 +24,7 @@ Use this file for remaining owner-level tasks before production hardening and op
   - Keys:
     - `ZENPDF_FEEDBACK_ADMIN_CLERK_IDS`
     - `ZENPDF_FEEDBACK_ADMIN_EMAILS`
-  - Behavior today: if both are empty, resolve access is only allowed in non-production.
+  - Behavior today: if both are empty, access to resolve feedback is only allowed in non-production.
 
 - [ ] Run full smoke tests before final production merge.
   - Include upload -> process -> download across representative tools and formats.
