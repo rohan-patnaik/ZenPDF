@@ -1,77 +1,81 @@
-# Owner Action Items (Living Checklist)
+# Owner Action Items (Current)
 
-Last updated: 2026-02-06
+Last validated: 2026-02-23  
 Owner: Rohan Patnaik
 
-Use this file as the single source of truth for remaining manual/non-code tasks.
-Add new items here whenever something is deferred.
+Use this file for remaining owner-level tasks before production hardening and open-source release.
 
-## Payments and Donations
+## Production-critical
 
-- [ ] Choose and set up a card payment provider for in-modal checkout.
-  - Why: `Pay by card` needs a real hosted checkout/embed URL.
-  - Note: Card processing without a gateway is not practical (PCI + banking rails). Card fees are unavoidable.
+- [ ] Configure card checkout provider and set `NEXT_PUBLIC_DONATE_CARD_EMBED_URL`.
+  - File: `apps/web/.env.local` and production web env.
+  - Requirement: iframe-embeddable checkout URL and provider domain allowlist for local + production origins.
 
-- [ ] Add card embed URL in web env.
-  - File: `apps/web/.env.local`
-  - Key: `NEXT_PUBLIC_DONATE_CARD_EMBED_URL`
-  - Requirement: must be an iframe-embeddable checkout URL from your provider.
-
-- [ ] Configure provider dashboard for embed usage.
-  - Allowlist local/dev and production origins if provider requires domain allowlisting.
-  - Verify checkout works on both desktop and mobile.
-
-- [ ] Finalize OnlyChai page/account details.
-  - Set these web env vars instead of committing personal payment IDs in git:
+- [ ] Set donation identity via environment, not code defaults.
+  - Keys:
     - `NEXT_PUBLIC_DONATE_PAYEE_NAME`
     - `NEXT_PUBLIC_DONATE_UPI_ID`
-  - Validate that users can complete payment successfully.
+    - Optional: `NEXT_PUBLIC_DONATE_UPI_NOTE`
 
-- [ ] Keep payment identifiers out of version control.
-  - Deployment/CI should provide `NEXT_PUBLIC_DONATE_PAYEE_NAME` and `NEXT_PUBLIC_DONATE_UPI_ID`.
-  - Do not commit real personal UPI/name values in tracked docs or source files.
+- [ ] Remove personal fallback donation values from source before release.
+  - Current hardcoded defaults exist in `apps/web/src/components/DonateBookmark.tsx`.
 
-## Donation UX Assets and Content
-
-- [ ] Finalize production icon assets for donate FAB.
-  - Expected paths:
-    - `apps/web/public/icons/chai-fab-light.png`
-    - `apps/web/public/icons/chai-fab-dark.png`
-  - Keep square canvas, rounded-corner composition, and good contrast for both themes.
-
-- [ ] (Optional) Use a custom hosted QR image instead of generated QR.
-  - File: `apps/web/.env.local`
-  - Key: `NEXT_PUBLIC_DONATE_UPI_QR_URL`
-  - If not set, app generates QR locally from UPI URI.
-
-## Runtime and Environment
-
-- [ ] Add local dev fallback env for HTML-to-PDF if TLS handshake issues appear.
-  - File: `apps/worker/.env`
-  - Key: `ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK=1`
-  - Scope: local/dev usage only with `ZENPDF_DEV_MODE=1`.
-
-- [ ] Reinstall worker dependencies after requirement updates.
-  - Command: `cd apps/worker && python3.11 -m pip install -r requirements.txt`
-  - Note: `fpdf2` pin is now `2.8.4` to avoid install failure.
-
-## Feedback Board Admin Controls
-
-- [ ] Configure who can resolve feedback items.
-  - File: `apps/web/.env.local` (and production env dashboard)
+- [ ] Configure feedback-board admins for production.
   - Keys:
-    - `ZENPDF_FEEDBACK_ADMIN_CLERK_IDS` (comma-separated Clerk user IDs)
-    - `ZENPDF_FEEDBACK_ADMIN_EMAILS` (comma-separated lowercased emails)
-  - Behavior: if both keys are empty, resolving is allowed only in non-production.
+    - `ZENPDF_FEEDBACK_ADMIN_CLERK_IDS`
+    - `ZENPDF_FEEDBACK_ADMIN_EMAILS`
+  - Behavior today: if both are empty, access to resolve feedback is only allowed in non-production.
 
-## Release and Process
+- [ ] Run full smoke tests before final production merge.
+  - Include upload -> process -> download across representative tools and formats.
 
-- [ ] Before final production PR merge, run full smoke tests on all tools in local/dev.
-  - Include upload -> process -> download for representative file types.
+- [ ] Confirm production env values are set in deployment targets.
+  - Web: donation + feedback admin env keys.
+  - Worker: browser/OCR/office/runtime keys required by current tool behavior.
 
-- [ ] Keep CodeRabbit pre-push review step in workflow.
-  - Rule agreed: run CodeRabbit and address findings before push/PR updates.
+## Runtime hardening
 
-- [ ] Confirm production env values in deployment targets.
-  - Web: donation-related `NEXT_PUBLIC_*` keys.
-  - Worker: runtime keys needed for web-to-pdf and OCR behavior.
+- [ ] Ensure Chromium is available in every worker runtime.
+  - Local check: `chromium --version` or `google-chrome --version`.
+  - Optional override: `ZENPDF_BROWSER_PATH`.
+  - Note: project Dockerfile already installs Chromium; verify non-Docker runtimes separately.
+
+- [ ] Decide PDF/A validation strategy for production.
+  - Option A: install `veraPDF` in worker images for stricter conformance validation.
+  - Option B: keep current structural fallback only.
+
+- [ ] Use hostname fallback only for local/dev TLS issues.
+  - Key: `ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK=1`
+  - Scope: only with `ZENPDF_DEV_MODE=1`.
+
+## Config tuning and docs alignment
+
+- [ ] Tune OCR and office conversion knobs for expected workload.
+  - OCR:
+    - `ZENPDF_OCR_PROFILE`
+    - `ZENPDF_OCR_TEXT_DENSITY_THRESHOLD`
+    - `ZENPDF_OCR_PREPROCESS_THRESHOLD`
+  - Office:
+    - `ZENPDF_OFFICE_TIMEOUT_BASE_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_PER_MB_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS`
+
+- [ ] Add missing runtime knobs to `apps/worker/.env.example` for operator discoverability.
+  - Add at least:
+    - `ZENPDF_BROWSER_PATH`
+    - `ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK`
+    - `ZENPDF_WEB_ALLOW_INSECURE_SSL` (dev only)
+    - `ZENPDF_OCR_PROFILE`
+    - `ZENPDF_OCR_TEXT_DENSITY_THRESHOLD`
+    - `ZENPDF_OCR_PREPROCESS_THRESHOLD`
+    - `ZENPDF_OFFICE_TIMEOUT_BASE_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_PER_MB_SECONDS`
+    - `ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS`
+
+- [ ] Finalize donate FAB icon strategy.
+  - Default currently uses `/icons/chai.png`.
+  - Optional themed overrides:
+    - `NEXT_PUBLIC_DONATE_ICON_LIGHT`
+    - `NEXT_PUBLIC_DONATE_ICON_DARK`
+  - Optional hosted QR override:
+    - `NEXT_PUBLIC_DONATE_UPI_QR_URL`

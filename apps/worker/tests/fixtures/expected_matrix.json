@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "tools": {
+    "merge": ["page_count", "order"],
+    "split": ["zip_contains_expected_parts"],
+    "compress": ["valid_pdf", "savings_or_no_change"],
+    "pdf-to-word": ["mode_behavior", "text_presence"],
+    "pdf-to-powerpoint": ["slide_ratio", "image_fit"],
+    "pdf-to-excel": ["mode_behavior", "table_or_text_presence"],
+    "word-to-pdf": ["valid_pdf"],
+    "powerpoint-to-pdf": ["valid_pdf"],
+    "excel-to-pdf": ["valid_pdf"],
+    "edit-pdf": ["operation_applied"],
+    "pdf-to-jpg": ["zip_contains_images"],
+    "jpg-to-pdf": ["valid_pdf"],
+    "sign-pdf": ["signature_text", "anchor_bounds"],
+    "watermark": ["watermark_presence"],
+    "rotate": ["rotation_applied", "strict_angle_validation"],
+    "html-to-pdf": ["render_mode_behavior"],
+    "unlock": ["decrypt_success"],
+    "protect": ["encrypt_success"],
+    "organize-pdf": ["delete_order_rotate_applied"],
+    "pdfa": ["conversion_success", "post_validation"],
+    "repair": ["pipeline_fallback", "valid_pdf"],
+    "page-numbers": ["numbering_mode_behavior"],
+    "scan-to-pdf": ["valid_pdf"],
+    "ocr-pdf": ["searchable_output"],
+    "compare": ["text_diff", "visual_diff_section"],
+    "redact": ["match_mode_behavior", "ocr_assist_path"],
+    "crop": ["box_dimensions" ]
+  }
+}

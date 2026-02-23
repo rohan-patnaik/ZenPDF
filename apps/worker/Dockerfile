@@ -5,7 +5,10 @@ WORKDIR /app
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
         ca-certificates \
+        chromium \
         fonts-dejavu-core \
+        fonts-liberation \
+        fonts-noto-core \
         ghostscript \
         jbig2enc \
         libreoffice \

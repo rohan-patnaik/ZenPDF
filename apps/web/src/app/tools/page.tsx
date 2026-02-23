@@ -44,11 +44,12 @@ type ToolField = {
   label: string;
   placeholder: string;
   helper?: string;
-  type?: "text" | "number" | "password" | "textarea";
+  type?: "text" | "number" | "password" | "textarea" | "select";
   required?: boolean;
   min?: number;
   max?: number;
   step?: number;
+  options?: Array<{ label: string; value: string }>;
 };
 
 type ToolDefinition = {
@@ -66,6 +67,7 @@ const IMAGE_ACCEPT = "image/*,.png,.jpg,.jpeg";
 const WORD_ACCEPT = "application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.doc,.docx";
 const POWERPOINT_ACCEPT = "application/vnd.ms-powerpoint,application/vnd.openxmlformats-officedocument.presentationml.presentation,.ppt,.pptx";
 const EXCEL_ACCEPT = "application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,.xls,.xlsx";
+const SIGN_ACCEPT = "application/pdf,.pdf,image/*,.png,.jpg,.jpeg,.webp,.p12,.pfx";
 
 const TOOLS: ToolDefinition[] = [
   {
@@ -88,6 +90,17 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "1-3,4-6",
         helper: "Leave blank to split every page.",
       },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        helper: "Ignore malformed range tokens instead of failing.",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
     ],
   },
   {
@@ -100,23 +113,90 @@ const TOOLS: ToolDefinition[] = [
   {
     id: "pdf-to-word",
     label: "PDF to Word",
-    description: "Convert PDF content into DOCX.",
+    description: "Convert PDF content into DOCX with layout-aware extraction.",
     accept: PDF_ACCEPT,
     multiple: false,
+    fields: [
+      {
+        key: "mode",
+        label: "Mode",
+        placeholder: "auto",
+        helper: "Auto uses layout extraction unless pages are text-light.",
+        type: "select",
+        options: [
+          { label: "Auto", value: "auto" },
+          { label: "Layout", value: "layout" },
+          { label: "Text", value: "text" },
+          { label: "OCR", value: "ocr" },
+        ],
+      },
+      {
+        key: "ocrProfile",
+        label: "OCR profile",
+        placeholder: "balanced",
+        helper: "Affects OCR quality when OCR mode is used.",
+        type: "select",
+        options: [
+          { label: "Balanced", value: "balanced" },
+          { label: "Fast", value: "fast" },
+          { label: "Accurate", value: "accurate" },
+        ],
+      },
+    ],
   },
   {
     id: "pdf-to-powerpoint",
     label: "PDF to PowerPoint",
-    description: "Convert PDF pages into PPTX slides.",
+    description: "Convert PDF pages into PPTX slides (visual or editable).",
     accept: PDF_ACCEPT,
     multiple: false,
+    fields: [
+      {
+        key: "mode",
+        label: "Mode",
+        placeholder: "visual",
+        helper: "Visual keeps fidelity. Editable creates text/image elements best-effort.",
+        type: "select",
+        options: [
+          { label: "Visual fidelity", value: "visual" },
+          { label: "Editable (best effort)", value: "editable" },
+        ],
+      },
+    ],
   },
   {
     id: "pdf-to-excel",
     label: "PDF to Excel",
-    description: "Extract PDF content into XLSX.",
+    description: "Extract PDF tables/content into structured XLSX sheets.",
     accept: PDF_ACCEPT,
     multiple: false,
+    fields: [
+      {
+        key: "mode",
+        label: "Mode",
+        placeholder: "auto",
+        helper: "Auto tries tables first, then OCR when needed.",
+        type: "select",
+        options: [
+          { label: "Auto", value: "auto" },
+          { label: "Table", value: "table" },
+          { label: "Text", value: "text" },
+          { label: "OCR", value: "ocr" },
+        ],
+      },
+      {
+        key: "ocrProfile",
+        label: "OCR profile",
+        placeholder: "balanced",
+        helper: "Affects OCR quality when OCR mode is used.",
+        type: "select",
+        options: [
+          { label: "Balanced", value: "balanced" },
+          { label: "Fast", value: "fast" },
+          { label: "Accurate", value: "accurate" },
+        ],
+      },
+    ],
   },
   {
     id: "word-to-pdf",
@@ -175,21 +255,43 @@ const TOOLS: ToolDefinition[] = [
   {
     id: "sign-pdf",
     label: "Sign PDF",
-    description: "Place a visible electronic signature stamp.",
-    accept: PDF_ACCEPT,
-    multiple: false,
+    description: "Apply visual signature (text/image) or cryptographic signature.",
+    accept: SIGN_ACCEPT,
+    multiple: true,
     fields: [
+      {
+        key: "mode",
+        label: "Sign mode",
+        placeholder: "visual",
+        helper: "Visual: upload 1 PDF + optional image. Cryptographic: upload 1 PDF + .p12/.pfx.",
+        type: "select",
+        options: [
+          { label: "Visual", value: "visual" },
+          { label: "Cryptographic", value: "cryptographic" },
+        ],
+      },
       {
         key: "text",
         label: "Signature text",
         placeholder: "Jane Doe",
-        required: true,
+        helper: "Optional in visual mode if an image is uploaded.",
       },
       {
         key: "pages",
         label: "Pages",
         placeholder: "1,3-4",
         helper: "Leave blank to sign all pages.",
+      },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        helper: "Ignore malformed page tokens instead of failing the job.",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
       },
       {
         key: "x",
@@ -202,6 +304,26 @@ const TOOLS: ToolDefinition[] = [
         label: "Y position (pt)",
         placeholder: "36",
         type: "number",
+      },
+      {
+        key: "anchor",
+        label: "Anchor",
+        placeholder: "custom",
+        helper: "Use an anchor preset or custom x/y.",
+        type: "select",
+        options: [
+          { label: "Custom", value: "custom" },
+          { label: "Top left", value: "top-left" },
+          { label: "Top right", value: "top-right" },
+          { label: "Bottom left", value: "bottom-left" },
+          { label: "Bottom right", value: "bottom-right" },
+        ],
+      },
+      {
+        key: "pkcs12Password",
+        label: "PKCS#12 password",
+        placeholder: "Optional certificate password",
+        type: "password",
       },
     ],
   },
@@ -223,6 +345,16 @@ const TOOLS: ToolDefinition[] = [
         label: "Pages",
         placeholder: "1-3,6",
         helper: "Leave blank to watermark every page.",
+      },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
       },
     ],
   },
@@ -249,6 +381,16 @@ const TOOLS: ToolDefinition[] = [
         max: 270,
         step: 90,
       },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
     ],
   },
   {
@@ -264,6 +406,17 @@ const TOOLS: ToolDefinition[] = [
         label: "Web address",
         placeholder: "https://example.com",
         required: true,
+      },
+      {
+        key: "renderMode",
+        label: "Render mode",
+        placeholder: "browser",
+        helper: "Browser mode keeps page layout; text mode extracts readable content.",
+        type: "select",
+        options: [
+          { label: "Browser", value: "browser" },
+          { label: "Text", value: "text" },
+        ],
       },
     ],
   },
@@ -314,6 +467,17 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "1:90,2:180",
         helper: "Format page:angle with 90/180/270.",
       },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        helper: "Ignore malformed page tokens in order/delete fields.",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
     ],
   },
   {
@@ -350,6 +514,27 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "1-3,6",
         helper: "Leave blank to number every page.",
       },
+      {
+        key: "numberingMode",
+        label: "Numbering mode",
+        placeholder: "selectionIndex",
+        helper: "Selection index counts selected pages sequentially; document index keeps absolute page count.",
+        type: "select",
+        options: [
+          { label: "Selection index (recommended)", value: "selectionIndex" },
+          { label: "Document index (absolute)", value: "documentIndex" },
+        ],
+      },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
     ],
   },
   {
@@ -372,6 +557,18 @@ const TOOLS: ToolDefinition[] = [
         placeholder: "eng",
         helper: "Use Tesseract language code, e.g. eng.",
       },
+      {
+        key: "ocrProfile",
+        label: "OCR profile",
+        placeholder: "balanced",
+        helper: "Fast is quicker, Accurate is slower but better on noisy scans.",
+        type: "select",
+        options: [
+          { label: "Balanced", value: "balanced" },
+          { label: "Fast", value: "fast" },
+          { label: "Accurate", value: "accurate" },
+        ],
+      },
     ],
   },
   {
@@ -380,6 +577,19 @@ const TOOLS: ToolDefinition[] = [
     description: "Generate a comparison report for two PDFs.",
     accept: PDF_ACCEPT,
     multiple: true,
+    fields: [
+      {
+        key: "includeVisualDiff",
+        label: "Visual diff",
+        placeholder: "true",
+        helper: "Include a low-resolution visual delta summary.",
+        type: "select",
+        options: [
+          { label: "On", value: "true" },
+          { label: "Off", value: "false" },
+        ],
+      },
+    ],
   },
   {
     id: "redact",
@@ -392,7 +602,7 @@ const TOOLS: ToolDefinition[] = [
         key: "text",
         label: "Text to redact",
         placeholder: "CONFIDENTIAL",
-        helper: "Case-sensitive match.",
+        helper: "Default mode uses case-insensitive partial matching.",
         required: true,
       },
       {
@@ -400,6 +610,57 @@ const TOOLS: ToolDefinition[] = [
         label: "Pages",
         placeholder: "1-3,6",
         helper: "Leave blank to scan every page.",
+      },
+      {
+        key: "caseSensitive",
+        label: "Case sensitive",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "wholeWord",
+        label: "Whole word",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "regex",
+        label: "Regex",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "ocrAssist",
+        label: "OCR assist",
+        placeholder: "false",
+        helper: "When no direct text match is found, OCR can redact matching scanned pages.",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
+      },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
       },
     ],
   },
@@ -422,6 +683,16 @@ const TOOLS: ToolDefinition[] = [
         label: "Pages",
         placeholder: "1-3,6",
         helper: "Leave blank to crop every page.",
+      },
+      {
+        key: "tolerantRanges",
+        label: "Tolerant ranges",
+        placeholder: "false",
+        type: "select",
+        options: [
+          { label: "Off", value: "false" },
+          { label: "On", value: "true" },
+        ],
       },
     ],
   },
@@ -485,14 +756,18 @@ type JobRecord = {
   errorCode?: string;
   errorMessage?: string;
   toolResult?: {
-    status: "success" | "no_change" | "failed";
-    method: string;
-    original_bytes: number;
-    output_bytes: number;
-    savings_bytes: number;
-    savings_percent: number;
+    status?: string;
+    method?: string;
+    original_bytes?: number;
+    output_bytes?: number;
+    savings_bytes?: number;
+    savings_percent?: number;
     steps?: Array<{ name: string; ok: boolean; ms: number; notes?: string }>;
     warnings?: string[];
+    standard?: string;
+    compliant?: boolean;
+    validator?: string;
+    details?: string;
   } | null;
   createdAt: number;
   startedAt?: number;
@@ -566,6 +841,7 @@ const JobCard = ({
     job.inputs && job.inputs.length === 1 ? job.inputs[0]?.sizeBytes : undefined;
   const compressionResult =
     job.tool === "compress" ? job.toolResult ?? undefined : undefined;
+  const pdfaResult = job.tool === "pdfa" ? job.toolResult ?? undefined : undefined;
   const noChange = compressionResult?.status === "no_change";
   const hasSavings =
     compressionResult?.status === "success" &&
@@ -617,6 +893,13 @@ const JobCard = ({
               No meaningful size reduction possible (already optimized or image-heavy).
             </div>
           )}
+          {pdfaResult && typeof pdfaResult.compliant === "boolean" && (
+            <div className="mt-1 text-xs text-ink-500">
+              PDF/A {pdfaResult.standard ?? ""}:{" "}
+              {pdfaResult.compliant ? "Compliant" : "Not compliant"}
+              {pdfaResult.validator ? ` · ${pdfaResult.validator}` : ""}
+            </div>
+          )}
           {job.errorCode && (
             <div className="mt-1 text-xs text-red-700">
               {job.errorCode} {job.errorMessage ? `- ${job.errorMessage}` : ""}
@@ -657,8 +940,8 @@ const JobCard = ({
                 )}
                 {hasSavings && compressionResult && (
                   <div className="text-[0.65rem] text-ink-500">
-                    Saved {formatSavingsPercent(compressionResult.savings_percent)} (
-                    {formatBytes(compressionResult.savings_bytes)})
+                    Saved {formatSavingsPercent(compressionResult.savings_percent ?? 0)} (
+                    {formatBytes(compressionResult.savings_bytes ?? 0)})
                   </div>
                 )}
               </div>
@@ -852,6 +1135,8 @@ export default function ToolsPage() {
         : undefined;
     const compressionResult =
       matchingJob.tool === "compress" ? matchingJob.toolResult ?? undefined : undefined;
+    const pdfaResult =
+      matchingJob.tool === "pdfa" ? matchingJob.toolResult ?? undefined : undefined;
     const noChange = compressionResult?.status === "no_change";
     const hasSavings =
       compressionResult?.status === "success" &&
@@ -868,6 +1153,12 @@ export default function ToolsPage() {
       hasSavings,
       savingsBytes: compressionResult?.savings_bytes,
       savingsPercent: compressionResult?.savings_percent,
+      pdfaCompliant:
+        typeof pdfaResult?.compliant === "boolean" ? pdfaResult.compliant : undefined,
+      pdfaValidator:
+        typeof pdfaResult?.validator === "string" ? pdfaResult.validator : undefined,
+      pdfaStandard:
+        typeof pdfaResult?.standard === "string" ? pdfaResult.standard : undefined,
     };
   }, [activeTool, contextJobId, contextToolId, jobs]);
 
@@ -893,6 +1184,17 @@ export default function ToolsPage() {
 
     if (contextResult.noChange && outputSize) {
       return `Output ${outputSize} · No size reduction`;
+    }
+
+    if (contextResult.pdfaCompliant !== undefined) {
+      const pdfaState = contextResult.pdfaCompliant ? "PDF/A compliant" : "PDF/A not compliant";
+      const validatorSuffix = contextResult.pdfaValidator
+        ? ` · ${contextResult.pdfaValidator}`
+        : "";
+      const standardPrefix = contextResult.pdfaStandard
+        ? `${contextResult.pdfaStandard} `
+        : "";
+      return `${standardPrefix}${pdfaState}${validatorSuffix}`;
     }
 
     if (outputSize && inputSize) {
@@ -940,10 +1242,22 @@ export default function ToolsPage() {
     if (!tool) {
       return undefined;
     }
-    const config: Record<string, string | number> = {};
+    const config: Record<string, string | number | boolean> = {};
     const numberKeys = new Set(
       tool.fields
         ?.filter((field) => field.type === "number")
+        .map((field) => field.key) ?? [],
+    );
+    const booleanSelectKeys = new Set(
+      tool.fields
+        ?.filter(
+          (field) =>
+            field.type === "select" &&
+            (field.options?.length ?? 0) > 0 &&
+            field.options?.every(
+              (option) => option.value === "true" || option.value === "false",
+            ),
+        )
         .map((field) => field.key) ?? [],
     );
     for (const [key, value] of Object.entries(configValues)) {
@@ -953,6 +1267,8 @@ export default function ToolsPage() {
       if (numberKeys.has(key)) {
         const numericValue = Number(value);
         config[key] = Number.isNaN(numericValue) ? value.trim() : numericValue;
+      } else if (booleanSelectKeys.has(key)) {
+        config[key] = value.trim() === "true";
       } else {
         config[key] = value.trim();
       }
@@ -1089,6 +1405,20 @@ export default function ToolsPage() {
           rows={4}
           className="field-input"
         />
+      ) : field.type === "select" ? (
+        <select
+          id={field.key}
+          value={configValues[field.key] ?? ""}
+          onChange={(event) => updateConfig(field.key, event.target.value)}
+          className="field-input"
+        >
+          <option value="">{field.placeholder || "Select an option"}</option>
+          {(field.options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
       ) : (
         <input
           id={field.key}
