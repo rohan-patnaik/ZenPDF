@@ -43,3 +43,13 @@ ZenPDF is an open-source PDF tools web app with a Next.js frontend, Convex backe
 - Per-feature internal logic: `docs/FEATURE_LOGIC.md`
 - Security, deploy, monitoring, self-host ops: `docs/OPERATIONS.md`
 - Contributor workflow: `CONTRIBUTING.md`
+
+## License
+- ZenPDF is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0`).
+- See `LICENSE` for full terms.
+
+## Attribution
+- Copyright (c) 2026 Rohan Patnaik.
+- Forks and redistributions must preserve copyright and license notices.
+- Hosted modified versions must provide corresponding source code to users under AGPL.
+- See `NOTICE` for attribution details.
