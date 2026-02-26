@@ -1064,9 +1064,9 @@ export default function ToolsPage() {
     [activeTool],
   );
   const toolCatalog = (
-    <div>
+    <div className="min-w-0 w-full">
       {toolGroups.map((group) => (
-        <section key={group.id} aria-label={group.title}>
+        <section key={group.id} aria-label={group.title} className="min-w-0">
           <div className="tool-group-label">{group.title}</div>
           <p className="mb-2 text-xs text-ink-500">{group.description}</p>
           <div className="space-y-2">
@@ -1448,7 +1448,7 @@ export default function ToolsPage() {
             Each tool runs in the background worker, with limits enforced before
             processing begins. Choose a tool, upload files, then queue a job.
           </p>
-          <div className="mt-5 grid gap-3 sm:grid-cols-3">
+          <div className="mt-5 grid grid-cols-1 gap-3 sm:grid-cols-3">
             <div className="task-step">
               <span className="task-step-index">1</span>
               <p className="mt-2 text-sm font-semibold text-ink-900">Select a tool</p>
@@ -1467,8 +1467,8 @@ export default function ToolsPage() {
           </div>
         </section>
 
-        <section className="mt-8 grid gap-6 lg:grid-cols-[0.9fr_1.1fr]">
-          <aside className="paper-card order-2 p-4 sm:p-5 lg:order-1">
+        <section className="mt-8 grid grid-cols-1 gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <aside className="paper-card order-2 min-w-0 w-full p-4 sm:p-5 lg:order-1">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold">Tools</h2>
               <span className="status-pill">{TOOLS.length} available</span>
@@ -1476,16 +1476,19 @@ export default function ToolsPage() {
             <p className="text-xs text-ink-500">
               Grouped by workflow to make feature placement practical and predictable.
             </p>
-            <details className="mt-3 surface-muted p-3 lg:hidden">
+            <details className="mt-3 surface-muted min-w-0 w-full p-3 lg:hidden">
               <summary className="cursor-pointer text-sm font-semibold text-ink-900">
                 Browse full tool catalog
               </summary>
-              <div className="mt-3">{toolCatalog}</div>
+              <div className="mt-3 min-w-0 w-full">{toolCatalog}</div>
             </details>
             <div className="mt-3 hidden lg:block">{toolCatalog}</div>
           </aside>
 
-          <div ref={activeToolPanelRef} className="paper-card order-1 scroll-mt-28 p-4 sm:p-6 lg:order-2">
+          <div
+            ref={activeToolPanelRef}
+            className="paper-card order-1 min-w-0 w-full scroll-mt-28 p-4 sm:p-6 lg:order-2"
+          >
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <span className="ink-label">Active tool</span>
@@ -1521,7 +1524,7 @@ export default function ToolsPage() {
                 ))}
               </div>
             </div>
-            <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3">
               <div className="surface-muted p-3">
                 <p className="ink-label">Input mode</p>
                 <p className="mt-1 text-sm font-semibold text-ink-900">
