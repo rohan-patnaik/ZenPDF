@@ -37,20 +37,21 @@ bool openLogFile() {
     return true;
 }
 
-void rotateLog() {
+bool rotateLog() {
     if (logFile != nullptr) {
         logFile->close();
         logFile.reset();
     }
     const auto rotatedPath = logPath + QStringLiteral(".1");
     QFile::remove(rotatedPath);
-    if (QFileInfo(logPath).size() <= maximumLogBytes) {
-        QFile::rename(logPath, rotatedPath);
+    const bool rotated = QFileInfo(logPath).size() <= maximumLogBytes &&
+                         QFile::rename(logPath, rotatedPath);
+    if (rotated) {
         QFile::setPermissions(rotatedPath, kOwnerFilePermissions);
-    } else {
-        QFile::remove(logPath);
+    } else if (QFileInfo::exists(logPath) && !QFile::remove(logPath)) {
+        return false;
     }
-    openLogFile();
+    return openLogFile();
 }
 
 QByteArray boundedLogLine(QtMsgType type, const QMessageLogContext& context, const QString& message) {
@@ -78,7 +79,9 @@ void writeMessage(QtMsgType type, const QMessageLogContext& context, const QStri
         return;
     }
     if (logFile->size() + line.size() > maximumLogBytes) {
-        rotateLog();
+        if (!rotateLog()) {
+            return;
+        }
     }
     if (logFile != nullptr && logFile->isOpen()) {
         logFile->write(line);
