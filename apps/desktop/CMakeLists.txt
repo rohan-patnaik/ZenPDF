@@ -18,6 +18,8 @@ add_library(zenpdf_core STATIC
     src/LocalState.h
     src/Logging.cpp
     src/Logging.h
+    src/PrintPolicy.cpp
+    src/PrintPolicy.h
     src/QpdfOperations.cpp
     src/QpdfOperations.h
 )
@@ -62,6 +64,9 @@ if(BUILD_TESTING)
     add_executable(zenpdf_logging_tests tests/LoggingTest.cpp)
     target_link_libraries(zenpdf_logging_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_logging_tests COMMAND zenpdf_logging_tests)
+    add_executable(zenpdf_print_policy_tests tests/PrintPolicyTest.cpp)
+    target_link_libraries(zenpdf_print_policy_tests PRIVATE zenpdf_core Qt6::Test)
+    add_test(NAME zenpdf_print_policy_tests COMMAND zenpdf_print_policy_tests)
     add_executable(zenpdf_qpdf_tests tests/QpdfOperationsTest.cpp)
     target_link_libraries(zenpdf_qpdf_tests PRIVATE zenpdf_core Qt6::Gui Qt6::Test)
     add_test(NAME zenpdf_qpdf_tests COMMAND zenpdf_qpdf_tests)
@@ -74,6 +79,7 @@ if(BUILD_TESTING)
         tests/DocumentWidgetTest.cpp
     )
     target_link_libraries(zenpdf_document_widget_tests PRIVATE
+        zenpdf_core
         Qt6::Pdf
         Qt6::PdfWidgets
         Qt6::PrintSupport

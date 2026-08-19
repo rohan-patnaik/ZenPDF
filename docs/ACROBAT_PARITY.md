@@ -34,7 +34,7 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 | Rotate view | not-started | Rotation must not silently modify the source. |
 | Continuous, single, and two-page views | partial | Continuous and single-page modes exist; two-page and position regression coverage remain. |
 | Presentation/full-screen reading | partial | F11 full-screen toggle exists; Escape, screen selection, and compositor tests remain. |
-| Print | partial | Local range printing renders one bounded page at a time with cancellation; permission handling and real printer/backend tests remain. |
+| Print | partial | Local range printing is capped at 100 pages and 2048-pixel renders. Cancellation is honored between synchronous Qt PDF page renders; in-render cancellation, permission handling, and real printer/backend tests remain. |
 | Insert pages | not-started | Requires undo plus save/reopen fixture. |
 | Delete pages | not-started | Prevent empty output and require undo. |
 | Reorder pages | not-started | Requires drag/keyboard paths and undo. |

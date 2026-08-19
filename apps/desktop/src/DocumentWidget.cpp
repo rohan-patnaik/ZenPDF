@@ -1,5 +1,7 @@
 #include "DocumentWidget.h"
 
+#include "PrintPolicy.h"
+
 #include <QAction>
 #include <QAbstractListModel>
 #include <QApplication>
@@ -41,7 +43,6 @@ namespace {
 constexpr int kThumbnailWidth = 128;
 constexpr int kMaximumThumbnailHeight = 512;
 constexpr int kThumbnailCacheBytes = 32 * 1024 * 1024;
-constexpr int kMaximumPrintDimension = 4096;
 
 class ThumbnailModel final : public QAbstractListModel {
 public:
@@ -301,13 +302,25 @@ void DocumentWidget::printDocument() {
 
     const int firstPage = printer.fromPage() > 0 ? printer.fromPage() - 1 : 0;
     const int lastPage = printer.toPage() > 0 ? printer.toPage() - 1 : document_->pageCount() - 1;
+    if (lastPage - firstPage + 1 > PrintPolicy::maximumPagesPerJob) {
+        QMessageBox::warning(
+            this,
+            tr("Print range is too large"),
+            tr("Choose at most %1 pages per print job.").arg(PrintPolicy::maximumPagesPerJob));
+        return;
+    }
     QPainter painter;
     if (!painter.begin(&printer)) {
         QMessageBox::warning(this, tr("Could not print"), tr("The selected print device could not be started."));
         return;
     }
 
-    QProgressDialog progress(tr("Rendering pages locally…"), tr("Cancel"), firstPage, lastPage + 1, this);
+    QProgressDialog progress(
+        tr("Rendering locally; cancellation applies between pages…"),
+        tr("Cancel"),
+        firstPage,
+        lastPage + 1,
+        this);
     progress.setWindowTitle(tr("Printing"));
     progress.setWindowModality(Qt::WindowModal);
     progress.setMinimumDuration(0);
@@ -324,12 +337,21 @@ void DocumentWidget::printDocument() {
             break;
         }
         const QSizeF points = document_->pagePointSize(page);
-        QSize renderSize = points.scaled(paintRect.size(), Qt::KeepAspectRatio).toSize();
-        if (renderSize.width() > kMaximumPrintDimension || renderSize.height() > kMaximumPrintDimension) {
-            renderSize.scale(kMaximumPrintDimension, kMaximumPrintDimension, Qt::KeepAspectRatio);
+        const auto renderSize = PrintPolicy::boundedRenderSize(points, paintRect.size());
+        if (!renderSize.has_value()) {
+            QMessageBox::warning(this, tr("Print stopped"), tr("A page exceeds the safe print dimensions."));
+            break;
         }
-        const QImage image = document_->render(page, renderSize);
-        if (image.isNull()) {
+        QImage image;
+        const auto decision = PrintPolicy::renderIfNotCancelled(progress.wasCanceled(), [&] {
+            image = document_->render(page, *renderSize);
+            return !image.isNull();
+        });
+        if (decision == PrintRenderDecision::Cancelled) {
+            printer.abort();
+            break;
+        }
+        if (decision == PrintRenderDecision::Failed) {
             QMessageBox::warning(this, tr("Print stopped"), tr("A page could not be rendered safely."));
             break;
         }
