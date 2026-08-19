@@ -10,8 +10,8 @@ Adobe AI Assistant, PDF Spaces, Express templates, Adobe cloud sharing, account 
 
 - Native C++23/Qt 6 desktop app under `apps/desktop`, optimized for Arch/Wayland.
 - Qt Widgets for mature document tabs, docking, accessibility, printing, and input handling.
-- PDFium for rendering and low-level page inspection; qpdf for structural transformations and encryption; dedicated adapters keep engines replaceable.
-- Tesseract/Leptonica for offline OCR; LibreOffice integration is optional and isolated for office conversions.
+- Historical candidates (not accepted architecture decisions): PDFium for rendering and low-level page inspection, and qpdf for structural transformations and encryption. Dedicated adapters are intended to keep engines replaceable; current accepted boundaries are recorded by ADR.
+- Historical candidates (not adopted): Tesseract/Leptonica for offline OCR and isolated optional LibreOffice integration for office conversions.
 - RAII, QObject parent ownership, smart pointers, bounded caches, and background jobs with cancellation.
 - SQLite for recent files, preferences, indexes, autosave metadata, and audit logs; document content stays in user-selected files.
 - Sandboxed or reduced-privilege helper processes for high-risk parsing and conversions where Omarchy supports them.
