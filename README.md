@@ -40,12 +40,26 @@ The root `manifest.json` and `Plugin.qml` provide the Omarchy Quattro plugin con
    - `cd apps/worker && python -m pip install -r requirements.txt && python main.py`
 6. Open `http://localhost:3000`.
 
+## Desktop build
+
+ZenPDF Desktop is built independently, so the existing web and worker products keep their current toolchains. With Qt 6 Base, CMake 3.25+, Ninja, and a C++23 compiler installed:
+
+```sh
+cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/desktop
+ctest --test-dir build/desktop --output-on-failure
+```
+
+See `apps/desktop/README.md` for local-data and packaging details. Desktop progress is tracked without parity claims in `docs/ACROBAT_PARITY.md`.
+
 ## Core docs
 - Product scope: `docs/PRD.md`
 - System design: `docs/ARCHITECTURE.md`
 - Per-feature internal logic: `docs/FEATURE_LOGIC.md`
 - Security, deploy, monitoring, self-host ops: `docs/OPERATIONS.md`
 - Contributor workflow: `CONTRIBUTING.md`
+- Desktop capability matrix: `docs/ACROBAT_PARITY.md`
+- Desktop security and recovery model: `docs/DESKTOP_SECURITY.md`
 
 ## License
 - ZenPDF is licensed under the GNU Affero General Public License v3.0 (`AGPL-3.0`).

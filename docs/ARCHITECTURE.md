@@ -5,16 +5,24 @@
 - Auth: Clerk with Google sign-in only.
 - Backend: Convex as system of record.
 - Worker: Cloud Run container `pdf-worker` (Python) for heavy PDF processing.
+- Desktop: C++23 + Qt 6 Widgets, independently runnable and entirely local-first.
 
 ## Repo Layout
 - `apps/web`: Next.js app (Vercel root directory).
 - `apps/worker`: Cloud Run worker for PDF processing.
+- `apps/desktop`: native Arch/Wayland application with its own build and tests.
 - `docs`: product and architecture docs.
 
-## Local Self-Hosted
+## Local Self-Hosted Web Product
 - Run the web app, Convex dev, and worker locally.
 - Provide Docker Compose or scripts for a one-command local stack.
-- Desktop installers are out of scope.
+
+## Native Desktop Boundary
+
+- Desktop state is local SQLite/preferences data under the platform application-data directory.
+- PDF document content is never sent to the web app, Convex, the worker, or telemetry.
+- PDF rendering and structural-editing engines are behind desktop-only adapters so risky work can move into bounded helper processes without coupling the web product.
+- The root Omarchy plugin only launches the independently installed `zenpdf` binary and reports a missing binary without escalating privileges.
 
 ## Data Model (Convex)
 - Users: tier and auth metadata.

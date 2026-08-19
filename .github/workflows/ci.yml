@@ -1,6 +1,8 @@
 name: CI
 
 on:
+  push:
+    branches: ["main", "feat/**"]
   pull_request:
     branches: ["main"]
   workflow_dispatch:
@@ -46,3 +48,16 @@ jobs:
         run: pip install -r requirements-dev.txt
       - name: Tests
         run: pytest -v --tb=short
+  desktop:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install native dependencies
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev libqt6sql6-sqlite
+      - name: Configure
+        run: cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
+      - name: Build
+        run: cmake --build build/desktop --parallel 2
+      - name: Test
+        run: ctest --test-dir build/desktop --output-on-failure

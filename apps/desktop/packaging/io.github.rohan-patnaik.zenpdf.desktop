@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=ZenPDF
+Comment=Private, local-first PDF workspace
+Exec=zenpdf %F
+Terminal=false
+Categories=Office;Viewer;
+MimeType=application/pdf;
+StartupNotify=true
+StartupWMClass=zenpdf

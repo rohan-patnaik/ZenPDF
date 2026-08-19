@@ -8,14 +8,14 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 
 | Workflow | State | Verification evidence / remaining work |
 | --- | --- | --- |
-| Native Arch/Wayland application launch | not-started | Requires packaged launch on Omarchy Quattro. |
-| Multi-document tabbed workspace | not-started | Requires tab lifecycle and recovery tests. |
-| System theme and high-contrast bridge | not-started | Requires light/dark and portal coverage. |
-| Persistent local preferences | not-started | Requires migration and corrupt-settings coverage. |
-| Structured local diagnostics | not-started | Logs must exclude document content and sensitive paths by default. |
+| Native Arch/Wayland application launch | partial | Native target and desktop metadata exist; packaged launch on Omarchy Quattro remains. |
+| Multi-document tabbed workspace | partial | Movable/closable tabs exist; document lifecycle and recovery tests remain. |
+| System theme and high-contrast bridge | partial | Uses the native Qt platform theme; portal and real high-contrast coverage remain. |
+| Persistent local preferences | partial | Window state persists; preference migration and corrupt-settings coverage remain. |
+| Structured local diagnostics | partial | Bounded local log is implemented; privacy/error-category tests remain. |
 | Crash/session recovery | not-started | Requires atomic journal fixtures and interrupted-write tests. |
-| Omarchy menu launch | partial | Manifest exists; missing-binary diagnostics and device validation remain. |
-| Arch package and portable bundle | not-started | Requires reproducibility, SBOM, and install/remove tests. |
+| Omarchy menu launch | partial | Launcher reports a missing binary via notification/stderr; device validation remains. |
+| Arch package and portable bundle | partial | Development PKGBUILD exists; reproducibility, SBOM, and install/remove tests remain. |
 
 ## M1 — reader and organizer
 
@@ -28,7 +28,7 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 | Outline/bookmark navigation | not-started | Cover nested and malformed outlines. |
 | Attachment viewing/extraction | not-started | Extraction requires explicit destination and hostile-name handling. |
 | Document metadata inspection | not-started | Must distinguish absent and malformed metadata. |
-| Recent local files | not-started | Missing-file and privacy-clearing behavior required. |
+| Recent local files | partial | Bounded SQLite store and clear behavior are unit-tested; reader UI and missing-file flow remain. |
 | Page number navigation | not-started | Validate bounds and labels. |
 | Zoom, actual size, fit width/page | not-started | Cover keyboard shortcuts and extreme values. |
 | Rotate view | not-started | Rotation must not silently modify the source. |

@@ -1,0 +1,29 @@
+pkgname=zenpdf-git
+pkgver=0.1.0
+pkgrel=1
+pkgdesc='Private, local-first PDF workspace'
+arch=('x86_64')
+url='https://github.com/rohan-patnaik/ZenPDF'
+license=('AGPL-3.0-only')
+depends=('qt6-base')
+makedepends=('cmake' 'git' 'ninja')
+source=('git+https://github.com/rohan-patnaik/ZenPDF.git')
+sha256sums=('SKIP')
+
+pkgver() {
+  cd ZenPDF
+  git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || printf '0.1.0.r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+}
+
+build() {
+  cmake -S ZenPDF/apps/desktop -B build -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DCMAKE_INSTALL_PREFIX=/usr \
+    -DBUILD_TESTING=OFF
+  cmake --build build
+}
+
+package() {
+  DESTDIR="$pkgdir" cmake --install build
+  install -Dm644 ZenPDF/LICENSE "$pkgdir/usr/share/licenses/$pkgname/LICENSE"
+}
