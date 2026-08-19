@@ -157,3 +157,44 @@ jobs:
       - name: Test
         timeout-minutes: 5
         run: ctest --test-dir build/desktop --output-on-failure
+  desktop-arch-package:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    timeout-minutes: 30
+    steps:
+      - name: Install package toolchain
+        run: pacman -Syu --noconfirm --needed git base-devel cmake ninja qpdf qt6-base qt6-pdf
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Build, test, and install exact-revision package
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          source_root=$(mktemp -d)
+          mkdir "$source_root/ZenPDF"
+          git archive "$GITHUB_SHA" | tar -x -C "$source_root/ZenPDF"
+          printf '%s\n' "$GITHUB_SHA" > \
+            "$source_root/ZenPDF/.zenpdf-source-revision"
+          source_archive="zenpdf-source-$GITHUB_SHA.tar.gz"
+          tar -C "$source_root" -czf \
+            "apps/desktop/packaging/arch/$source_archive" ZenPDF
+          useradd --create-home package-builder
+          chown -R package-builder:package-builder apps/desktop/packaging/arch
+          runuser -u package-builder -- env \
+            ZENPDF_SOURCE_ARCHIVE="$source_archive" \
+            ZENPDF_EXPECTED_REVISION="$GITHUB_SHA" sh -c \
+            'cd apps/desktop/packaging/arch && makepkg --cleanbuild --clean --noconfirm'
+          package_count=$(find apps/desktop/packaging/arch -maxdepth 1 -type f \
+            -name 'zenpdf-git-*.pkg.tar.zst' ! -name '*-debug-*' | wc -l)
+          test "$package_count" -eq 1
+          package_path=$(find apps/desktop/packaging/arch -maxdepth 1 -type f \
+            -name 'zenpdf-git-*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)
+          package_info=$(pacman -Qip "$package_path")
+          printf '%s\n' "$package_info"
+          package_version=$(printf '%s\n' "$package_info" | \
+            sed -n 's/^Version *: *//p')
+          short_sha=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
+          test "$package_version" = "0.1.0.r0.g$short_sha-1"
+          pacman -U --noconfirm "$package_path"
+          test -x /usr/bin/zenpdf
+          pacman -Q zenpdf-git

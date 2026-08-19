@@ -1,5 +1,5 @@
 pkgname=zenpdf-git
-pkgver=0.1.0
+pkgver=0.1.0.r0.g0000000
 pkgrel=1
 pkgdesc='Private, local-first PDF workspace'
 arch=('x86_64')
@@ -7,20 +7,45 @@ url='https://github.com/rohan-patnaik/ZenPDF'
 license=('AGPL-3.0-only')
 depends=('qpdf' 'qt6-base' 'qt6-pdf')
 makedepends=('cmake' 'git' 'ninja')
-source=('git+https://github.com/rohan-patnaik/ZenPDF.git')
+if [[ -n ${ZENPDF_SOURCE_ARCHIVE:-} ]]; then
+  source=("$ZENPDF_SOURCE_ARCHIVE")
+else
+  source=('ZenPDF::git+https://github.com/rohan-patnaik/ZenPDF.git#branch=feat/omarchy-desktop-m0-m1')
+fi
 sha256sums=('SKIP')
 
 pkgver() {
   cd ZenPDF
-  git describe --long --tags 2>/dev/null | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g' || printf '0.1.0.r%s.%s' "$(git rev-list --count HEAD)" "$(git rev-parse --short HEAD)"
+  if [[ -f .zenpdf-source-revision ]]; then
+    local revision
+    revision=$(<.zenpdf-source-revision)
+    [[ $revision =~ ^[0-9a-f]{40}$ ]] || return 1
+    printf '0.1.0.r0.g%s' "${revision:0:7}"
+    return
+  fi
+  printf '0.1.0.r%s.g%s' "$(git rev-list --count HEAD)" \
+    "$(git rev-parse --short=7 HEAD)"
+}
+
+prepare() {
+  if [[ -n ${ZENPDF_EXPECTED_REVISION:-} ]]; then
+    [[ -f ZenPDF/.zenpdf-source-revision ]]
+    local revision
+    revision=$(<ZenPDF/.zenpdf-source-revision)
+    [[ $revision == "$ZENPDF_EXPECTED_REVISION" ]]
+  fi
 }
 
 build() {
   cmake -S ZenPDF/apps/desktop -B build -G Ninja \
     -DCMAKE_BUILD_TYPE=Release \
     -DCMAKE_INSTALL_PREFIX=/usr \
-    -DBUILD_TESTING=OFF
+    -DBUILD_TESTING=ON
   cmake --build build
+}
+
+check() {
+  ctest --test-dir build --output-on-failure
 }
 
 package() {
