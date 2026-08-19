@@ -1,35 +1,79 @@
 {
-  "schema": 1,
-  "ci": {
-    "qt": {
-      "version": "6.7.3",
-      "installerActionCommit": "48d3ad6db93f3627c8ee7a0454bc6f3744f7e730",
-      "aqtinstall": "3.2.1",
-      "py7zr": "0.22.0"
-    },
-    "qpdf": {
-      "version": "12.4.0",
-      "sha256": "a3bca240f3bb61efdc3a90be89d1da4ed5e125326c3458c4e62df53ff4f153e3"
-    },
-    "libgl-dev": {
-      "version": "1.7.0-1build1",
-      "sha256": "b7145fd8f8abe20d5cb436d2eae9b3235bd91be6fbddac581620d16763bd9250"
-    },
-    "libegl1": {
-      "version": "1.7.0-1build1",
-      "sha256": "e549f7776216f7bd3b1c216729fb40a97a562e2eb7c563cde632b4931f9a4e57"
-    },
-    "libcups2-dev": {
-      "version": "2.4.7-1.2ubuntu7.14",
-      "sha256": "f2c4a43590f2784ac05dadb8522b6cd47c33f7ba0eba258661897ccf53dcb093"
+  "schema": 2,
+  "actions": {
+    "checkout": {
+      "repository": "actions/checkout",
+      "commit": "11d5960a326750d5838078e36cf38b85af677262"
     }
   },
-  "runtime": [
-    {"name": "Qt Base", "version": "6.7.3", "license": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"},
-    {"name": "Qt PDF", "version": "6.7.3", "license": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"},
-    {"name": "PDFium", "version": "bundled-with-Qt-6.7.3", "license": "BSD-3-Clause"},
-    {"name": "qpdf", "version": "12.4.0", "license": "Apache-2.0"},
-    {"name": "CUPS", "version": "2.4.7-1.2ubuntu7.14", "license": "Apache-2.0"},
-    {"name": "libglvnd", "version": "1.7.0-1build1", "license": "MIT"}
-  ]
+  "containers": {
+    "governance-worker": {
+      "image": "python",
+      "tag": "3.11.13-slim-bookworm",
+      "digest": "sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1"
+    },
+    "web": {
+      "image": "node",
+      "tag": "20.19.4-bookworm-slim",
+      "digest": "sha256:6db5e436948af8f0244488a1f658c2c8e55a3ae51ca2e1686ed042be8f25f70a"
+    },
+    "desktop": {
+      "image": "archlinux",
+      "tag": "base-devel-20260816.0.574111",
+      "digest": "sha256:714acd1eef9ae997d95691b1c5220ada0076185b77857c1813f02de0fa83cf7b"
+    }
+  },
+  "locks": {
+    "web": {
+      "path": "apps/web/package-lock.json",
+      "sha256": "a99a06be5436bd2d6d34e3da1960e5e57969c3c0e20125f2fbad574fc562337b"
+    },
+    "worker": {
+      "path": "apps/worker/requirements-ci.lock",
+      "sha256": "d27c46b358f8eca53aa2d32ca95f8177866858c2bc96fb809fe732dddb60cd2d"
+    }
+  },
+  "arch": {
+    "snapshot": "2026/08/17",
+    "repositoryUrl": "https://archive.archlinux.org/repos/2026/08/17/$repo/os/$arch",
+    "hashManifest": "apps/desktop/ci/arch-packages.sha256",
+    "packages": [
+      {
+        "name": "cmake",
+        "version": "4.4.2-1",
+        "filename": "cmake-4.4.2-1-x86_64.pkg.tar.zst",
+        "sha256": "b59e2cbdf004d264480a048a2d3b65d023613eef78a5d11b4bc4d363617ff3d6"
+      },
+      {
+        "name": "git",
+        "version": "2.55.0-1",
+        "filename": "git-2.55.0-1-x86_64.pkg.tar.zst",
+        "sha256": "fbb24f455cb1de1c004a76b5a4dab92e4a9137764fbc3bc46afe13b7a38814fe"
+      },
+      {
+        "name": "ninja",
+        "version": "1.13.2-3",
+        "filename": "ninja-1.13.2-3-x86_64.pkg.tar.zst",
+        "sha256": "19e12c1a169d27e427c3fa678ed3573825ac2a1043c6d47dd96e76ec3d34236c"
+      },
+      {
+        "name": "qpdf",
+        "version": "12.3.2-2",
+        "filename": "qpdf-12.3.2-2-x86_64.pkg.tar.zst",
+        "sha256": "c35c98609645a4209a3a644cf9a36de6cd6d8f8672662cdd369713a33d898d31"
+      },
+      {
+        "name": "qt6-base",
+        "version": "6.11.1-1",
+        "filename": "qt6-base-6.11.1-1-x86_64.pkg.tar.zst",
+        "sha256": "bba875581f1a750180603ff412155313023a98b13ccf318cc699e65025faf2d5"
+      },
+      {
+        "name": "qt6-webengine",
+        "version": "6.11.1-5",
+        "filename": "qt6-webengine-6.11.1-5-x86_64.pkg.tar.zst",
+        "sha256": "a5c970eaaae07484a16b62e45a9ec32b234c2d52b87b45c47633a57b0bbae5ce"
+      }
+    ]
+  }
 }

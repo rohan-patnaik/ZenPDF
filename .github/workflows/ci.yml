@@ -7,169 +7,129 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
+env:
+  CHECKOUT_ACTION_SHA: 11d5960a326750d5838078e36cf38b85af677262
+
 jobs:
-  omarchy-contract:
+  governance:
     runs-on: ubuntu-24.04
-    timeout-minutes: 2
+    container:
+      image: python:3.11.13-slim-bookworm@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1
+    timeout-minutes: 5
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Validate Omarchy launcher
+        timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Validate contracts
+        timeout-minutes: 2
         run: |
           python3 scripts/validate_omarchy_plugin.py
           python3 scripts/validate_desktop_governance.py
+          python3 -m unittest discover -s scripts/tests -p 'test_*.py' -v
+
   web:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: node:20.19.4-bookworm-slim@sha256:6db5e436948af8f0244488a1f658c2c8e55a3ae51ca2e1686ed042be8f25f70a
+    timeout-minutes: 15
+    env:
+      NEXT_PUBLIC_CONVEX_URL: https://ci-placeholder.convex.cloud
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2ktcGxhY2Vob2xkZXIuZXhhbXBsZS5jb20k
     defaults:
       run:
         working-directory: apps/web
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-          cache: "npm"
-          cache-dependency-path: apps/web/package-lock.json
-      - name: Install deps
-        run: npm ci
+        timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install locked dependencies
+        timeout-minutes: 5
+        run: npm ci --ignore-scripts=false --no-audit --no-fund
       - name: Lint
+        timeout-minutes: 3
         run: npm run lint
       - name: Unit tests
+        timeout-minutes: 3
         run: npm run test
       - name: Integration tests
+        timeout-minutes: 3
         run: npm run test:integration
+      - name: Production build
+        timeout-minutes: 5
+        run: npm run build
+
   worker:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    container:
+      image: python:3.11.13-slim-bookworm@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/worker
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-          cache: "pip"
-          cache-dependency-path: apps/worker/requirements-dev.txt
-      - name: Install deps
-        run: pip install -r requirements-dev.txt
-      - name: Tests
-        run: pytest -v --tb=short
-  desktop:
-    runs-on: ubuntu-24.04
-    timeout-minutes: 20
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install pinned Qt SDK
-        timeout-minutes: 8
-        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
-        with:
-          version: "6.7.3"
-          modules: "qtpdf"
-          cache: true
-          cache-key-prefix: "zenpdf-qt-6.7.3"
-          install-deps: false
-          aqtversion: "==3.2.1"
-          py7zrversion: "==0.22.0"
-      - name: Install pinned qpdf
-        timeout-minutes: 3
-        run: |
-          set -euo pipefail
-          archive="$RUNNER_TEMP/qpdf-12.4.0-bin-linux-x86_64.zip"
-          destination="$RUNNER_TEMP/qpdf-12.4.0"
-          curl --fail --location --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 \
-            --output "$archive" \
-            https://github.com/qpdf/qpdf/releases/download/v12.4.0/qpdf-12.4.0-bin-linux-x86_64.zip
-          echo "a3bca240f3bb61efdc3a90be89d1da4ed5e125326c3458c4e62df53ff4f153e3  $archive" | sha256sum --check --strict
-          mkdir "$destination"
-          unzip -q "$archive" -d "$destination"
-          qpdf_bin="$(find "$destination" -type f -path '*/bin/qpdf' -print -quit)"
-          test -n "$qpdf_bin"
-          chmod +x "$qpdf_bin"
-          echo "$(dirname "$qpdf_bin")" >> "$GITHUB_PATH"
-      - name: Install pinned native headers
         timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install hashed dependencies
+        timeout-minutes: 8
+        run: >-
+          python3 -m pip install --disable-pip-version-check
+          --require-hashes --retries 3 --timeout 20
+          -r requirements-ci.lock
+      - name: Tests
+        timeout-minutes: 5
+        run: python3 -m pytest -v --tb=short
+
+  desktop-arch-package:
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel-20260816.0.574111@sha256:714acd1eef9ae997d95691b1c5220ada0076185b77857c1813f02de0fa83cf7b
+    timeout-minutes: 30
+    env:
+      ARCH_SNAPSHOT: "2026/08/17"
+    steps:
+      - name: Checkout exact revision
+        timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install snapshot toolchain
+        timeout-minutes: 8
         run: |
           set -euo pipefail
-          package="$RUNNER_TEMP/libgl-dev_1.7.0-1build1_amd64.deb"
-          destination="$RUNNER_TEMP/opengl-dev"
-          curl --fail --location --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
-            --output "$package" \
-            https://security.ubuntu.com/ubuntu/pool/main/libg/libglvnd/libgl-dev_1.7.0-1build1_amd64.deb
-          echo "b7145fd8f8abe20d5cb436d2eae9b3235bd91be6fbddac581620d16763bd9250  $package" | sha256sum --check --strict
-          mkdir "$destination"
-          dpkg-deb --extract "$package" "$destination"
-          test -r "$destination/usr/include/GL/gl.h"
-          test -r /usr/lib/x86_64-linux-gnu/libGL.so.1
-          echo "ZENPDF_OPENGL_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
-          package="$RUNNER_TEMP/libegl1_1.7.0-1build1_amd64.deb"
-          destination="$RUNNER_TEMP/egl-runtime"
-          curl --fail --location --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
-            --output "$package" \
-            https://security.ubuntu.com/ubuntu/pool/main/libg/libglvnd/libegl1_1.7.0-1build1_amd64.deb
-          echo "e549f7776216f7bd3b1c216729fb40a97a562e2eb7c563cde632b4931f9a4e57  $package" | sha256sum --check --strict
-          mkdir "$destination"
-          dpkg-deb --extract "$package" "$destination"
-          egl_library_dir="$destination/usr/lib/x86_64-linux-gnu"
-          test -r "$egl_library_dir/libEGL.so.1"
-          echo "ZENPDF_EGL_LIBRARY_DIR=$egl_library_dir" >> "$GITHUB_ENV"
-          echo "LD_LIBRARY_PATH=$egl_library_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
-          package="$RUNNER_TEMP/libcups2-dev_2.4.7-1.2ubuntu7.14_amd64.deb"
-          destination="$RUNNER_TEMP/cups-dev"
-          curl --fail --location --silent --show-error \
-            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
-            --output "$package" \
-            https://security.ubuntu.com/ubuntu/pool/main/c/cups/libcups2-dev_2.4.7-1.2ubuntu7.14_amd64.deb
-          echo "f2c4a43590f2784ac05dadb8522b6cd47c33f7ba0eba258661897ccf53dcb093  $package" | sha256sum --check --strict
-          mkdir "$destination"
-          dpkg-deb --extract "$package" "$destination"
-          test -r "$destination/usr/include/cups/cups.h"
-          test -r /usr/lib/x86_64-linux-gnu/libcups.so.2
-          echo "ZENPDF_CUPS_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
-      - name: Verify native toolchain
+          printf 'Server = https://archive.archlinux.org/repos/%s/$repo/os/$arch\n' \
+            "$ARCH_SNAPSHOT" > /etc/pacman.d/mirrorlist
+          pacman -Syyu --noconfirm --needed \
+            git cmake ninja qpdf qt6-base qt6-webengine
+          pacman -Q git cmake ninja qpdf qt6-base qt6-webengine
+          cd /var/cache/pacman/pkg
+          sha256sum --check \
+            "$GITHUB_WORKSPACE/apps/desktop/ci/arch-packages.sha256"
+      - name: Verify exact toolchain
         timeout-minutes: 1
         run: |
-          cmake --version
-          ninja --version
-          g++ --version
-          qpdf --version
-      - name: Configure
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test "$(pacman -Q git)" = "git 2.55.0-1"
+          test "$(pacman -Q cmake)" = "cmake 4.4.2-1"
+          test "$(pacman -Q ninja)" = "ninja 1.13.2-3"
+          test "$(pacman -Q qpdf)" = "qpdf 12.3.2-2"
+          test "$(pacman -Q qt6-base)" = "qt6-base 6.11.1-1"
+          test "$(pacman -Q qt6-webengine)" = "qt6-webengine 6.11.1-5"
+      - name: Configure native application
         timeout-minutes: 3
         run: >-
           cmake -S apps/desktop -B build/desktop -G Ninja
           -DCMAKE_BUILD_TYPE=Debug
-          -DOpenGL_GL_PREFERENCE=LEGACY
-          -DOPENGL_INCLUDE_DIR="$ZENPDF_OPENGL_INCLUDE"
-          -DOPENGL_gl_LIBRARY=/usr/lib/x86_64-linux-gnu/libGL.so.1
-          -DCUPS_INCLUDE_DIR="$ZENPDF_CUPS_INCLUDE"
-          -DCUPS_LIBRARIES=/usr/lib/x86_64-linux-gnu/libcups.so.2
-          -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,$ZENPDF_EGL_LIBRARY_DIR"
-      - name: Build
-        timeout-minutes: 5
+      - name: Build native application
+        timeout-minutes: 8
         run: cmake --build build/desktop --parallel 2
-      - name: Test
+      - name: Run complete native CTest
         timeout-minutes: 5
         run: ctest --test-dir build/desktop --output-on-failure
-  desktop-arch-package:
-    runs-on: ubuntu-latest
-    container: archlinux:latest
-    timeout-minutes: 30
-    steps:
-      - name: Install package toolchain
-        run: pacman -Syu --noconfirm --needed git base-devel cmake ninja qpdf qt6-base qt6-webengine
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Build, test, and install exact-revision package
+      - name: Build exact-revision Arch package
+        timeout-minutes: 10
         run: |
+          set -euo pipefail
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           source_root=$(mktemp -d)
           mkdir "$source_root/ZenPDF"
           git archive "$GITHUB_SHA" | tar -x -C "$source_root/ZenPDF"
@@ -191,8 +151,7 @@ jobs:
             -name 'zenpdf-git-*.pkg.tar.zst' ! -name '*-debug-*' -print -quit)
           package_info=$(pacman -Qip "$package_path")
           printf '%s\n' "$package_info"
-          package_version=$(printf '%s\n' "$package_info" | \
-            sed -n 's/^Version *: *//p')
+          package_version=$(printf '%s\n' "$package_info" | sed -n 's/^Version *: *//p')
           short_sha=$(printf '%s' "$GITHUB_SHA" | cut -c1-7)
           test "$package_version" = "0.1.0.r0.g$short_sha-1"
           pacman -U --noconfirm "$package_path"

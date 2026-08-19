@@ -1,0 +1,14 @@
+{
+  "schema": 1,
+  "projectLicense": "AGPL-3.0-only",
+  "inventoryScope": "direct-arch-packages",
+  "requireArtifactHashes": true,
+  "requireSpdxSyntax": true,
+  "requireNotices": true,
+  "requireTransitiveInventoryForRelease": true,
+  "allowedExpressions": [
+    "Apache-2.0 OR Artistic-2.0",
+    "GPL-3.0-only OR LGPL-3.0-only OR LicenseRef-Qt-Commercial"
+  ],
+  "policy": "Only reviewed SPDX expressions are allowed. Unknown, missing, or non-SPDX licensing blocks distribution. Direct-package approval does not approve transitives; a release requires an artifact-derived transitive SBOM, corresponding source/provenance, and complete notices."
+}

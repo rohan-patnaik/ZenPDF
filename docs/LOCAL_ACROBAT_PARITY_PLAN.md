@@ -8,7 +8,8 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 
 - Core desktop use is offline, local-first, account-free, telemetry-free, and never uploads a document.
 - Network use is optional and off by default. It may be added only for an explicit user action such as a trusted timestamp, certificate revocation check, or update check; the destination and transmitted metadata must be disclosed, and local workflows must remain usable when it fails.
-- Adobe accounts, cloud storage/sharing, AI Assistant, PDF Spaces, Express assets/templates, proprietary services, and proprietary UI/assets/wording are excluded rather than local capability rows.
+- Offline signing uses a user-selected local key and requires no network. Embedded signatures and timestamps are validated locally; when revocation data is unavailable offline, the result must say `revocation unchecked`, never `invalid` solely because no network was used.
+- Adobe accounts, cloud storage/sharing, hosted review/collaboration, cloud e-sign request/tracking, third-party cloud integrations, AI Assistant, PDF Spaces, Express assets/templates, proprietary services, and proprietary UI/assets/wording are excluded rather than local capability rows.
 - Interoperability means standards-based round trips with legally redistributable fixtures and independent readers. It does not mean copying another product's implementation or presentation.
 
 ## Counts
@@ -16,8 +17,8 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | Status | Count |
 | --- | ---: |
 | Not started | 45 |
-| Partial | 29 |
-| Verified | 1 |
+| Partial | 30 |
+| Verified | 0 |
 | Blocked | 1 |
 | **Total** | **76** |
 
@@ -53,8 +54,8 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L024 | Extract page ranges into a new file | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; permission fixtures remain | Independent-reader reopen remains |
 | L025 | Persistently rotate page ranges | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; UI/reopen matrix remains | Independent-reader reopen remains |
 | L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | Output-cap/cancel/cleanup tests exist; process isolation remains | N/A |
-| L027 | Insert, delete, reorder, replace, and crop pages | M1 / Organizer | Structure/write adapter decision | Partial | Only extraction/rotation slices exist; undo/reopen missing | Mixed-box/annotation corpus missing |
-| L028 | Split documents with collision-safe naming | M1 / Organizer | Structure adapter | Not started | Range/naming/atomic-output fixtures | Independent-reader reopen required |
+| L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | Only extraction/rotation slices exist; undo/reopen and split missing | Mixed-box/annotation corpus missing |
+| L028 | View and safely extract embedded attachments | M1 / Reader | Attachment parser/isolation decision | Not started | Hostile-name/type/size/explicit-destination fixtures | Standard embedded-file corpus required |
 | L029 | View and fill basic AcroForms | M1 / Forms | Forms engine decision | Not started | Field/appearance/save/reopen fixtures | Multiple-reader form round trip |
 | L030 | Preserve existing annotations/forms on save | M1 / Organizer | Write adapter decision | Partial | Current new-file operations need preservation corpus | Multiple-reader comparison missing |
 | L031 | Text markup annotations | M2 / Review | Annotation adapter decision | Not started | Selection/appearance/undo/reopen fixtures | ISO annotation round trip |
@@ -81,9 +82,9 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L052 | Form calculation and validation subset | M4 / Forms | Script safety policy | Not started | Allowlist/no-script/security fixtures | Documented supported subset |
 | L053 | Flatten forms and annotations | M4 / Forms | Write adapter decision | Not started | Visual/irreversibility/reopen fixtures | Independent-reader render comparison |
 | L054 | Import/export form data | M4 / Forms | FDF/XFDF scope decision | Not started | Schema/round-trip/error fixtures | Documented FDF/XFDF subset |
-| L055 | Local signature appearance | M4 / Signatures | Signature model decision | Not started | Appearance/trust-language/reopen fixtures | ISO signature-field inspection |
-| L056 | Certificate signing and validation | M4 / Signatures | Crypto/trust-store decision | Not started | Algorithm/key-store/revocation fixtures | Multi-validator signature corpus |
-| L057 | Optional trusted timestamps and revocation | M4 / Signatures | Explicit network policy | Not started | Offline/failure/disclosure/privacy tests | TSA/OCSP interoperability evidence |
+| L055 | Offline local-key certificate signing and appearance | M4 / Signatures | Crypto/key-store/signature model decision | Not started | Local-key/algorithm/appearance/reopen fixtures | Multi-validator signed corpus |
+| L056 | Embedded signature and timestamp validation | M4 / Signatures | Crypto/trust-store decision | Not started | Valid/invalid/expired and offline revocation-unchecked fixtures | Multi-validator signature/timestamp corpus |
+| L057 | Optional trusted timestamps and revocation refresh | M4 / Signatures | Explicit network policy | Not started | Offline/failure/disclosure/privacy and status-distinction tests | TSA/OCSP interoperability evidence |
 | L058 | Password encryption and permissions | M4 / Protection | Crypto/write adapter decision | Not started | Algorithm/permission/reopen fixtures | Multiple-reader encrypted corpus |
 | L059 | Certificate encryption | M4 / Protection | Crypto/key-store decision | Not started | Key/recovery/reopen fixtures | Multiple-reader encrypted corpus |
 | L060 | Sanitize hidden content and metadata | M4 / Protection | Sanitizer/write decision | Not started | Forensic/incremental-history corpus | Independent forensic inspection |
@@ -96,12 +97,12 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L067 | Tags tree and reading-order editing | M5 / Accessibility | Tagged-write decision | Not started | Undo/reopen/AT fixtures | PAC/independent checker comparison |
 | L068 | Alt text, language, and table semantics | M5 / Accessibility | Tagged-write decision | Not started | Semantics/reopen/ruleset fixtures | Independent accessibility checker |
 | L069 | Accessibility checker | M5 / Accessibility | Ruleset decision | Not started | Versioned-rule false-positive corpus | Independent checker comparison |
-| L070 | Attachments, batch actions, watched folders, and CLI | M5 / Automation | Isolation/CLI contract decisions | Not started | Traversal/dry-run/rollback/version tests | Standard attachment and CLI contract |
+| L070 | Portfolios/packages, batch actions, watched folders, and CLI | M5 / Automation | Package/isolation/CLI contract decisions | Not started | Package traversal, dry-run, rollback, and version tests | Standard collection/package and CLI contract |
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
 | L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Input/output/time caps tested; memory/render corpus missing | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
 | L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Pinned Ubuntu CI build is green; artifact comparison missing | Clean Arch rebuild missing |
-| L075 | Dependency lock, SBOM, and license policy check | M6 / Release | None | Verified | `validate_desktop_governance.py` in CI validates pins, licenses, SBOM, and matrix | Direct-dependency inventory is reviewable |
+| L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |
 | L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Blocked | No compatible session available in current CI/Windows host | Required before release claim |
 
 ## Governance
