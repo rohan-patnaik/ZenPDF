@@ -90,6 +90,22 @@ jobs:
           test -n "$qpdf_bin"
           chmod +x "$qpdf_bin"
           echo "$(dirname "$qpdf_bin")" >> "$GITHUB_PATH"
+      - name: Install pinned OpenGL headers
+        timeout-minutes: 2
+        run: |
+          set -euo pipefail
+          package="$RUNNER_TEMP/libgl-dev_1.7.0-1build1_amd64.deb"
+          destination="$RUNNER_TEMP/opengl-dev"
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
+            --output "$package" \
+            https://security.ubuntu.com/ubuntu/pool/main/libg/libglvnd/libgl-dev_1.7.0-1build1_amd64.deb
+          echo "b7145fd8f8abe20d5cb436d2eae9b3235bd91be6fbddac581620d16763bd9250  $package" | sha256sum --check --strict
+          mkdir "$destination"
+          dpkg-deb --extract "$package" "$destination"
+          test -r "$destination/usr/include/GL/gl.h"
+          test -r /usr/lib/x86_64-linux-gnu/libGL.so.1
+          echo "ZENPDF_OPENGL_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
       - name: Verify native toolchain
         timeout-minutes: 1
         run: |
@@ -99,7 +115,12 @@ jobs:
           qpdf --version
       - name: Configure
         timeout-minutes: 3
-        run: cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
+        run: >-
+          cmake -S apps/desktop -B build/desktop -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug
+          -DOpenGL_GL_PREFERENCE=LEGACY
+          -DOPENGL_INCLUDE_DIR="$ZENPDF_OPENGL_INCLUDE"
+          -DOPENGL_gl_LIBRARY=/usr/lib/x86_64-linux-gnu/libGL.so.1
       - name: Build
         timeout-minutes: 5
         run: cmake --build build/desktop --parallel 2
