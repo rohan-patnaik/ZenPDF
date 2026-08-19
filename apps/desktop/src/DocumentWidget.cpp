@@ -2,6 +2,7 @@
 
 #include <QAction>
 #include <QAbstractListModel>
+#include <QApplication>
 #include <QCache>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -12,12 +13,17 @@
 #include <QLabel>
 #include <QLineEdit>
 #include <QListView>
+#include <QMessageBox>
 #include <QPdfBookmarkModel>
 #include <QPdfDocument>
 #include <QPdfLink>
 #include <QPdfPageNavigator>
 #include <QPdfSearchModel>
 #include <QPdfView>
+#include <QPrintDialog>
+#include <QPrinter>
+#include <QProgressDialog>
+#include <QPainter>
 #include <QPixmap>
 #include <QPushButton>
 #include <QSignalBlocker>
@@ -35,6 +41,7 @@ namespace {
 constexpr int kThumbnailWidth = 128;
 constexpr int kMaximumThumbnailHeight = 512;
 constexpr int kThumbnailCacheBytes = 32 * 1024 * 1024;
+constexpr int kMaximumPrintDimension = 4096;
 
 class ThumbnailModel final : public QAbstractListModel {
 public:
@@ -130,16 +137,7 @@ DocumentWidget::DocumentWidget(QString filePath, QWidget* parent)
       view_(new QPdfView(this)),
       searchModel_(new QPdfSearchModel(this)),
       pageSelector_(new QSpinBox(this)) {
-    const auto error = document_->load(filePath_);
-    errorMessage_ = pdfErrorMessage(error);
-    if (error == QPdfDocument::Error::None && document_->pageCount() < 1) {
-        errorMessage_ = tr("The document contains no readable pages.");
-    } else if (document_->pageCount() > 100'000) {
-        errorMessage_ = tr("The document exceeds the 100,000-page safety limit.");
-    }
-    if (errorMessage_.isEmpty()) {
-        buildInterface();
-    }
+    updateLoadState(document_->load(filePath_));
 }
 
 QString DocumentWidget::filePath() const {
@@ -158,8 +156,21 @@ bool DocumentWidget::isReady() const {
     return errorMessage_.isEmpty() && document_->pageCount() > 0;
 }
 
+bool DocumentWidget::needsPassword() const {
+    return document_->error() == QPdfDocument::Error::IncorrectPassword;
+}
+
 QString DocumentWidget::errorMessage() const {
     return errorMessage_;
+}
+
+bool DocumentWidget::unlock(const QString& password) {
+    if (password.isEmpty()) {
+        return false;
+    }
+    document_->setPassword(password);
+    updateLoadState(document_->load(filePath_));
+    return isReady();
 }
 
 void DocumentWidget::buildInterface() {
@@ -187,6 +198,8 @@ void DocumentWidget::buildInterface() {
     pageMode->setCheckable(true);
     toolbar->addSeparator();
     auto* metadata = toolbar->addAction(tr("Details"));
+    auto* print = toolbar->addAction(tr("Print"));
+    print->setShortcut(QKeySequence::Print);
     rootLayout->addWidget(toolbar);
 
     auto* sideTabs = new QTabWidget(this);
@@ -255,6 +268,7 @@ void DocumentWidget::buildInterface() {
         pageMode->setText(singlePage ? tr("Continuous") : tr("Single page"));
     });
     connect(metadata, &QAction::triggered, this, &DocumentWidget::showMetadata);
+    connect(print, &QAction::triggered, this, &DocumentWidget::printDocument);
     connect(thumbnails, &QListView::activated, this, [this](const QModelIndex& index) { jumpToPage(index.row() + 1); });
     connect(bookmarks, &QTreeView::activated, this, [this, bookmarkDisplay](const QModelIndex& index) {
         const auto source = bookmarkDisplay->mapToSource(index);
@@ -271,6 +285,62 @@ void DocumentWidget::buildInterface() {
         view_->setCurrentSearchResultIndex(source.row());
 #endif
     });
+}
+
+void DocumentWidget::printDocument() {
+    QPrinter printer(QPrinter::HighResolution);
+    printer.setDocName(displayName());
+    QPrintDialog dialog(&printer, this);
+    dialog.setWindowTitle(tr("Print local PDF"));
+    dialog.setMinMax(1, document_->pageCount());
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
+    }
+
+    const int firstPage = printer.fromPage() > 0 ? printer.fromPage() - 1 : 0;
+    const int lastPage = printer.toPage() > 0 ? printer.toPage() - 1 : document_->pageCount() - 1;
+    QPainter painter;
+    if (!painter.begin(&printer)) {
+        QMessageBox::warning(this, tr("Could not print"), tr("The selected print device could not be started."));
+        return;
+    }
+
+    QProgressDialog progress(tr("Rendering pages locally…"), tr("Cancel"), firstPage, lastPage + 1, this);
+    progress.setWindowTitle(tr("Printing"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    const QRectF paintRect = printer.pageLayout().paintRectPixels(printer.resolution());
+    for (int page = firstPage; page <= lastPage; ++page) {
+        progress.setValue(page);
+        QApplication::processEvents();
+        if (progress.wasCanceled()) {
+            printer.abort();
+            break;
+        }
+        if (page != firstPage && !printer.newPage()) {
+            QMessageBox::warning(this, tr("Print stopped"), tr("The print device could not start the next page."));
+            break;
+        }
+        const QSizeF points = document_->pagePointSize(page);
+        QSize renderSize = points.scaled(paintRect.size(), Qt::KeepAspectRatio).toSize();
+        if (renderSize.width() > kMaximumPrintDimension || renderSize.height() > kMaximumPrintDimension) {
+            renderSize.scale(kMaximumPrintDimension, kMaximumPrintDimension, Qt::KeepAspectRatio);
+        }
+        const QImage image = document_->render(page, renderSize);
+        if (image.isNull()) {
+            QMessageBox::warning(this, tr("Print stopped"), tr("A page could not be rendered safely."));
+            break;
+        }
+        QSizeF destinationSize = QSizeF(image.size()).scaled(paintRect.size(), Qt::KeepAspectRatio);
+        const QRectF destination(
+            paintRect.center().x() - destinationSize.width() / 2,
+            paintRect.center().y() - destinationSize.height() / 2,
+            destinationSize.width(),
+            destinationSize.height());
+        painter.drawImage(destination, image);
+    }
+    progress.setValue(lastPage + 1);
+    painter.end();
 }
 
 void DocumentWidget::showMetadata() {
@@ -305,4 +375,17 @@ void DocumentWidget::setCustomZoom(qreal factor) {
 void DocumentWidget::jumpToPage(int oneBasedPage) {
     const int page = std::clamp(oneBasedPage, 1, document_->pageCount()) - 1;
     view_->pageNavigator()->jump(page, QPointF{}, 0);
+}
+
+void DocumentWidget::updateLoadState(QPdfDocument::Error error) {
+    errorMessage_ = pdfErrorMessage(error);
+    if (error == QPdfDocument::Error::None && document_->pageCount() < 1) {
+        errorMessage_ = tr("The document contains no readable pages.");
+    } else if (document_->pageCount() > 100'000) {
+        errorMessage_ = tr("The document exceeds the 100,000-page safety limit.");
+    }
+    if (errorMessage_.isEmpty() && !interfaceBuilt_) {
+        interfaceBuilt_ = true;
+        buildInterface();
+    }
 }

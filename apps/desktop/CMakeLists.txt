@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Core Pdf PdfWidgets Sql Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Core Pdf PdfWidgets PrintSupport Sql Widgets)
 
 add_library(zenpdf_core STATIC
     src/LocalState.cpp
@@ -39,6 +39,7 @@ target_link_libraries(zenpdf PRIVATE
     Qt6::Concurrent
     Qt6::Pdf
     Qt6::PdfWidgets
+    Qt6::PrintSupport
     Qt6::Widgets
 )
 target_compile_options(zenpdf PRIVATE
@@ -61,10 +62,16 @@ if(BUILD_TESTING)
     add_executable(zenpdf_qpdf_tests tests/QpdfOperationsTest.cpp)
     target_link_libraries(zenpdf_qpdf_tests PRIVATE zenpdf_core Qt6::Gui Qt6::Test)
     add_test(NAME zenpdf_qpdf_tests COMMAND zenpdf_qpdf_tests)
+    add_executable(zenpdf_pdf_tests tests/PdfDocumentTest.cpp)
+    target_link_libraries(zenpdf_pdf_tests PRIVATE Qt6::Gui Qt6::Pdf Qt6::Test)
+    add_test(NAME zenpdf_pdf_tests COMMAND zenpdf_pdf_tests)
     set_tests_properties(zenpdf_core_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_qpdf_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+    set_tests_properties(zenpdf_pdf_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

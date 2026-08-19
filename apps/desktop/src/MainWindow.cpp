@@ -194,6 +194,26 @@ void MainWindow::openPdf(const QString& path) {
     }
 
     auto* document = new DocumentWidget(cleanPath, tabs_);
+    for (int attempt = 0; document->needsPassword() && attempt < 3; ++attempt) {
+        bool accepted = false;
+        const auto password = QInputDialog::getText(
+            this,
+            tr("Password required"),
+            tr("Enter the document password:"),
+            QLineEdit::Password,
+            {},
+            &accepted);
+        if (!accepted) {
+            document->deleteLater();
+            return;
+        }
+        if (document->unlock(password)) {
+            break;
+        }
+        if (attempt < 2) {
+            QMessageBox::warning(this, tr("Incorrect password"), tr("The document did not accept that password."));
+        }
+    }
     if (!document->isReady()) {
         QMessageBox::warning(this, tr("Could not open PDF"), document->errorMessage());
         document->deleteLater();

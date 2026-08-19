@@ -1,8 +1,8 @@
 #pragma once
 
+#include <QPdfDocument>
 #include <QWidget>
 
-class QPdfDocument;
 class QPdfSearchModel;
 class QPdfView;
 class QSpinBox;
@@ -17,13 +17,17 @@ public:
     [[nodiscard]] QString displayName() const;
     [[nodiscard]] int pageCount() const;
     [[nodiscard]] bool isReady() const;
+    [[nodiscard]] bool needsPassword() const;
     [[nodiscard]] QString errorMessage() const;
+    [[nodiscard]] bool unlock(const QString& password);
 
 private:
     void buildInterface();
     void showMetadata();
+    void printDocument();
     void setCustomZoom(qreal factor);
     void jumpToPage(int oneBasedPage);
+    void updateLoadState(QPdfDocument::Error error);
 
     QString filePath_;
     QPdfDocument* document_;
@@ -31,4 +35,5 @@ private:
     QPdfSearchModel* searchModel_;
     QSpinBox* pageSelector_;
     QString errorMessage_;
+    bool interfaceBuilt_{false};
 };

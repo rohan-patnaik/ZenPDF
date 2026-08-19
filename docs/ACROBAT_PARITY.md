@@ -21,7 +21,7 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 
 | Workflow | State | Verification evidence / remaining work |
 | --- | --- | --- |
-| Open a local PDF | partial | Local open, drag/drop, duplicate detection, and 2 GiB rejection exist; hostile/encrypted fixtures remain. |
+| Open a local PDF | partial | Local open, password retry, drag/drop, duplicate detection, 2 GiB rejection, invalid input, and encrypted fixtures exist; broader hostile corpus remains. |
 | Render and scroll pages | partial | Qt PDF continuous rendering works; long-document corpus and render-process isolation remain. |
 | Search text | partial | Search results and navigation work; Unicode/no-text fixtures and Qt 6.6+ in-view highlighting remain. |
 | Page thumbnails | partial | Lazy 128-pixel thumbnails use a 32 MiB cache; long-document and cancellation coverage remain. |
@@ -34,7 +34,7 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 | Rotate view | not-started | Rotation must not silently modify the source. |
 | Continuous, single, and two-page views | partial | Continuous and single-page modes exist; two-page and position regression coverage remain. |
 | Presentation/full-screen reading | partial | F11 full-screen toggle exists; Escape, screen selection, and compositor tests remain. |
-| Print | not-started | Requires permission handling and real printer/PDF backend tests. |
+| Print | partial | Local range printing renders one bounded page at a time with cancellation; permission handling and real printer/backend tests remain. |
 | Insert pages | not-started | Requires undo plus save/reopen fixture. |
 | Delete pages | not-started | Prevent empty output and require undo. |
 | Reorder pages | not-started | Requires drag/keyboard paths and undo. |
