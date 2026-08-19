@@ -29,6 +29,7 @@ int main(int argc, char* argv[]) {
 
     MainWindow window(localState);
     window.show();
+    window.openFiles(application.arguments().mid(1));
     const int result = application.exec();
     Logging::shutdown();
     return result;

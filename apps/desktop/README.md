@@ -4,7 +4,7 @@ ZenPDF Desktop is the native, account-free workspace for Arch Linux and Omarchy 
 
 ## Build
 
-Install Qt 6 Base, CMake 3.25+, Ninja, and a C++23 compiler, then run:
+Install Qt 6 Base, Qt 6 PDF, qpdf, CMake 3.25+, Ninja, and a C++23 compiler, then run:
 
 ```sh
 cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
@@ -17,3 +17,9 @@ Install into a staging root with `DESTDIR=/tmp/zenpdf-package cmake --install bu
 ## Local data
 
 Qt selects the platform data directory (normally `~/.local/share/ZenPDF/ZenPDF`). ZenPDF stores a small SQLite state database and bounded diagnostic logs there. Document bytes remain in paths selected by the user. Recent-file history can be cleared locally; no account or network connection is required.
+
+## Current reader and organizer scope
+
+The native app opens multiple local PDFs in tabs and provides continuous/single-page reading, page navigation, fit/zoom controls, bounded thumbnails, outlines, full-document text search, metadata, recent files, drag-and-drop, and full-screen presentation. qpdf-backed organizer commands merge documents, extract page ranges, and rotate page ranges into a new file. Organizer commands never overwrite their source, run with cancellation and a two-minute bound, and only publish a completed PDF-shaped temporary result.
+
+Password entry, printing, attachments, form filling, two-page layout, persistent crop/reorder/insert/delete, and undo/redo are not implemented yet and remain marked accordingly in the capability matrix.

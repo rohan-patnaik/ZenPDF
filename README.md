@@ -42,7 +42,7 @@ The root `manifest.json` and `Plugin.qml` provide the Omarchy Quattro plugin con
 
 ## Desktop build
 
-ZenPDF Desktop is built independently, so the existing web and worker products keep their current toolchains. With Qt 6 Base, CMake 3.25+, Ninja, and a C++23 compiler installed:
+ZenPDF Desktop is built independently, so the existing web and worker products keep their current toolchains. With Qt 6 Base, Qt 6 PDF, qpdf, CMake 3.25+, Ninja, and a C++23 compiler installed:
 
 ```sh
 cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug

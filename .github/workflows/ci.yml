@@ -54,7 +54,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qt6-base-dev libqt6sql6-sqlite
+        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qpdf qt6-base-dev qt6-pdf-dev libqt6sql6-sqlite
       - name: Configure
         run: cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
       - name: Build

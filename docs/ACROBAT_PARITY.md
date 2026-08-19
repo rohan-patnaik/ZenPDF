@@ -21,28 +21,28 @@ Allowed states are `not-started`, `partial`, `verified`, `excluded`, and `blocke
 
 | Workflow | State | Verification evidence / remaining work |
 | --- | --- | --- |
-| Open a local PDF | not-started | Include malformed, encrypted, empty, and oversized fixtures. |
-| Render and scroll pages | not-started | Bound render cache and validate long documents. |
-| Search text | not-started | Cover Unicode, no-text scans, cancellation, and result navigation. |
-| Page thumbnails | not-started | Bound thumbnail work and expose keyboard navigation. |
-| Outline/bookmark navigation | not-started | Cover nested and malformed outlines. |
+| Open a local PDF | partial | Local open, drag/drop, duplicate detection, and 2 GiB rejection exist; hostile/encrypted fixtures remain. |
+| Render and scroll pages | partial | Qt PDF continuous rendering works; long-document corpus and render-process isolation remain. |
+| Search text | partial | Search results and navigation work; Unicode/no-text fixtures and Qt 6.6+ in-view highlighting remain. |
+| Page thumbnails | partial | Lazy 128-pixel thumbnails use a 32 MiB cache; long-document and cancellation coverage remain. |
+| Outline/bookmark navigation | partial | Native outline tree navigation works; malformed/nested fixtures remain. |
 | Attachment viewing/extraction | not-started | Extraction requires explicit destination and hostile-name handling. |
-| Document metadata inspection | not-started | Must distinguish absent and malformed metadata. |
-| Recent local files | partial | Bounded SQLite store and clear behavior are unit-tested; reader UI and missing-file flow remain. |
-| Page number navigation | not-started | Validate bounds and labels. |
-| Zoom, actual size, fit width/page | not-started | Cover keyboard shortcuts and extreme values. |
+| Document metadata inspection | partial | Standard fields distinguish absent values; malformed metadata fixtures remain. |
+| Recent local files | partial | Bounded SQLite store, menu, missing-file error, and clear behavior exist; privacy UI test remains. |
+| Page number navigation | partial | Bounded spin control, labels, previous/next, and result jumps exist; UI automation remains. |
+| Zoom, actual size, fit width/page | partial | 25–500% zoom plus fit width/page and shortcuts exist; actual-size preset and UI tests remain. |
 | Rotate view | not-started | Rotation must not silently modify the source. |
-| Continuous, single, and two-page views | not-started | Preserve position across mode changes. |
-| Presentation/full-screen reading | not-started | Escape and screen-selection behavior required. |
+| Continuous, single, and two-page views | partial | Continuous and single-page modes exist; two-page and position regression coverage remain. |
+| Presentation/full-screen reading | partial | F11 full-screen toggle exists; Escape, screen selection, and compositor tests remain. |
 | Print | not-started | Requires permission handling and real printer/PDF backend tests. |
 | Insert pages | not-started | Requires undo plus save/reopen fixture. |
 | Delete pages | not-started | Prevent empty output and require undo. |
 | Reorder pages | not-started | Requires drag/keyboard paths and undo. |
-| Persistently rotate pages | not-started | Requires save/reopen fixture. |
+| Persistently rotate pages | partial | qpdf creates a separate rotated output with range validation/cancellation; UI and reopen fixtures remain. |
 | Crop pages | not-started | Preserve boxes not intentionally changed. |
-| Extract pages | not-started | Validate ranges and source permission. |
+| Extract pages | partial | qpdf extraction validates ranges, refuses source overwrite, and is fixture-tested in `apps/desktop/tests/QpdfOperationsTest.cpp`; permission fixtures remain. |
 | Replace pages | not-started | Requires page-box and annotation regression coverage. |
-| Merge documents | not-started | Cover mixed boxes, rotations, forms, and outlines. |
+| Merge documents | partial | qpdf merge is bounded, cancellable, atomic, and fixture-tested; forms/outlines/mixed-box corpus remains. |
 | Split document | not-started | Cover ranges, naming collisions, and atomic outputs. |
 | Organizer undo/redo | not-started | Commands must be deterministic and bounded. |
 | View AcroForms | not-started | Cover standard field types and appearance streams. |
