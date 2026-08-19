@@ -90,7 +90,7 @@ jobs:
           test -n "$qpdf_bin"
           chmod +x "$qpdf_bin"
           echo "$(dirname "$qpdf_bin")" >> "$GITHUB_PATH"
-      - name: Install pinned OpenGL headers
+      - name: Install pinned native headers
         timeout-minutes: 2
         run: |
           set -euo pipefail
@@ -106,6 +106,18 @@ jobs:
           test -r "$destination/usr/include/GL/gl.h"
           test -r /usr/lib/x86_64-linux-gnu/libGL.so.1
           echo "ZENPDF_OPENGL_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
+          package="$RUNNER_TEMP/libcups2-dev_2.4.7-1.2ubuntu7.14_amd64.deb"
+          destination="$RUNNER_TEMP/cups-dev"
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
+            --output "$package" \
+            https://security.ubuntu.com/ubuntu/pool/main/c/cups/libcups2-dev_2.4.7-1.2ubuntu7.14_amd64.deb
+          echo "f2c4a43590f2784ac05dadb8522b6cd47c33f7ba0eba258661897ccf53dcb093  $package" | sha256sum --check --strict
+          mkdir "$destination"
+          dpkg-deb --extract "$package" "$destination"
+          test -r "$destination/usr/include/cups/cups.h"
+          test -r /usr/lib/x86_64-linux-gnu/libcups.so.2
+          echo "ZENPDF_CUPS_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
       - name: Verify native toolchain
         timeout-minutes: 1
         run: |
@@ -121,6 +133,8 @@ jobs:
           -DOpenGL_GL_PREFERENCE=LEGACY
           -DOPENGL_INCLUDE_DIR="$ZENPDF_OPENGL_INCLUDE"
           -DOPENGL_gl_LIBRARY=/usr/lib/x86_64-linux-gnu/libGL.so.1
+          -DCUPS_INCLUDE_DIR="$ZENPDF_CUPS_INCLUDE"
+          -DCUPS_LIBRARIES=/usr/lib/x86_64-linux-gnu/libcups.so.2
       - name: Build
         timeout-minutes: 5
         run: cmake --build build/desktop --parallel 2
