@@ -108,6 +108,7 @@ jobs:
           sha256sum --check \
             "$GITHUB_WORKSPACE/apps/desktop/ci/arch-packages.sha256"
           cd "$GITHUB_WORKSPACE"
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(pacman -Q git)" = "git 2.55.0-1"
           test "$(pacman -Q cmake)" = "cmake 4.4.2-1"
