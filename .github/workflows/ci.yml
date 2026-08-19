@@ -106,6 +106,19 @@ jobs:
           test -r "$destination/usr/include/GL/gl.h"
           test -r /usr/lib/x86_64-linux-gnu/libGL.so.1
           echo "ZENPDF_OPENGL_INCLUDE=$destination/usr/include" >> "$GITHUB_ENV"
+          package="$RUNNER_TEMP/libegl1_1.7.0-1build1_amd64.deb"
+          destination="$RUNNER_TEMP/egl-runtime"
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 60 \
+            --output "$package" \
+            https://security.ubuntu.com/ubuntu/pool/main/libg/libglvnd/libegl1_1.7.0-1build1_amd64.deb
+          echo "e549f7776216f7bd3b1c216729fb40a97a562e2eb7c563cde632b4931f9a4e57  $package" | sha256sum --check --strict
+          mkdir "$destination"
+          dpkg-deb --extract "$package" "$destination"
+          egl_library_dir="$destination/usr/lib/x86_64-linux-gnu"
+          test -r "$egl_library_dir/libEGL.so.1"
+          echo "ZENPDF_EGL_LIBRARY_DIR=$egl_library_dir" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$egl_library_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
           package="$RUNNER_TEMP/libcups2-dev_2.4.7-1.2ubuntu7.14_amd64.deb"
           destination="$RUNNER_TEMP/cups-dev"
           curl --fail --location --silent --show-error \
@@ -135,6 +148,7 @@ jobs:
           -DOPENGL_gl_LIBRARY=/usr/lib/x86_64-linux-gnu/libGL.so.1
           -DCUPS_INCLUDE_DIR="$ZENPDF_CUPS_INCLUDE"
           -DCUPS_LIBRARIES=/usr/lib/x86_64-linux-gnu/libcups.so.2
+          -DCMAKE_EXE_LINKER_FLAGS="-Wl,-rpath-link,$ZENPDF_EGL_LIBRARY_DIR"
       - name: Build
         timeout-minutes: 5
         run: cmake --build build/desktop --parallel 2
