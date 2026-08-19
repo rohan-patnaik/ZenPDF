@@ -62,22 +62,47 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-      - name: Install native dependencies
+      - name: Install pinned Qt SDK
         timeout-minutes: 8
+        uses: jurplel/install-qt-action@48d3ad6db93f3627c8ee7a0454bc6f3744f7e730
+        with:
+          version: "6.7.3"
+          modules: "qtpdf"
+          cache: true
+          cache-key-prefix: "zenpdf-qt-6.7.3"
+          install-deps: false
+          aqtversion: "==3.2.1"
+          py7zrversion: "==0.22.0"
+      - name: Install pinned qpdf
+        timeout-minutes: 3
         run: |
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=20 \
-            -o Acquire::https::Timeout=20 \
-            update
-          sudo env DEBIAN_FRONTEND=noninteractive apt-get \
-            -o Acquire::Retries=3 \
-            -o Acquire::http::Timeout=20 \
-            -o Acquire::https::Timeout=20 \
-            install -y cmake ninja-build qpdf qt6-base-dev qt6-pdf-dev libqt6sql6-sqlite
+          set -euo pipefail
+          archive="$RUNNER_TEMP/qpdf-12.4.0-bin-linux-x86_64.zip"
+          destination="$RUNNER_TEMP/qpdf-12.4.0"
+          curl --fail --location --silent --show-error \
+            --retry 3 --retry-all-errors --connect-timeout 20 --max-time 120 \
+            --output "$archive" \
+            https://github.com/qpdf/qpdf/releases/download/v12.4.0/qpdf-12.4.0-bin-linux-x86_64.zip
+          echo "a3bca240f3bb61efdc3a90be89d1da4ed5e125326c3458c4e62df53ff4f153e3  $archive" | sha256sum --check --strict
+          mkdir "$destination"
+          unzip -q "$archive" -d "$destination"
+          qpdf_bin="$(find "$destination" -type f -path '*/bin/qpdf' -print -quit)"
+          test -n "$qpdf_bin"
+          chmod +x "$qpdf_bin"
+          echo "$(dirname "$qpdf_bin")" >> "$GITHUB_PATH"
+      - name: Verify native toolchain
+        timeout-minutes: 1
+        run: |
+          cmake --version
+          ninja --version
+          g++ --version
+          qpdf --version
       - name: Configure
+        timeout-minutes: 3
         run: cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
       - name: Build
+        timeout-minutes: 5
         run: cmake --build build/desktop --parallel 2
       - name: Test
+        timeout-minutes: 5
         run: ctest --test-dir build/desktop --output-on-failure
