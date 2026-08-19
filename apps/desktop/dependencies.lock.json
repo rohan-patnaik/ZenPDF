@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "ci": {
+    "qt": {
+      "version": "6.7.3",
+      "installerActionCommit": "48d3ad6db93f3627c8ee7a0454bc6f3744f7e730",
+      "aqtinstall": "3.2.1",
+      "py7zr": "0.22.0"
+    },
+    "qpdf": {
+      "version": "12.4.0",
+      "sha256": "a3bca240f3bb61efdc3a90be89d1da4ed5e125326c3458c4e62df53ff4f153e3"
+    },
+    "libgl-dev": {
+      "version": "1.7.0-1build1",
+      "sha256": "b7145fd8f8abe20d5cb436d2eae9b3235bd91be6fbddac581620d16763bd9250"
+    },
+    "libegl1": {
+      "version": "1.7.0-1build1",
+      "sha256": "e549f7776216f7bd3b1c216729fb40a97a562e2eb7c563cde632b4931f9a4e57"
+    },
+    "libcups2-dev": {
+      "version": "2.4.7-1.2ubuntu7.14",
+      "sha256": "f2c4a43590f2784ac05dadb8522b6cd47c33f7ba0eba258661897ccf53dcb093"
+    }
+  },
+  "runtime": [
+    {"name": "Qt Base", "version": "6.7.3", "license": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"},
+    {"name": "Qt PDF", "version": "6.7.3", "license": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"},
+    {"name": "PDFium", "version": "bundled-with-Qt-6.7.3", "license": "BSD-3-Clause"},
+    {"name": "qpdf", "version": "12.4.0", "license": "Apache-2.0"},
+    {"name": "CUPS", "version": "2.4.7-1.2ubuntu7.14", "license": "Apache-2.0"},
+    {"name": "libglvnd", "version": "1.7.0-1build1", "license": "MIT"}
+  ]
+}

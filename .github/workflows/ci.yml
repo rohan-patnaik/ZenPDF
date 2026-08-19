@@ -15,7 +15,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Validate Omarchy launcher
-        run: python3 scripts/validate_omarchy_plugin.py
+        run: |
+          python3 scripts/validate_omarchy_plugin.py
+          python3 scripts/validate_desktop_governance.py
   web:
     runs-on: ubuntu-latest
     defaults:

@@ -1,0 +1,15 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.5",
+  "serialNumber": "urn:uuid:5237f43d-9cf6-43f7-8ce4-ae2a45e45895",
+  "version": 1,
+  "metadata": {"component": {"type": "application", "name": "ZenPDF Desktop", "version": "0.1.0"}},
+  "components": [
+    {"type": "framework", "name": "Qt Base", "version": "6.7.3", "licenses": [{"expression": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"}]},
+    {"type": "framework", "name": "Qt PDF", "version": "6.7.3", "licenses": [{"expression": "LGPL-3.0-only OR GPL-2.0-only OR LicenseRef-Qt-Commercial"}]},
+    {"type": "library", "name": "PDFium", "version": "bundled-with-Qt-6.7.3", "licenses": [{"license": {"id": "BSD-3-Clause"}}]},
+    {"type": "application", "name": "qpdf", "version": "12.4.0", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "name": "CUPS", "version": "2.4.7-1.2ubuntu7.14", "licenses": [{"license": {"id": "Apache-2.0"}}]},
+    {"type": "library", "name": "libglvnd", "version": "1.7.0-1build1", "licenses": [{"license": {"id": "MIT"}}]}
+  ]
+}
