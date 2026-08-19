@@ -169,7 +169,9 @@ bool DocumentWidget::unlock(const QString& password) {
         return false;
     }
     document_->setPassword(password);
-    updateLoadState(document_->load(filePath_));
+    const auto error = document_->load(filePath_);
+    document_->setPassword({});
+    updateLoadState(error);
     return isReady();
 }
 

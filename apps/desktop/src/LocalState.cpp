@@ -46,12 +46,16 @@ bool LocalState::initialize(QString* errorMessage) {
 
     QSqlQuery query(database);
     if (!query.exec(QStringLiteral("PRAGMA journal_mode=WAL")) ||
+        !query.exec(QStringLiteral("PRAGMA secure_delete=ON")) ||
         !query.exec(QStringLiteral("PRAGMA foreign_keys=ON")) ||
         !query.exec(QStringLiteral(
             "CREATE TABLE IF NOT EXISTS recent_files ("
             "path TEXT PRIMARY KEY NOT NULL, "
             "opened_at_utc TEXT NOT NULL)"))) {
         return reportDatabaseError(QStringLiteral("Could not initialize the local state database"), errorMessage);
+    }
+    if (!query.exec(QStringLiteral("PRAGMA secure_delete")) || !query.next() || query.value(0).toInt() != 1) {
+        return reportDatabaseError(QStringLiteral("Could not enable secure deletion for local state"), errorMessage);
     }
     return true;
 }
@@ -111,6 +115,14 @@ bool LocalState::clearRecentFiles(QString* errorMessage) {
     QSqlQuery query(database);
     if (!query.exec(QStringLiteral("DELETE FROM recent_files"))) {
         return reportDatabaseError(QStringLiteral("Could not clear recent files"), errorMessage);
+    }
+    query.finish();
+    const auto truncateWal = [&query] {
+        return query.exec(QStringLiteral("PRAGMA wal_checkpoint(TRUNCATE)")) &&
+               query.next() && query.value(0).toInt() == 0;
+    };
+    if (!truncateWal() || !query.exec(QStringLiteral("VACUUM")) || !truncateWal()) {
+        return reportDatabaseError(QStringLiteral("Could not purge cleared recent files"), errorMessage);
     }
     return true;
 }

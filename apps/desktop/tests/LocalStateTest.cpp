@@ -1,6 +1,7 @@
 #include "LocalState.h"
 
 #include <QDir>
+#include <QFile>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -11,6 +12,7 @@ private slots:
     void rejectsEmptyPaths();
     void storesMostRecentFirstAndDeduplicates();
     void boundsAndClearsHistory();
+    void clearingPurgesPathsFromDatabaseFiles();
 };
 
 void LocalStateTest::rejectsEmptyPaths() {
@@ -51,6 +53,29 @@ void LocalStateTest::boundsAndClearsHistory() {
     QCOMPARE(state.recentFiles(100).size(), 50);
     QVERIFY(state.clearRecentFiles());
     QVERIFY(state.recentFiles().isEmpty());
+}
+
+void LocalStateTest::clearingPurgesPathsFromDatabaseFiles() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto databasePath = directory.filePath(QStringLiteral("state.sqlite3"));
+    const QByteArray sentinel("ZENPDF_RECENT_PATH_SENTINEL_8f63e104");
+    {
+        LocalState state(databasePath);
+        QVERIFY(state.initialize());
+        QVERIFY(state.recordRecentFile(directory.filePath(QString::fromLatin1(sentinel) + QStringLiteral(".pdf"))));
+        QVERIFY(state.clearRecentFiles());
+        QVERIFY(state.recentFiles().isEmpty());
+    }
+
+    for (const auto& path : {databasePath, databasePath + QStringLiteral("-wal"), databasePath + QStringLiteral("-shm")}) {
+        QFile file(path);
+        if (!file.exists()) {
+            continue;
+        }
+        QVERIFY2(file.open(QIODevice::ReadOnly), qPrintable(file.errorString()));
+        QVERIFY2(!file.readAll().contains(sentinel), qPrintable(QStringLiteral("Cleared path remains in %1").arg(path)));
+    }
 }
 
 QTEST_GUILESS_MAIN(LocalStateTest)

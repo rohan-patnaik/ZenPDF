@@ -36,6 +36,12 @@
 namespace {
 constexpr qint64 kMaximumDocumentBytes = 2LL * 1024 * 1024 * 1024;
 
+void clearSensitiveString(QString& value) {
+    value.fill(QChar{u'\0'});
+    value.clear();
+    value.squeeze();
+}
+
 QpdfResult runOrganizerTask(
     QWidget* parent,
     const QString& title,
@@ -196,7 +202,7 @@ void MainWindow::openPdf(const QString& path) {
     auto* document = new DocumentWidget(cleanPath, tabs_);
     for (int attempt = 0; document->needsPassword() && attempt < 3; ++attempt) {
         bool accepted = false;
-        const auto password = QInputDialog::getText(
+        auto password = QInputDialog::getText(
             this,
             tr("Password required"),
             tr("Enter the document password:"),
@@ -204,10 +210,13 @@ void MainWindow::openPdf(const QString& path) {
             {},
             &accepted);
         if (!accepted) {
+            clearSensitiveString(password);
             document->deleteLater();
             return;
         }
-        if (document->unlock(password)) {
+        const bool unlocked = document->unlock(password);
+        clearSensitiveString(password);
+        if (unlocked) {
             break;
         }
         if (attempt < 2) {

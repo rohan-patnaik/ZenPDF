@@ -6,6 +6,7 @@
 class QPdfSearchModel;
 class QPdfView;
 class QSpinBox;
+class DocumentWidgetTest;
 
 class DocumentWidget final : public QWidget {
     Q_OBJECT
@@ -22,6 +23,8 @@ public:
     [[nodiscard]] bool unlock(const QString& password);
 
 private:
+    friend class DocumentWidgetTest;
+
     void buildInterface();
     void showMetadata();
     void printDocument();
