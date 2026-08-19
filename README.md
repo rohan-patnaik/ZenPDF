@@ -1,6 +1,6 @@
 # ZenPDF
 
-ZenPDF is an open-source PDF tools web app with a Next.js frontend, Convex backend, and Python worker.
+ZenPDF is an open-source PDF toolkit. The existing product is a Next.js web app with a Convex backend and Python worker; a private, local-first native desktop workspace for Omarchy Quattro is now being developed in the same repository.
 
 ## Live app
 - https://thezenpdf.vercel.app
@@ -22,7 +22,10 @@ ZenPDF is an open-source PDF tools web app with a Next.js frontend, Convex backe
 ## Repository layout
 - `apps/web`: Next.js app (UI, API routes, Convex client)
 - `apps/worker`: background worker for PDF processing
+- `apps/desktop`: native Omarchy/Arch desktop app (planned and under active development)
 - `docs`: product, architecture, feature internals, and operations
+
+The root `manifest.json` and `Plugin.qml` provide the Omarchy Quattro plugin contract and launch the installed native `zenpdf` binary.
 
 ## Quick start (local)
 1. Copy environment files:

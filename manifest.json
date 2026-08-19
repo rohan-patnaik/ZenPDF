@@ -1,0 +1,14 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.rohan-patnaik.zenpdf",
+  "name": "ZenPDF",
+  "version": "0.1.0",
+  "author": "Rohan Patnaik",
+  "license": "AGPL-3.0",
+  "description": "Launch a private, local-first PDF workspace from Omarchy Quattro.",
+  "kinds": ["menu"],
+  "entryPoints": {
+    "menu": "Plugin.qml"
+  }
+}
+
