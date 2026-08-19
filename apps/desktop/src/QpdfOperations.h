@@ -10,6 +10,11 @@ struct QpdfResult final {
     QString message;
 };
 
+struct QpdfLimits final {
+    qint64 maximumOutputBytes{2LL * 1024 * 1024 * 1024};
+    int operationTimeoutMs{120'000};
+};
+
 class QpdfOperations final {
 public:
     static constexpr qint64 maximumInputBytes = 2LL * 1024 * 1024 * 1024;
@@ -18,20 +23,23 @@ public:
     [[nodiscard]] static QpdfResult merge(
         const QStringList& inputPaths,
         const QString& outputPath,
-        const std::atomic_bool* cancelled = nullptr);
+        const std::atomic_bool* cancelled = nullptr,
+        QpdfLimits limits = {});
     [[nodiscard]] static QpdfResult extract(
         const QString& inputPath,
         const QString& pageRange,
         int pageCount,
         const QString& outputPath,
-        const std::atomic_bool* cancelled = nullptr);
+        const std::atomic_bool* cancelled = nullptr,
+        QpdfLimits limits = {});
     [[nodiscard]] static QpdfResult rotate(
         const QString& inputPath,
         const QString& pageRange,
         int pageCount,
         bool clockwise,
         const QString& outputPath,
-        const std::atomic_bool* cancelled = nullptr);
+        const std::atomic_bool* cancelled = nullptr,
+        QpdfLimits limits = {});
 
     QpdfOperations() = delete;
 
@@ -40,5 +48,6 @@ private:
         const QStringList& arguments,
         const QString& outputPath,
         const QStringList& protectedInputPaths,
-        const std::atomic_bool* cancelled);
+        const std::atomic_bool* cancelled,
+        QpdfLimits limits);
 };

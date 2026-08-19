@@ -1,6 +1,8 @@
 #include "QpdfOperations.h"
 
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProcess>
@@ -15,6 +17,9 @@ private slots:
     void validatesPageRanges_data();
     void validatesPageRanges();
     void refusesSourceOverwrite();
+    void cancellationLeavesNoOutputOrStaging();
+    void outputCapLeavesNoOutputOrStaging();
+    void preservesDestinationPermissions();
     void mergesExtractsAndRotates();
 };
 
@@ -34,6 +39,11 @@ int pageCount(const QString& path) {
         return -1;
     }
     return QString::fromLatin1(process.readAllStandardOutput()).trimmed().toInt();
+}
+
+QStringList stagingDirectories(const QTemporaryDir& directory) {
+    return QDir(directory.path()).entryList(
+        {QStringLiteral(".zenpdf-*")}, QDir::Dirs | QDir::NoDotAndDotDot);
 }
 }
 
@@ -70,6 +80,66 @@ void QpdfOperationsTest::refusesSourceOverwrite() {
         path, QStringLiteral("1"), 1, path);
     QVERIFY(!result.succeeded);
     QVERIFY(result.message.contains(QStringLiteral("never overwritten")));
+}
+
+void QpdfOperationsTest::cancellationLeavesNoOutputOrStaging() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+    std::atomic_bool cancelled{true};
+
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output, &cancelled);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("cancelled")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::outputCapLeavesNoOutputOrStaging() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    createPdf(source, QStringLiteral("Output cap fixture"));
+
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output, nullptr, QpdfLimits{64, 5'000});
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("size safety limit")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::preservesDestinationPermissions() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    createPdf(source, QStringLiteral("Permission fixture"));
+    QFile existing(output);
+    QVERIFY(existing.open(QIODevice::WriteOnly));
+    QVERIFY(existing.write("old") > 0);
+    existing.close();
+    QVERIFY(QFile::setPermissions(
+        output, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup));
+    const auto expected = QFileInfo(output).permissions();
+
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    QVERIFY2(result.succeeded, qPrintable(result.message));
+    QCOMPARE(QFileInfo(output).permissions(), expected);
+    QVERIFY(stagingDirectories(directory).isEmpty());
 }
 
 void QpdfOperationsTest::mergesExtractsAndRotates() {

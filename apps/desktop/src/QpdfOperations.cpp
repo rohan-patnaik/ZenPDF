@@ -5,14 +5,22 @@
 #include <QFileInfo>
 #include <QProcess>
 #include <QRegularExpression>
-#include <QTemporaryFile>
+#include <QTemporaryDir>
 
 #include <cstdio>
+#include <optional>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 
 namespace {
 constexpr int kMaximumInputs = 100;
 constexpr int kStartTimeoutMs = 5'000;
-constexpr int kOperationTimeoutMs = 120'000;
+constexpr qsizetype kMaximumDiagnosticBytes = 8 * 1024;
+constexpr auto kOwnerDirectoryPermissions =
+    QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+constexpr auto kOwnerFilePermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
 
 QpdfResult validateInput(const QString& path) {
     const QFileInfo info(path);
@@ -58,7 +66,8 @@ bool QpdfOperations::isValidPageRange(const QString& range, int pageCount) {
 QpdfResult QpdfOperations::merge(
     const QStringList& inputPaths,
     const QString& outputPath,
-    const std::atomic_bool* cancelled) {
+    const std::atomic_bool* cancelled,
+    QpdfLimits limits) {
     if (inputPaths.size() < 2 || inputPaths.size() > kMaximumInputs) {
         return {false, QStringLiteral("Choose between 2 and 100 input PDFs.")};
     }
@@ -71,7 +80,7 @@ QpdfResult QpdfOperations::merge(
         arguments << path << QStringLiteral("1-z");
     }
     arguments << QStringLiteral("--");
-    return run(arguments, outputPath, inputPaths, cancelled);
+    return run(arguments, outputPath, inputPaths, cancelled, limits);
 }
 
 QpdfResult QpdfOperations::extract(
@@ -79,7 +88,8 @@ QpdfResult QpdfOperations::extract(
     const QString& pageRange,
     int pageCount,
     const QString& outputPath,
-    const std::atomic_bool* cancelled) {
+    const std::atomic_bool* cancelled,
+    QpdfLimits limits) {
     const auto validation = validateInput(inputPath);
     if (!validation.succeeded) {
         return validation;
@@ -91,7 +101,8 @@ QpdfResult QpdfOperations::extract(
         {QStringLiteral("--empty"), QStringLiteral("--pages"), inputPath, pageRange, QStringLiteral("--")},
         outputPath,
         {inputPath},
-        cancelled);
+        cancelled,
+        limits);
 }
 
 QpdfResult QpdfOperations::rotate(
@@ -100,7 +111,8 @@ QpdfResult QpdfOperations::rotate(
     int pageCount,
     bool clockwise,
     const QString& outputPath,
-    const std::atomic_bool* cancelled) {
+    const std::atomic_bool* cancelled,
+    QpdfLimits limits) {
     const auto validation = validateInput(inputPath);
     if (!validation.succeeded) {
         return validation;
@@ -110,16 +122,23 @@ QpdfResult QpdfOperations::rotate(
     }
     const auto rotation = QStringLiteral("--rotate=%1:%2")
                               .arg(clockwise ? QStringLiteral("+90") : QStringLiteral("-90"), pageRange);
-    return run({inputPath, rotation}, outputPath, {inputPath}, cancelled);
+    return run({inputPath, rotation}, outputPath, {inputPath}, cancelled, limits);
 }
 
 QpdfResult QpdfOperations::run(
     const QStringList& arguments,
     const QString& outputPath,
     const QStringList& protectedInputPaths,
-    const std::atomic_bool* cancelled) {
+    const std::atomic_bool* cancelled,
+    QpdfLimits limits) {
     if (outputPath.trimmed().isEmpty()) {
         return {false, QStringLiteral("Choose an output path.")};
+    }
+    if (limits.maximumOutputBytes < 8 || limits.operationTimeoutMs < 1) {
+        return {false, QStringLiteral("Invalid operation safety limits.")};
+    }
+    if (cancelled != nullptr && cancelled->load()) {
+        return {false, QStringLiteral("The operation was cancelled.")};
     }
     const auto cleanOutput = normalizedPath(outputPath);
     for (const auto& input : protectedInputPaths) {
@@ -133,14 +152,26 @@ QpdfResult QpdfOperations::run(
     if (!outputDirectory.exists()) {
         return {false, QStringLiteral("The output directory does not exist.")};
     }
-    QTemporaryFile temporary(outputDirectory.filePath(QStringLiteral(".zenpdf-XXXXXX.pdf")));
-    temporary.setAutoRemove(true);
-    if (!temporary.open()) {
-        return {false, QStringLiteral("Could not create a private temporary output file.")};
+    if (outputInfo.isSymLink()) {
+        return {false, QStringLiteral("A symbolic link cannot be used as the output file.")};
     }
-    const auto temporaryPath = temporary.fileName();
-    temporary.close();
-    QFile::remove(temporaryPath);
+    if (outputInfo.exists() && !outputInfo.isFile()) {
+        return {false, QStringLiteral("The output path is not a regular file.")};
+    }
+    std::optional<QFileDevice::Permissions> destinationPermissions;
+    if (outputInfo.exists()) {
+        destinationPermissions = outputInfo.permissions();
+    }
+
+    QTemporaryDir stagingDirectory(outputDirectory.filePath(QStringLiteral(".zenpdf-XXXXXX")));
+    if (!stagingDirectory.isValid() ||
+        !QFile::setPermissions(stagingDirectory.path(), kOwnerDirectoryPermissions) ||
+        (QFileInfo(stagingDirectory.path()).permissions() &
+         (QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup |
+          QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther))) {
+        return {false, QStringLiteral("Could not create a private temporary output directory.")};
+    }
+    const auto temporaryPath = stagingDirectory.filePath(QStringLiteral("result.pdf"));
 
     auto processArguments = arguments;
     processArguments << temporaryPath;
@@ -151,41 +182,68 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("qpdf is not installed or could not be started.")};
     }
 
+    QByteArray diagnostic;
+    const auto collectDiagnostic = [&process, &diagnostic] {
+        const auto available = process.readAllStandardError();
+        process.readAllStandardOutput();
+        const auto remaining = kMaximumDiagnosticBytes - diagnostic.size();
+        if (remaining > 0) {
+            diagnostic.append(available.left(remaining));
+        }
+    };
+    const auto exceedsOutputLimit = [&temporaryPath, limits] {
+        const QFileInfo temporaryInfo(temporaryPath);
+        return temporaryInfo.exists() && temporaryInfo.size() > limits.maximumOutputBytes;
+    };
     int elapsedMs = 0;
     while (!process.waitForFinished(100)) {
         elapsedMs += 100;
-        if ((cancelled != nullptr && cancelled->load()) || elapsedMs >= kOperationTimeoutMs) {
+        collectDiagnostic();
+        const bool outputLimitExceeded = exceedsOutputLimit();
+        if (outputLimitExceeded || (cancelled != nullptr && cancelled->load()) ||
+            elapsedMs >= limits.operationTimeoutMs) {
             process.kill();
-            process.waitForFinished();
-            QFile::remove(temporaryPath);
-            return {false, elapsedMs >= kOperationTimeoutMs
-                               ? QStringLiteral("The operation exceeded the two-minute safety limit.")
+            process.waitForFinished(kStartTimeoutMs);
+            if (outputLimitExceeded) {
+                return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
+            }
+            return {false, elapsedMs >= limits.operationTimeoutMs
+                               ? QStringLiteral("The operation exceeded its time safety limit.")
                                : QStringLiteral("The operation was cancelled.")};
         }
     }
+    collectDiagnostic();
+    if (cancelled != nullptr && cancelled->load()) {
+        return {false, QStringLiteral("The operation was cancelled.")};
+    }
+    if (exceedsOutputLimit()) {
+        return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
+    }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        QFile::remove(temporaryPath);
-        auto detail = QString::fromLocal8Bit(process.readAllStandardError()).trimmed();
-        if (detail.size() > 800) {
-            detail = detail.left(800) + QStringLiteral("…");
-        }
+        auto detail = QString::fromLocal8Bit(diagnostic).trimmed();
         return {false, detail.isEmpty() ? QStringLiteral("qpdf could not complete the operation.") : detail};
     }
 
     QFile result(temporaryPath);
-    if (!result.open(QIODevice::ReadOnly) || result.size() < 8 ||
-        result.size() > maximumInputBytes || result.read(5) != QByteArrayLiteral("%PDF-")) {
-        QFile::remove(temporaryPath);
+    if (!result.open(QIODevice::ReadWrite) || result.size() < 8 ||
+        result.size() > limits.maximumOutputBytes || result.read(5) != QByteArrayLiteral("%PDF-")) {
         return {false, QStringLiteral("The generated file did not pass basic PDF validation.")};
     }
+    const auto permissions = destinationPermissions.value_or(kOwnerFilePermissions);
+    if (!result.setPermissions(permissions) || !result.flush()) {
+        return {false, QStringLiteral("Could not secure the completed output file.")};
+    }
+#ifdef Q_OS_UNIX
+    if (::fsync(result.handle()) != 0) {
+        return {false, QStringLiteral("Could not flush the completed output file.")};
+    }
+#endif
     result.close();
 
     const auto sourceBytes = QFile::encodeName(temporaryPath);
     const auto destinationBytes = QFile::encodeName(cleanOutput);
     if (std::rename(sourceBytes.constData(), destinationBytes.constData()) != 0) {
-        QFile::remove(temporaryPath);
         return {false, QStringLiteral("Could not atomically place the completed output file.")};
     }
-    temporary.setAutoRemove(false);
     return {true, QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(cleanOutput))};
 }
