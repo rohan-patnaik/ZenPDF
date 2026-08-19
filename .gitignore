@@ -1,3 +1,4 @@
 .vercel
 AGENTS.md
 .agent/
+__pycache__/

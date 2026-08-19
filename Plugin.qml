@@ -11,23 +11,31 @@ Item {
   property var pluginRegistry
 
   function open(payloadJson) {
-    if (!launcher.running)
-      launcher.running = true
+    if (!preflight.running)
+      preflight.running = true
   }
 
   function close() {}
 
   Process {
-    id: launcher
-    command: [
-      "sh",
-      "-lc",
-      "if command -v zenpdf >/dev/null 2>&1; then exec zenpdf; fi; "
-        + "message='ZenPDF is not installed or is not available in PATH.'; "
-        + "if command -v notify-send >/dev/null 2>&1; then "
-        + "notify-send --app-name=ZenPDF 'Unable to launch ZenPDF' \"$message\"; fi; "
-        + "printf '%s\\n' \"$message\" >&2; exit 127"
-    ]
+    id: preflight
+    command: ["sh", "-c", "command -v zenpdf >/dev/null 2>&1"]
+
+    onExited: (exitCode) => {
+      if (exitCode === 0) {
+        Quickshell.execDetached(["zenpdf"])
+        return
+      }
+
+      const message = "ZenPDF is not installed or is not available in PATH."
+      console.warn(message)
+      Quickshell.execDetached([
+        "notify-send",
+        "--app-name=ZenPDF",
+        "Unable to launch ZenPDF",
+        message
+      ])
+    }
   }
 }
 
