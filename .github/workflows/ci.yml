@@ -88,9 +88,6 @@ jobs:
     env:
       ARCH_SNAPSHOT: "2026/08/17"
     steps:
-      - name: Checkout exact revision
-        timeout-minutes: 2
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Install snapshot toolchain
         timeout-minutes: 8
         run: |
@@ -100,13 +97,17 @@ jobs:
           pacman -Syyu --noconfirm --needed \
             git cmake ninja qpdf qt6-base qt6-webengine
           pacman -Q git cmake ninja qpdf qt6-base qt6-webengine
-          cd /var/cache/pacman/pkg
-          sha256sum --check \
-            "$GITHUB_WORKSPACE/apps/desktop/ci/arch-packages.sha256"
+      - name: Checkout exact revision
+        timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
       - name: Verify exact toolchain
         timeout-minutes: 1
         run: |
           set -euo pipefail
+          cd /var/cache/pacman/pkg
+          sha256sum --check \
+            "$GITHUB_WORKSPACE/apps/desktop/ci/arch-packages.sha256"
+          cd "$GITHUB_WORKSPACE"
           test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
           test "$(pacman -Q git)" = "git 2.55.0-1"
           test "$(pacman -Q cmake)" = "cmake 4.4.2-1"

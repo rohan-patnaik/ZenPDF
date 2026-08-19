@@ -32,7 +32,8 @@ def require(condition: bool, message: str) -> None:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    canonical_text = path.read_text(encoding="utf-8").replace("\r\n", "\n")
+    return hashlib.sha256(canonical_text.encode("utf-8")).hexdigest()
 
 
 def validate_matrix(text: str) -> Counter[str]:

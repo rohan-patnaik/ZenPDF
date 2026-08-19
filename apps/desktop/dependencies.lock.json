@@ -26,11 +26,11 @@
   "locks": {
     "web": {
       "path": "apps/web/package-lock.json",
-      "sha256": "a99a06be5436bd2d6d34e3da1960e5e57969c3c0e20125f2fbad574fc562337b"
+      "sha256": "6f79680855b8a3b49aafd518583ca7e75cb20fb185f9a4fc3a3d2f7463136d6f"
     },
     "worker": {
       "path": "apps/worker/requirements-ci.lock",
-      "sha256": "d27c46b358f8eca53aa2d32ca95f8177866858c2bc96fb809fe732dddb60cd2d"
+      "sha256": "aca4fd0b26be75fa29941102fe9e6c85e4cb8f73ac62c338d73a5ef656fe3e17"
     }
   },
   "arch": {
