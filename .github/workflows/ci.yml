@@ -8,6 +8,14 @@ on:
   workflow_dispatch:
 
 jobs:
+  omarchy-contract:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate Omarchy launcher
+        run: python3 scripts/validate_omarchy_plugin.py
   web:
     runs-on: ubuntu-latest
     defaults:
@@ -50,11 +58,23 @@ jobs:
         run: pytest -v --tb=short
   desktop:
     runs-on: ubuntu-24.04
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
       - name: Install native dependencies
-        run: sudo apt-get update && sudo apt-get install -y cmake ninja-build qpdf qt6-base-dev qt6-pdf-dev libqt6sql6-sqlite
+        timeout-minutes: 8
+        run: |
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 \
+            update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get \
+            -o Acquire::Retries=3 \
+            -o Acquire::http::Timeout=20 \
+            -o Acquire::https::Timeout=20 \
+            install -y cmake ninja-build qpdf qt6-base-dev qt6-pdf-dev libqt6sql6-sqlite
       - name: Configure
         run: cmake -S apps/desktop -B build/desktop -G Ninja -DCMAKE_BUILD_TYPE=Debug
       - name: Build
