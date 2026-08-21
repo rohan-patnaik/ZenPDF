@@ -19,15 +19,15 @@ Item {
 
   Process {
     id: preflight
-    command: ["sh", "-c", "command -v zenpdf >/dev/null 2>&1"]
+    command: ["sh", "-c", "command -v zenpdf-launch >/dev/null 2>&1"]
 
     onExited: (exitCode) => {
       if (exitCode === 0) {
-        Quickshell.execDetached(["zenpdf"])
+        Quickshell.execDetached(["zenpdf-launch"])
         return
       }
 
-      const message = "ZenPDF is not installed or is not available in PATH."
+      const message = "The ZenPDF launcher is missing. Reinstall the ZenPDF Arch package and ensure /usr/bin is in PATH."
       console.warn(message)
       Quickshell.execDetached([
         "notify-send",
@@ -38,4 +38,3 @@ Item {
     }
   }
 }
-

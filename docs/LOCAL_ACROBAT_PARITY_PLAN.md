@@ -34,7 +34,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L004 | Persistent local preferences | M0 / State | QSettings | Partial | Corrupt/migration fixtures missing | N/A |
 | L005 | Private bounded local diagnostics | M0 / Operations | Filesystem policy | Partial | `LoggingTest.cpp`; crash/privacy review remains | N/A |
 | L006 | Crash/session recovery | M0 / State | Recovery journal decision | Not started | Interrupted-write and stale-session fixtures | N/A |
-| L007 | Omarchy launcher contract | M0 / Platform | Quickshell | Partial | Static contract check; installed launch missing | Real Quickshell/Wayland evidence missing |
+| L007 | Omarchy launcher contract | M0 / Platform | Quickshell | Partial | Static and independent launcher failure tests; installed launch missing | Real Quickshell/Wayland evidence missing |
 | L008 | Arch package and portable artifact | M0 / Release | Packaging decision | Not started | Clean install/remove/reproducibility tests | Arch package-manager evidence missing |
 | L009 | Open bounded local PDF | M1 / Reader | Qt PDF adapter | Partial | `PdfDocumentTest.cpp`; hostile corpus remains | Independent-reader corpus remains |
 | L010 | Password-protected PDF open | M1 / Reader | Qt PDF adapter | Partial | `DocumentWidgetTest.cpp` verifies password clearing | Encrypted producer matrix remains |

@@ -1,0 +1,43 @@
+#!/bin/sh
+set -u
+
+umask 077
+state_root=${XDG_STATE_HOME:-"${HOME:?HOME is required}/.local/state"}
+state_dir=$state_root/zenpdf
+log_path=$state_dir/launcher.log
+mkdir -p "$state_dir" || {
+  printf '%s\n' "ZenPDF launcher could not create its private state directory: $state_dir" >&2
+  exit 1
+}
+chmod 700 "$state_dir" 2>/dev/null || true
+
+diagnose() {
+  message=$1
+  printf '%s\n' "$message" >&2
+  printf '%s\n' "$message" >>"$log_path"
+  chmod 600 "$log_path" 2>/dev/null || true
+  if command -v notify-send >/dev/null 2>&1; then
+    notify-send --app-name=ZenPDF "Unable to launch ZenPDF" "$message" >/dev/null 2>&1 || true
+  fi
+}
+
+binary=$(command -v zenpdf 2>/dev/null || true)
+if [ -z "$binary" ]; then
+  diagnose "ZenPDF is not installed or is not available in PATH. Install the ZenPDF Arch package and ensure /usr/bin is in PATH."
+  exit 127
+fi
+
+: >"$log_path"
+chmod 600 "$log_path" 2>/dev/null || true
+nohup "$binary" >>"$log_path" 2>&1 &
+pid=$!
+grace_seconds=${ZENPDF_LAUNCH_GRACE_SECONDS:-1}
+sleep "$grace_seconds"
+if kill -0 "$pid" 2>/dev/null; then
+  exit 0
+fi
+
+wait "$pid"
+status=$?
+diagnose "ZenPDF exited during startup (status $status). Review $log_path for details or run zenpdf in a terminal."
+exit "$status"

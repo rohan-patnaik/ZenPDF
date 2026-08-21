@@ -8,6 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LAUNCHER = ROOT / "apps" / "desktop" / "packaging" / "zenpdf-launch"
 
 
 def main() -> int:
@@ -23,18 +24,33 @@ def main() -> int:
     else:
         qml = plugin_path.read_text(encoding="utf-8")
         required = {
-            'command: ["sh", "-c", "command -v zenpdf >/dev/null 2>&1"]':
-                "short zenpdf PATH preflight is missing",
-            'Quickshell.execDetached(["zenpdf"])':
+            'command: ["sh", "-c", "command -v zenpdf-launch >/dev/null 2>&1"]':
+                "short zenpdf-launch PATH preflight is missing",
+            'Quickshell.execDetached(["zenpdf-launch"])':
                 "ZenPDF must be launched through the detached Quickshell API",
-            "ZenPDF is not installed or is not available in PATH.":
-                "missing-binary diagnostic is missing",
+            "The ZenPDF launcher is missing.": "missing-launcher diagnostic is missing",
         }
         errors.extend(message for snippet, message in required.items() if snippet not in qml)
         if '"-lc"' in qml:
             errors.append("launcher must not use a login shell")
         if "exec zenpdf" in qml:
             errors.append("a tracked Process must not own the ZenPDF application")
+
+    if not LAUNCHER.is_file():
+        errors.append("independent native launcher is missing")
+    else:
+        launcher = LAUNCHER.read_text(encoding="utf-8")
+        launcher_required = {
+            "command -v zenpdf": "launcher must diagnose a missing native binary",
+            'nohup "$binary"': "launcher must detach the native binary from its caller",
+            'kill -0 "$pid"': "launcher must detect an early native-process exit",
+            "run zenpdf in a terminal": "early-exit diagnostic must be actionable",
+        }
+        errors.extend(
+            message for snippet, message in launcher_required.items() if snippet not in launcher
+        )
+        if "sudo" in launcher or "pkexec" in launcher:
+            errors.append("launcher must not elevate privileges")
 
     if errors:
         for error in errors:

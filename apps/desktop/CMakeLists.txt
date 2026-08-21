@@ -49,6 +49,7 @@ target_compile_options(zenpdf PRIVATE
 )
 
 install(TARGETS zenpdf RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+install(PROGRAMS packaging/zenpdf-launch DESTINATION ${CMAKE_INSTALL_BINDIR})
 install(FILES packaging/io.github.rohan-patnaik.zenpdf.desktop
     DESTINATION ${CMAKE_INSTALL_DATADIR}/applications
 )
