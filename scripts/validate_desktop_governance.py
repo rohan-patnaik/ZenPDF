@@ -136,6 +136,17 @@ def validate_workflow(text: str, lock: dict) -> None:
     require(lock["arch"]["hashManifest"] in text, "workflow does not verify the locked Arch hash manifest")
     require("--require-hashes" in text, "worker install must enforce hashes")
     require("npm run build" in text, "web production build is required")
+    require("docker build --progress=plain" in text and
+            '--tag "zenpdf-web-ci:$GITHUB_SHA" apps/web' in text,
+            "CI must build the web product Dockerfile")
+    require(text.count("docker build --progress=plain") >= 2 and
+            '--tag "zenpdf-worker-ci:$GITHUB_SHA" apps/worker' in text,
+            "CI must build the worker product Dockerfile")
+    require("--build-arg NEXT_PUBLIC_CONVEX_URL=" in text and
+            "--build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY=" in text,
+            "web product build must supply explicit public placeholder arguments")
+    require("docker push" not in text and "buildx build --push" not in text,
+            "exact-tip product image checks must not publish images")
 
     jobs_text = text.split("\njobs:\n", 1)
     require(len(jobs_text) == 2, "workflow jobs section is missing")

@@ -80,6 +80,29 @@ jobs:
         timeout-minutes: 5
         run: python3 -m pytest -v --tb=short
 
+  product-container-builds:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NEXT_PUBLIC_CONVEX_URL: https://ci-placeholder.convex.cloud
+      NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY: pk_test_Y2ktcGxhY2Vob2xkZXIuZXhhbXBsZS5jb20k
+    steps:
+      - name: Checkout exact product sources
+        timeout-minutes: 2
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Build web product image without publishing
+        timeout-minutes: 10
+        run: >-
+          docker build --progress=plain
+          --build-arg NEXT_PUBLIC_CONVEX_URL="$NEXT_PUBLIC_CONVEX_URL"
+          --build-arg NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY="$NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY"
+          --tag "zenpdf-web-ci:$GITHUB_SHA" apps/web
+      - name: Build worker product image without publishing
+        timeout-minutes: 25
+        run: >-
+          docker build --progress=plain
+          --tag "zenpdf-worker-ci:$GITHUB_SHA" apps/worker
+
   desktop-arch-package:
     runs-on: ubuntu-24.04
     container:

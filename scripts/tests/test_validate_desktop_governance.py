@@ -85,6 +85,22 @@ class DesktopGovernanceNegativeTest(unittest.TestCase):
         with self.assertRaisesRegex(GovernanceError, "do not match lock"):
             validate_workflow(self.workflow.replace(digest, replacement), self.lock)
 
+    def test_rejects_missing_product_docker_build(self) -> None:
+        broken = self.workflow.replace(
+            '--tag "zenpdf-web-ci:$GITHUB_SHA" apps/web',
+            '--tag "zenpdf-web-ci:$GITHUB_SHA" missing-web-context',
+        )
+        with self.assertRaisesRegex(GovernanceError, "web product Dockerfile"):
+            validate_workflow(broken, self.lock)
+
+    def test_rejects_product_image_push(self) -> None:
+        broken = self.workflow.replace(
+            '--tag "zenpdf-worker-ci:$GITHUB_SHA" apps/worker',
+            '--tag "zenpdf-worker-ci:$GITHUB_SHA" apps/worker\n          docker push image',
+        )
+        with self.assertRaisesRegex(GovernanceError, "must not publish"):
+            validate_workflow(broken, self.lock)
+
     def product_root(self) -> tuple[tempfile.TemporaryDirectory[str], Path]:
         temporary = tempfile.TemporaryDirectory()
         root = Path(temporary.name)
