@@ -20,7 +20,7 @@ Qt selects the platform data directory (normally `~/.local/share/ZenPDF/ZenPDF`)
 
 ## Current reader and organizer scope
 
-The installed `zenpdf-launch` command starts the application independently of Quickshell, writes private startup diagnostics under the user state directory, and reports a missing executable or early exit without privilege escalation.
+The installed `zenpdf-launch` command starts the application independently of Quickshell, writes at most 60 KiB of private startup output under the user state directory before draining and discarding later output, and reports a missing executable or early exit without privilege escalation.
 
 The native app opens multiple local PDFs (including password-protected files) in tabs and provides continuous/single-page reading, page navigation, fit/zoom controls, bounded thumbnails, outlines, full-document text search, metadata, recent files, drag-and-drop, bounded local printing, and full-screen presentation. Printing is limited to 100 pages per job and a 2048-pixel render dimension; Qt PDF renders each page synchronously, so cancellation takes effect between pages rather than during the current page. qpdf-backed organizer commands merge documents, extract page ranges, and rotate page ranges into a new file. Organizer commands take private, stable source snapshots, never overwrite a source or existing destination, run with cancellation and a two-minute bound, and publish a completed PDF-shaped temporary result with an atomic no-replace operation.
 

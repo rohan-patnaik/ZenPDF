@@ -42,8 +42,10 @@ def main() -> int:
         launcher = LAUNCHER.read_text(encoding="utf-8")
         launcher_required = {
             "command -v zenpdf": "launcher must diagnose a missing native binary",
-            'nohup "$binary"': "launcher must detach the native binary from its caller",
+            "nohup sh -c": "launcher must detach the native binary from its caller",
             'kill -0 "$pid"': "launcher must detect an early native-process exit",
+            "dd bs=1024 count=60": "launcher startup capture must have a fixed byte cap",
+            "cat >/dev/null": "launcher must drain and discard post-startup output",
             "run zenpdf in a terminal": "early-exit diagnostic must be actionable",
         }
         errors.extend(

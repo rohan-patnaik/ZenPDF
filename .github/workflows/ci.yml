@@ -158,4 +158,5 @@ jobs:
           test "$package_version" = "0.1.0.r0.g$short_sha-1"
           pacman -U --noconfirm "$package_path"
           test -x /usr/bin/zenpdf
+          test -x /usr/bin/zenpdf-launch
           pacman -Q zenpdf-git

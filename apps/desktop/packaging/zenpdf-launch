@@ -10,6 +10,11 @@ mkdir -p "$state_dir" || {
   exit 1
 }
 chmod 700 "$state_dir" 2>/dev/null || true
+: >"$log_path" || {
+  printf '%s\n' "ZenPDF launcher could not create its private startup log: $log_path" >&2
+  exit 1
+}
+chmod 600 "$log_path" 2>/dev/null || true
 
 diagnose() {
   message=$1
@@ -27,9 +32,25 @@ if [ -z "$binary" ]; then
   exit 127
 fi
 
-: >"$log_path"
-chmod 600 "$log_path" 2>/dev/null || true
-nohup "$binary" >>"$log_path" 2>&1 &
+capture_pipe=$state_dir/launcher-output.$$
+status_path=$state_dir/launcher-status.$$
+if ! mkfifo -m 600 "$capture_pipe"; then
+  diagnose "ZenPDF launcher could not create a private startup diagnostic channel."
+  exit 1
+fi
+nohup sh -c '
+  dd bs=1024 count=60 of="$1" 2>/dev/null
+  cat >/dev/null
+  rm -f "$2"
+' zenpdf-capture "$log_path" "$capture_pipe" <"$capture_pipe" >/dev/null 2>&1 &
+capture_pid=$!
+nohup sh -c '
+  "$1"
+  status=$?
+  printf "%s\n" "$status" >"$2"
+  (sleep 5; rm -f "$2") </dev/null >/dev/null 2>&1 &
+  exit "$status"
+' zenpdf-wrapper "$binary" "$status_path" >"$capture_pipe" 2>&1 &
 pid=$!
 grace_seconds=${ZENPDF_LAUNCH_GRACE_SECONDS:-1}
 sleep "$grace_seconds"
@@ -37,7 +58,15 @@ if kill -0 "$pid" 2>/dev/null; then
   exit 0
 fi
 
-wait "$pid"
-status=$?
+status=1
+if wait "$pid"; then
+  status=0
+else
+  status=$?
+fi
+wait "$capture_pid" 2>/dev/null || true
+if [ -r "$status_path" ]; then
+  status=$(sed -n '1p' "$status_path")
+fi
 diagnose "ZenPDF exited during startup (status $status). Review $log_path for details or run zenpdf in a terminal."
 exit "$status"

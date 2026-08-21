@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -49,6 +50,22 @@ class LauncherTest(unittest.TestCase):
         text = log.read_text(encoding="utf-8")
         self.assertIn("native-start-failure", text)
         self.assertIn("run zenpdf in a terminal", text)
+
+    def test_sustained_native_output_is_drained_but_log_remains_bounded(self) -> None:
+        body = (
+            "i=0\n"
+            "while [ \"$i\" -lt 20000 ]; do\n"
+            "  printf '0123456789abcdef0123456789abcdef\\n'\n"
+            "  i=$((i + 1))\n"
+            "done\n"
+            "sleep 0.3"
+        )
+        result, log = self._run(body)
+        self.assertEqual(result.returncode, 0)
+        deadline = time.monotonic() + 2
+        while (not log.exists() or log.stat().st_size == 0) and time.monotonic() < deadline:
+            time.sleep(0.02)
+        self.assertLessEqual(log.stat().st_size, 60 * 1024)
 
 
 if __name__ == "__main__":
