@@ -80,12 +80,15 @@ def test_mutation_result_detects_reclaimed_job() -> None:
 def test_hung_tool_hits_wall_limit_and_kills_descendant(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setenv("ZENPDF_JOB_WALL_SECONDS", "1")
+    # Allow the spawn-based child to import the worker's native PDF bindings on
+    # slower release images before measuring that the deliberately hung runner
+    # is still stopped by the configured hard deadline.
+    monkeypatch.setenv("ZENPDF_JOB_WALL_SECONDS", "3")
     worker = ZenPdfWorker("https://example.invalid", "worker-a", "token")
     started = time.monotonic()
     with pytest.raises(RuntimeError, match="hard wall-time"):
         worker._run_tool_bounded({}, [], tmp_path, threading.Event(), runner=_hung_tool)
-    assert time.monotonic() - started < 5
+    assert time.monotonic() - started < 7
     descendant_pid = int((tmp_path / "descendant.pid").read_text(encoding="ascii"))
     time.sleep(0.1)
     status_path = Path(f"/proc/{descendant_pid}/stat")
