@@ -27,6 +27,11 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_OFFICE_TIMEOUT_BASE_SECONDS`
   - `ZENPDF_OFFICE_TIMEOUT_PER_MB_SECONDS`
   - `ZENPDF_OFFICE_TIMEOUT_MAX_SECONDS`
+  - `ZENPDF_JOB_WALL_SECONDS` (hard wall clock for an entire tool run; default 600)
+  - `ZENPDF_JOB_CPU_SECONDS` (kernel CPU limit for a tool process; default 300)
+  - `ZENPDF_JOB_MEMORY_BYTES` (tool-process address-space limit; default 4 GiB)
+  - `ZENPDF_JOB_OUTPUT_BYTES` (tool-process file-size limit; default 2 GiB)
+  - `ZENPDF_HEARTBEAT_RETRIES` and `ZENPDF_HEARTBEAT_RETRY_SECONDS`
 
 ## Local run
 1. `cd apps/web && npx convex dev`
@@ -64,6 +69,8 @@ App URL: `http://localhost:3000`
 - Worker runs as non-root.
 - Do not log file contents or PII.
 - Enforce SSRF guardrails in HTML-to-PDF (public-network only, redirect restrictions).
+- Each tool executes in its own process group with CPU, memory, output, core-dump, and wall-clock limits. Lease loss terminates that group and prevents stale upload/completion.
+- OCR calls must support a per-call timeout; legacy pytesseract APIs are rejected instead of falling back to an unbounded invocation.
 
 ## Observability baseline
 ### Log fields

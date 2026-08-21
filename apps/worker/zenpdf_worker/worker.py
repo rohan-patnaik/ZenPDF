@@ -1,13 +1,20 @@
 """Worker runtime for executing PDF tools."""
 
 import os
+import multiprocessing
+import signal
 import threading
 import time
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import urlparse
+
+try:
+    import resource
+except ImportError:  # pragma: no cover - worker production target is Linux
+    resource = None
 
 import requests
 
@@ -195,6 +202,48 @@ class ToolRunResult:
     tool_result: Optional[Dict[str, Any]] = None
 
 
+class JobOwnershipLost(RuntimeError):
+    """Raised when this worker no longer owns the active job lease."""
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    """Read a positive integer runtime limit with a safe default."""
+    try:
+        value = int(os.environ.get(name, str(default)))
+    except ValueError:
+        return default
+    return value if value > 0 else default
+
+
+def _tool_process_entry(
+    runner: Callable[[Dict[str, Any], List[Path], Path], ToolRunResult],
+    job: Dict[str, Any],
+    inputs: List[Path],
+    temp: Path,
+    connection: Any,
+) -> None:
+    """Run one tool in a new process group with kernel-enforced ceilings."""
+    try:
+        if hasattr(os, "setsid"):
+            os.setsid()
+        if resource is not None:
+            memory_bytes = _positive_env_int("ZENPDF_JOB_MEMORY_BYTES", 4 * 1024**3)
+            output_bytes = _positive_env_int("ZENPDF_JOB_OUTPUT_BYTES", 2 * 1024**3)
+            cpu_seconds = _positive_env_int("ZENPDF_JOB_CPU_SECONDS", 300)
+            resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
+            resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))
+            resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
+            resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
+        connection.send(("ok", runner(job, inputs, temp)))
+    except BaseException as error:  # noqa: BLE001 - child must serialize all failures
+        try:
+            connection.send(("error", type(error).__name__, str(error)))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        connection.close()
+
+
 class ZenPdfWorker:
     """Poll Convex for jobs and execute PDF tools."""
 
@@ -224,24 +273,36 @@ class ZenPdfWorker:
         started = time.time()
         progress = {"value": 10}
         stop_event = threading.Event()
-        heartbeat = threading.Thread(
-            target=self._heartbeat, args=(job_id, progress, stop_event), daemon=True
-        )
-        heartbeat.start()
+        ownership_lost = threading.Event()
+        heartbeat: threading.Thread | None = None
         try:
-            self._report(job_id, 10)
+            if not self._report_with_retry(job_id, 10):
+                raise JobOwnershipLost("Job lease was lost before processing started")
+            heartbeat = threading.Thread(
+                target=self._heartbeat,
+                args=(job_id, progress, stop_event, ownership_lost),
+                daemon=True,
+            )
+            heartbeat.start()
             with TemporaryDirectory() as temp:
                 temp_path = Path(temp)
                 inputs = self._download_inputs(job["inputs"], temp_path)
+                self._require_ownership(ownership_lost)
                 progress["value"] = 40
-                self._report(job_id, 40)
-                run_result = self._run_tool(job, inputs, temp_path)
+                if not self._report_with_retry(job_id, 40):
+                    ownership_lost.set()
+                    raise JobOwnershipLost("Job lease was lost before tool execution")
+                run_result = self._run_tool_bounded(job, inputs, temp_path, ownership_lost)
+                self._require_ownership(ownership_lost)
                 progress["value"] = 75
-                self._report(job_id, 75)
-                output_payload = self._upload_outputs(run_result.outputs)
+                if not self._report_with_retry(job_id, 75):
+                    ownership_lost.set()
+                    raise JobOwnershipLost("Job lease was lost before upload")
+                output_payload = self._upload_outputs(run_result.outputs, ownership_lost)
+                self._require_ownership(ownership_lost)
             elapsed_minutes = max((time.time() - started) / 60, 0.01)
             bytes_processed = sum(item.get("sizeBytes", 0) for item in job["inputs"])
-            self._mutation(
+            completed = self._mutation(
                 "jobs:completeJob",
                 {
                     "jobId": job_id,
@@ -253,15 +314,22 @@ class ZenPdfWorker:
                     "workerToken": self.worker_token,
                 },
             )
-            self._report(job_id, 100)
+            if not self._is_owned_job(completed, "succeeded"):
+                ownership_lost.set()
+                raise JobOwnershipLost("Job lease was lost before completion")
+        except JobOwnershipLost as error:
+            print(f"Job {job_id} ownership lost: {error}")
         except ValueError as error:
-            self._safe_fail(job_id, "USER_INPUT_INVALID", str(error), str(error))
+            self._safe_fail(
+                job_id, "USER_INPUT_INVALID", str(error), str(error), ownership_lost
+            )
         except ConvexError as error:
             self._safe_fail(
                 job_id,
                 "SERVICE_CAPACITY_TEMPORARY",
                 "Processing failed. Please retry.",
                 error.message,
+                ownership_lost,
             )
         except Exception as error:  # noqa: BLE001
             self._safe_fail(
@@ -269,14 +337,29 @@ class ZenPdfWorker:
                 "SERVICE_CAPACITY_TEMPORARY",
                 "Processing failed. Please retry.",
                 str(error),
+                ownership_lost,
             )
         finally:
             stop_event.set()
-            heartbeat.join(timeout=1)
+            if heartbeat is not None:
+                heartbeat.join(timeout=1)
 
-    def _report(self, job_id: str, progress: int) -> None:
+    def _is_owned_job(self, result: Any, expected_status: str = "running") -> bool:
+        """Validate that a mutation result still belongs to this worker."""
+        return (
+            isinstance(result, dict)
+            and result.get("status") == expected_status
+            and result.get("claimedBy") == self.worker_id
+        )
+
+    @staticmethod
+    def _require_ownership(ownership_lost: threading.Event) -> None:
+        if ownership_lost.is_set():
+            raise JobOwnershipLost("Job ownership changed while work was in progress")
+
+    def _report(self, job_id: str, progress: int) -> bool:
         """Update job progress and renew the lease."""
-        self._mutation(
+        result = self._mutation(
             "jobs:reportJobProgress",
             {
                 "jobId": job_id,
@@ -285,6 +368,20 @@ class ZenPdfWorker:
                 "workerToken": self.worker_token,
             },
         )
+        return self._is_owned_job(result)
+
+    def _report_with_retry(self, job_id: str, progress: int) -> bool:
+        """Renew a lease with bounded retries for transient transport failures."""
+        attempts = _positive_env_int("ZENPDF_HEARTBEAT_RETRIES", 3)
+        retry_delay = float(os.environ.get("ZENPDF_HEARTBEAT_RETRY_SECONDS", "0.5"))
+        for attempt in range(attempts):
+            try:
+                return self._report(job_id, progress)
+            except (ConvexError, OSError, requests.RequestException, RuntimeError):
+                if attempt + 1 >= attempts:
+                    return False
+                time.sleep(max(retry_delay, 0.0) * (attempt + 1))
+        return False
 
     def _fail(
         self,
@@ -295,7 +392,7 @@ class ZenPdfWorker:
     ) -> None:
         """Report a failed job with a friendly error."""
         print(f"Job {job_id} failed: {log_message or error_message}")
-        self._mutation(
+        result = self._mutation(
             "jobs:failJob",
             {
                 "jobId": job_id,
@@ -305,6 +402,8 @@ class ZenPdfWorker:
                 "workerToken": self.worker_token,
             },
         )
+        if not self._is_owned_job(result, "failed"):
+            raise JobOwnershipLost("Job ownership changed before failure was recorded")
 
     def _safe_fail(
         self,
@@ -312,20 +411,29 @@ class ZenPdfWorker:
         error_code: str,
         error_message: str,
         log_message: str | None = None,
+        ownership_lost: threading.Event | None = None,
     ) -> None:
         """Attempt to report a failure without crashing the worker."""
+        if ownership_lost is not None and ownership_lost.is_set():
+            return
         try:
             self._fail(job_id, error_code, error_message, log_message)
         except Exception as error:  # noqa: BLE001
             print(f"Failed to report job failure for {job_id}: {error}")
 
     def _heartbeat(
-        self, job_id: str, progress: Dict[str, int], stop_event: threading.Event
+        self,
+        job_id: str,
+        progress: Dict[str, int],
+        stop_event: threading.Event,
+        ownership_lost: threading.Event,
     ) -> None:
         """Heartbeat loop that renews the job lease."""
         interval = float(os.environ.get("ZENPDF_WORKER_HEARTBEAT_SECONDS", "25"))
         while not stop_event.wait(interval):
-            self._report(job_id, progress["value"])
+            if not self._report_with_retry(job_id, progress["value"]):
+                ownership_lost.set()
+                return
 
     def _download_inputs(self, inputs: List[Dict[str, Any]], temp: Path) -> List[Path]:
         """Download job inputs to a temporary directory."""
@@ -351,8 +459,79 @@ class ZenPdfWorker:
             paths.append(target)
         return paths
 
+    def _run_tool_bounded(
+        self,
+        job: Dict[str, Any],
+        inputs: List[Path],
+        temp: Path,
+        ownership_lost: threading.Event,
+        runner: Callable[[Dict[str, Any], List[Path], Path], ToolRunResult] | None = None,
+    ) -> ToolRunResult:
+        """Execute a tool in a killable process group with a hard wall-time."""
+        context = multiprocessing.get_context("spawn")
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_tool_process_entry,
+            args=(runner or ZenPdfWorker._run_tool, job, inputs, temp, sender),
+            daemon=False,
+        )
+        process.start()
+        sender.close()
+        timeout_seconds = _positive_env_int("ZENPDF_JOB_WALL_SECONDS", 600)
+        deadline = time.monotonic() + timeout_seconds
+        message: Any = None
+        try:
+            while process.is_alive():
+                if ownership_lost.is_set():
+                    self._terminate_tool_process(process)
+                    raise JobOwnershipLost("Job ownership changed during tool execution")
+                if time.monotonic() >= deadline:
+                    self._terminate_tool_process(process)
+                    raise RuntimeError("Tool execution exceeded its hard wall-time limit")
+                if receiver.poll(0.1):
+                    message = receiver.recv()
+                    process.join(timeout=1)
+                    break
+            process.join(timeout=0)
+            if message is None:
+                if not receiver.poll(0.5):
+                    raise RuntimeError(
+                        f"Tool process exited without a result (status {process.exitcode})"
+                    )
+                message = receiver.recv()
+            if message[0] == "ok" and isinstance(message[1], ToolRunResult):
+                return message[1]
+            if message[0] == "error":
+                if message[1] == "ValueError":
+                    raise ValueError(message[2])
+                raise RuntimeError(f"Tool process failed ({message[1]}): {message[2]}")
+            raise RuntimeError("Tool process returned an invalid result")
+        finally:
+            receiver.close()
+            if process.is_alive():
+                self._terminate_tool_process(process)
+            process.close()
+
+    @staticmethod
+    def _terminate_tool_process(process: multiprocessing.Process) -> None:
+        """Terminate a tool process and its descendants, escalating if required."""
+        if process.pid is None:
+            return
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            process.terminate()
+        process.join(timeout=2)
+        if process.is_alive():
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                process.kill()
+            process.join(timeout=2)
+
+    @staticmethod
     def _run_tool(
-        self, job: Dict[str, Any], inputs: List[Path], temp: Path
+        job: Dict[str, Any], inputs: List[Path], temp: Path
     ) -> ToolRunResult:
         """
         Dispatch and execute the PDF tool specified by a job.
@@ -633,13 +812,19 @@ class ZenPdfWorker:
             )
         raise RuntimeError(f"Unsupported tool: {tool}")
 
-    def _upload_outputs(self, outputs: List[Path]) -> List[Dict[str, Any]]:
+    def _upload_outputs(
+        self, outputs: List[Path], ownership_lost: threading.Event | None = None
+    ) -> List[Dict[str, Any]]:
         """Upload output files to Convex storage."""
         payload = []
         for output in outputs:
+            if ownership_lost is not None:
+                self._require_ownership(ownership_lost)
             upload_url = self._mutation(
                 "files:generateUploadUrl", {"workerToken": self.worker_token}
             )
+            if not isinstance(upload_url, str) or not upload_url.startswith(("https://", "http://")):
+                raise RuntimeError("Upload URL mutation returned an invalid result")
             with output.open("rb") as handle:
                 response = requests.post(
                     upload_url,
@@ -648,7 +833,11 @@ class ZenPdfWorker:
                     timeout=120,
                 )
                 response.raise_for_status()
-                storage_id = response.json()["storageId"]
+                storage_id = response.json().get("storageId")
+                if not isinstance(storage_id, str) or not storage_id:
+                    raise RuntimeError("Upload response did not include a storage ID")
+            if ownership_lost is not None:
+                self._require_ownership(ownership_lost)
             payload.append(
                 {
                     "storageId": storage_id,

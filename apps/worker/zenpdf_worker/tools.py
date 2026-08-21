@@ -71,6 +71,7 @@ except ImportError:  # pragma: no cover - optional dependency for cryptographic 
 
 
 OCR_DPI = 300
+OCR_TOOL_TIMEOUT_SECONDS = 90
 DEFAULT_OCR_LANG = os.getenv("ZENPDF_OCR_LANG", "eng")
 LOGGER = logging.getLogger(__name__)
 
@@ -1724,6 +1725,7 @@ def redact_pdf(
                         image,
                         lang=DEFAULT_OCR_LANG,
                         output_type=getattr(pytesseract, "Output", object()).DICT,
+                        timeout=OCR_TOOL_TIMEOUT_SECONDS,
                     )
                     texts = ocr_data.get("text", [])
                     lefts = ocr_data.get("left", [])
@@ -2973,14 +2975,12 @@ def ocr_pdf(
                     image,
                     extension="pdf",
                     lang=language,
-                    timeout=90,
+                    timeout=OCR_TOOL_TIMEOUT_SECONDS,
                 )
-            except TypeError:
-                pdf_bytes = pytesseract.image_to_pdf_or_hocr(
-                    image,
-                    extension="pdf",
-                    lang=language,
-                )
+            except TypeError as error:
+                raise RuntimeError(
+                    "Installed pytesseract does not support bounded OCR execution"
+                ) from error
             page_path = (
                 output_path.parent
                 / f"{output_path.stem}_ocr_{run_id}_page_{index + 1}.pdf"
@@ -3311,7 +3311,14 @@ def _ocr_image(image: Image.Image, lang: str) -> str:
     if not shutil.which("tesseract"):
         raise RuntimeError("Tesseract is required for OCR conversions")
     safe_lang = (lang or DEFAULT_OCR_LANG).strip() or DEFAULT_OCR_LANG
-    return pytesseract.image_to_string(image, lang=safe_lang)
+    try:
+        return pytesseract.image_to_string(
+            image, lang=safe_lang, timeout=OCR_TOOL_TIMEOUT_SECONDS
+        )
+    except TypeError as error:
+        raise RuntimeError(
+            "Installed pytesseract does not support bounded OCR execution"
+        ) from error
 
 
 def _extract_table_rows_by_page(input_path: Path) -> List[List[List[str]]]:

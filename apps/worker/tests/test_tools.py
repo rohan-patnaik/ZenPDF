@@ -25,6 +25,7 @@ except ImportError:  # pragma: no cover - optional dependency for PPTX output
 
 from zenpdf_worker.tools import (
     MAX_WEB_BYTES,
+    OCR_TOOL_TIMEOUT_SECONDS,
     compare_pdfs,
     compress_pdf,
     crop_pdf,
@@ -987,9 +988,12 @@ def test_ocr_pdf_fallback(monkeypatch: pytest.MonkeyPatch) -> None:
 
         class _FakePytesseract:
             @staticmethod
-            def image_to_pdf_or_hocr(_image, extension="pdf", lang="eng"):
+            def image_to_pdf_or_hocr(
+                _image, extension="pdf", lang="eng", timeout=None
+            ):
                 assert extension == "pdf"
                 assert lang == "eng"
+                assert timeout == OCR_TOOL_TIMEOUT_SECONDS
                 writer = PdfWriter()
                 writer.add_blank_page(width=300, height=300)
                 buffer = BytesIO()
