@@ -13,6 +13,10 @@
 
 #include <thread>
 
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+
 class QpdfOperationsTest final : public QObject {
     Q_OBJECT
 
