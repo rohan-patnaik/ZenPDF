@@ -69,7 +69,7 @@ App URL: `http://localhost:3000`
 - Worker runs as non-root.
 - Do not log file contents or PII.
 - Enforce SSRF guardrails in HTML-to-PDF (public-network only, redirect restrictions).
-- Each tool executes in its own process group with CPU, memory, output, core-dump, and wall-clock limits. Lease loss terminates that group and prevents stale upload/completion.
+- Each tool executes in its own process group with CPU, memory, output, core-dump, and wall-clock limits. Lease loss terminates that group and cancels an in-flight output request. Upload URLs require current lease ownership; pending uploads have a bounded TTL and registered objects are deleted after lease loss or rejected completion.
 - OCR calls must support a per-call timeout; legacy pytesseract APIs are rejected instead of falling back to an unbounded invocation.
 
 ## Observability baseline

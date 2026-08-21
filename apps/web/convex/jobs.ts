@@ -24,8 +24,9 @@ const jobInput = v.object({
   sizeBytes: v.optional(v.number()),
 });
 
-const jobOutput = v.object({
+const pendingJobOutput = v.object({
   storageId: v.id("_storage"),
+  pendingUploadId: v.id("pendingUploads"),
   filename: v.string(),
   sizeBytes: v.optional(v.number()),
 });
@@ -293,11 +294,15 @@ export const reportJobProgress = mutation({
       return null;
     }
 
-    if (job.status !== "running" || job.claimedBy !== args.workerId) {
+    const now = Date.now();
+    if (
+      job.status !== "running" ||
+      job.claimedBy !== args.workerId ||
+      (job.claimExpiresAt ?? 0) <= now
+    ) {
       return job;
     }
 
-    const now = Date.now();
     const globalLimits = await resolveGlobalLimits(ctx);
 
     await ctx.db.patch(args.jobId, {
@@ -315,7 +320,7 @@ export const completeJob = mutation({
   args: {
     jobId: v.id("jobs"),
     workerId: v.string(),
-    outputs: v.array(jobOutput),
+    outputs: v.array(pendingJobOutput),
     toolResult: v.optional(v.any()),
     minutesUsed: v.optional(v.number()),
     bytesProcessed: v.optional(v.number()),
@@ -328,17 +333,42 @@ export const completeJob = mutation({
       return null;
     }
 
-    if (job.status !== "running" || job.claimedBy !== args.workerId) {
+    const now = Date.now();
+    if (
+      job.status !== "running" ||
+      job.claimedBy !== args.workerId ||
+      (job.claimExpiresAt ?? 0) <= now
+    ) {
       return job;
     }
 
-    const now = Date.now();
+    const pendingUploads = [];
+    for (const output of args.outputs) {
+      const pending = await ctx.db.get(output.pendingUploadId);
+      if (
+        !pending ||
+        pending.jobId !== job._id ||
+        pending.workerId !== args.workerId ||
+        pending.storageId !== output.storageId ||
+        pending.filename !== output.filename ||
+        pending.sizeBytes !== (output.sizeBytes ?? 0) ||
+        pending.expiresAt <= now
+      ) {
+        return job;
+      }
+      pendingUploads.push(pending);
+    }
+
     assertTransition(job.status, "succeeded");
 
     await ctx.db.patch(args.jobId, {
       status: "succeeded",
       progress: 100,
-      outputs: args.outputs,
+      outputs: args.outputs.map(({ storageId, filename, sizeBytes }) => ({
+        storageId,
+        filename,
+        sizeBytes,
+      })),
       toolResult: args.toolResult,
       finishedAt: now,
       updatedAt: now,
@@ -360,6 +390,9 @@ export const completeJob = mutation({
         createdAt: now,
         expiresAt,
       });
+    }
+    for (const pending of pendingUploads) {
+      await ctx.db.delete(pending._id);
     }
 
     const minutesUsed = args.minutesUsed ?? 0;

@@ -29,6 +29,26 @@ export const cleanupExpiredArtifacts = mutation({
       }
     }
 
-    return { deleted };
+    const pending = await ctx.db
+      .query("pendingUploads")
+      .withIndex("by_expires", (q) => q.lt("expiresAt", now))
+      .take(Math.max(batchSize - deleted, 0));
+    let pendingDeleted = 0;
+    for (const upload of pending) {
+      try {
+        if (upload.storageId) {
+          const meta = await ctx.db.system.get(upload.storageId);
+          if (meta) {
+            await ctx.storage.delete(upload.storageId);
+          }
+        }
+        await ctx.db.delete(upload._id);
+        pendingDeleted += 1;
+      } catch {
+        continue;
+      }
+    }
+
+    return { deleted, pendingDeleted };
   },
 });

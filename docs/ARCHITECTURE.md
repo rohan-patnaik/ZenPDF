@@ -39,8 +39,8 @@
 2. Convex validates tier limits and capacity.
 3. Job is created with status `queued`.
 4. Worker claims job via safe-claim mutation and updates progress.
-5. Worker downloads inputs via Convex-generated URLs and uploads outputs.
-6. Job completes or returns a stable error code with friendly message.
+5. Worker downloads inputs via Convex-generated URLs. Output upload URLs are issued only to the current lease owner and each upload is tracked as a short-lived pending record before bytes are sent.
+6. Job completion atomically promotes registered pending uploads to artifacts. Lease loss, completion rejection, and TTL cleanup delete abandoned registered objects.
 7. Downloads stream through a Next.js route that validates access.
 
 ## Storage

@@ -94,6 +94,18 @@ export default defineSchema({
     .index("by_job", ["jobId"])
     .index("by_expires", ["expiresAt"]),
 
+  pendingUploads: defineTable({
+    jobId: v.id("jobs"),
+    workerId: v.string(),
+    filename: v.string(),
+    sizeBytes: v.number(),
+    storageId: v.optional(v.id("_storage")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+  })
+    .index("by_job", ["jobId"])
+    .index("by_expires", ["expiresAt"]),
+
   usageCounters: defineTable({
     userId: v.optional(v.id("users")),
     anonId: v.optional(v.string()),

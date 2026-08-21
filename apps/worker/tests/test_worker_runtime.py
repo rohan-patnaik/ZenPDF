@@ -50,6 +50,61 @@ class _LeaseWorker(ZenPdfWorker):
         return {"status": "succeeded", "claimedBy": self.worker_id}
 
 
+class _UploadWorker(ZenPdfWorker):
+    def __init__(self) -> None:
+        super().__init__("https://example.invalid", "worker-a", "token")
+        self.mutations: list[tuple[str, dict]] = []
+        self.register_result = True
+
+    def _mutation(self, path: str, args: dict) -> object:
+        self.mutations.append((path, args))
+        if path == "files:beginWorkerUpload":
+            return {
+                "pendingUploadId": "pending-1",
+                "uploadUrl": "https://upload.invalid/pending-1",
+            }
+        if path == "files:registerWorkerUpload":
+            return self.register_result
+        return True
+
+
+class _CompletionRejectWorker(ZenPdfWorker):
+    def __init__(self) -> None:
+        super().__init__("https://example.invalid", "worker-a", "token")
+        self.discarded: list[str] = []
+
+    def _report(self, _job_id: str, _progress: int) -> bool:
+        return True
+
+    def _download_inputs(self, _inputs: list[dict], _temp: Path) -> list[Path]:
+        return []
+
+    def _run_tool_bounded(
+        self, _job: dict, _inputs: list[Path], temp: Path, *_args, **_kwargs
+    ) -> ToolRunResult:
+        output = temp / "output.pdf"
+        output.write_bytes(b"%PDF-output")
+        return ToolRunResult([output])
+
+    def _upload_outputs(self, *_args, **_kwargs) -> list[dict]:
+        return [
+            {
+                "storageId": "stored-1",
+                "pendingUploadId": "pending-1",
+                "filename": "output.pdf",
+                "sizeBytes": 11,
+            }
+        ]
+
+    def _mutation(self, path: str, _args: dict) -> object:
+        if path == "jobs:completeJob":
+            return {"status": "running", "claimedBy": "worker-b"}
+        if path == "files:discardWorkerUpload":
+            self.discarded.append("pending-1")
+            return True
+        raise AssertionError(path)
+
+
 def test_heartbeat_retries_transient_failure_boundedly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZENPDF_HEARTBEAT_RETRIES", "3")
     monkeypatch.setenv("ZENPDF_HEARTBEAT_RETRY_SECONDS", "0")
@@ -75,6 +130,107 @@ def test_mutation_result_detects_reclaimed_job() -> None:
     assert worker._is_owned_job({"status": "running", "claimedBy": "worker-a"})
     assert not worker._is_owned_job({"status": "running", "claimedBy": "worker-b"})
     assert not worker._is_owned_job(None)
+
+
+def test_blocked_upload_is_cancelled_and_registered_object_is_discarded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    closed = threading.Event()
+
+    class FakeResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"storageId": "stored-1"}
+
+    class FakeSession:
+        def post(self, *_args, **_kwargs) -> FakeResponse:
+            started.set()
+            assert closed.wait(5)
+            return FakeResponse()
+
+        @staticmethod
+        def close() -> None:
+            closed.set()
+
+    monkeypatch.setattr("zenpdf_worker.worker.requests.Session", FakeSession)
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"%PDF-output")
+    ownership_lost = threading.Event()
+    worker = _UploadWorker()
+
+    def lose_during_post() -> None:
+        assert started.wait(5)
+        ownership_lost.set()
+
+    lease_thread = threading.Thread(target=lose_during_post)
+    lease_thread.start()
+    started_at = time.monotonic()
+    with pytest.raises(JobOwnershipLost, match="during output upload"):
+        worker._upload_outputs("job-1", [output], ownership_lost)
+    lease_thread.join(timeout=5)
+
+    assert time.monotonic() - started_at < 3
+    assert [path for path, _args in worker.mutations] == [
+        "files:beginWorkerUpload",
+        "files:registerWorkerUpload",
+        "files:discardWorkerUpload",
+    ]
+
+
+def test_completion_rejection_discards_registered_uploads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("ZENPDF_WORKER_HEARTBEAT_SECONDS", "60")
+    worker = _CompletionRejectWorker()
+    worker._process_job({"_id": "job-1", "inputs": [], "tool": "merge"})
+    assert worker.discarded == ["pending-1"]
+
+
+def test_registration_rejection_deletes_returned_storage_id(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"storageId": "stored-rejected"}
+
+    class FakeSession:
+        @staticmethod
+        def post(*_args, **_kwargs) -> FakeResponse:
+            return FakeResponse()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr("zenpdf_worker.worker.requests.Session", FakeSession)
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"%PDF-output")
+    worker = _UploadWorker()
+    worker.register_result = False
+
+    with pytest.raises(RuntimeError, match="could not be registered"):
+        worker._upload_outputs("job-1", [output], threading.Event())
+    discard_args = [
+        args for path, args in worker.mutations if path == "files:discardWorkerUpload"
+    ]
+    assert discard_args == [
+        {
+            "pendingUploadId": "pending-1",
+            "workerId": "worker-a",
+            "storageId": "stored-rejected",
+            "workerToken": "token",
+        }
+    ]
 
 
 def test_hung_tool_hits_wall_limit_and_kills_descendant(

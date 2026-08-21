@@ -30,6 +30,40 @@ const claimNextJob = makeFunctionReference<
   ClaimedJob
 >("jobs:claimNextJob");
 
+const beginWorkerUpload = makeFunctionReference<
+  "mutation",
+  {
+    jobId: string;
+    workerId: string;
+    filename: string;
+    sizeBytes: number;
+    workerToken?: string;
+  },
+  { pendingUploadId: string; uploadUrl: string } | null
+>("files:beginWorkerUpload");
+
+const registerWorkerUpload = makeFunctionReference<
+  "mutation",
+  {
+    pendingUploadId: string;
+    workerId: string;
+    storageId: string;
+    workerToken?: string;
+  },
+  boolean
+>("files:registerWorkerUpload");
+
+const discardWorkerUpload = makeFunctionReference<
+  "mutation",
+  {
+    pendingUploadId: string;
+    workerId: string;
+    storageId?: string;
+    workerToken?: string;
+  },
+  boolean
+>("files:discardWorkerUpload");
+
 type CapacitySnapshot = {
   budget: { monthlyBudgetUsage: number; status: string };
 };
@@ -109,6 +143,76 @@ describe("job system", () => {
       expect(claimed?._id).toBe(jobId);
       expect(claimed?.status).toBe("running");
       expect(claimed?.attempts).toBe(1);
+    } finally {
+      if (previousWorkerToken === undefined) {
+        delete process.env.ZENPDF_WORKER_TOKEN;
+      } else {
+        process.env.ZENPDF_WORKER_TOKEN = previousWorkerToken;
+      }
+    }
+  });
+
+  it("issues worker uploads only to the lease owner and deletes abandoned storage", async () => {
+    const t = convexTest(schema, modules).withIdentity({
+      subject: "user_123",
+      email: "user@example.com",
+    });
+    const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
+    process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
+    try {
+      const inputStorageId = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["input"])),
+      );
+      const { jobId } = await t.mutation(createJob, {
+        tool: "merge",
+        inputs: [
+          { storageId: inputStorageId, filename: "sample.pdf", sizeBytes: 5 },
+        ],
+      });
+      await t.mutation(claimNextJob, {
+        workerId: "worker-1",
+        workerToken: "test-worker-token",
+      });
+
+      expect(
+        await t.mutation(beginWorkerUpload, {
+          jobId,
+          workerId: "worker-2",
+          filename: "output.pdf",
+          sizeBytes: 6,
+          workerToken: "test-worker-token",
+        }),
+      ).toBeNull();
+      const pending = await t.mutation(beginWorkerUpload, {
+        jobId,
+        workerId: "worker-1",
+        filename: "output.pdf",
+        sizeBytes: 6,
+        workerToken: "test-worker-token",
+      });
+      expect(pending?.uploadUrl).toMatch(/^https?:\/\//);
+
+      const outputStorageId = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["output"])),
+      );
+      expect(
+        await t.mutation(registerWorkerUpload, {
+          pendingUploadId: pending!.pendingUploadId,
+          workerId: "worker-1",
+          storageId: outputStorageId,
+          workerToken: "test-worker-token",
+        }),
+      ).toBe(true);
+      expect(
+        await t.mutation(discardWorkerUpload, {
+          pendingUploadId: pending!.pendingUploadId,
+          workerId: "worker-1",
+          workerToken: "test-worker-token",
+        }),
+      ).toBe(true);
+      expect(
+        await t.run(async (ctx) => ctx.db.system.get(outputStorageId)),
+      ).toBeNull();
     } finally {
       if (previousWorkerToken === undefined) {
         delete process.env.ZENPDF_WORKER_TOKEN;

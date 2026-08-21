@@ -275,6 +275,8 @@ class ZenPdfWorker:
         stop_event = threading.Event()
         ownership_lost = threading.Event()
         heartbeat: threading.Thread | None = None
+        output_payload: List[Dict[str, Any]] = []
+        uploads_committed = False
         try:
             if not self._report_with_retry(job_id, 10):
                 raise JobOwnershipLost("Job lease was lost before processing started")
@@ -298,7 +300,9 @@ class ZenPdfWorker:
                 if not self._report_with_retry(job_id, 75):
                     ownership_lost.set()
                     raise JobOwnershipLost("Job lease was lost before upload")
-                output_payload = self._upload_outputs(run_result.outputs, ownership_lost)
+                output_payload = self._upload_outputs(
+                    job_id, run_result.outputs, ownership_lost
+                )
                 self._require_ownership(ownership_lost)
             elapsed_minutes = max((time.time() - started) / 60, 0.01)
             bytes_processed = sum(item.get("sizeBytes", 0) for item in job["inputs"])
@@ -317,6 +321,7 @@ class ZenPdfWorker:
             if not self._is_owned_job(completed, "succeeded"):
                 ownership_lost.set()
                 raise JobOwnershipLost("Job lease was lost before completion")
+            uploads_committed = True
         except JobOwnershipLost as error:
             print(f"Job {job_id} ownership lost: {error}")
         except ValueError as error:
@@ -343,6 +348,8 @@ class ZenPdfWorker:
             stop_event.set()
             if heartbeat is not None:
                 heartbeat.join(timeout=1)
+            if output_payload and not uploads_committed:
+                self._discard_uploaded_outputs(output_payload)
 
     def _is_owned_job(self, result: Any, expected_status: str = "running") -> bool:
         """Validate that a mutation result still belongs to this worker."""
@@ -813,39 +820,145 @@ class ZenPdfWorker:
         raise RuntimeError(f"Unsupported tool: {tool}")
 
     def _upload_outputs(
-        self, outputs: List[Path], ownership_lost: threading.Event | None = None
+        self,
+        job_id: str,
+        outputs: List[Path],
+        ownership_lost: threading.Event | None = None,
     ) -> List[Dict[str, Any]]:
-        """Upload output files to Convex storage."""
-        payload = []
-        for output in outputs:
-            if ownership_lost is not None:
-                self._require_ownership(ownership_lost)
-            upload_url = self._mutation(
-                "files:generateUploadUrl", {"workerToken": self.worker_token}
-            )
-            if not isinstance(upload_url, str) or not upload_url.startswith(("https://", "http://")):
-                raise RuntimeError("Upload URL mutation returned an invalid result")
-            with output.open("rb") as handle:
-                response = requests.post(
-                    upload_url,
-                    data=handle,
-                    headers={"Content-Type": "application/octet-stream"},
-                    timeout=120,
+        """Upload outputs through TTL-tracked, lease-aware pending records."""
+        payload: List[Dict[str, Any]] = []
+        try:
+            for output in outputs:
+                if ownership_lost is not None:
+                    self._require_ownership(ownership_lost)
+                size_bytes = output.stat().st_size
+                pending = self._mutation(
+                    "files:beginWorkerUpload",
+                    {
+                        "jobId": job_id,
+                        "workerId": self.worker_id,
+                        "filename": output.name,
+                        "sizeBytes": size_bytes,
+                        "workerToken": self.worker_token,
+                    },
                 )
+                if not isinstance(pending, dict):
+                    raise JobOwnershipLost("Job lease was lost before upload URL issuance")
+                upload_url = pending.get("uploadUrl")
+                pending_id = pending.get("pendingUploadId")
+                if (
+                    not isinstance(upload_url, str)
+                    or not upload_url.startswith(("https://", "http://"))
+                    or not isinstance(pending_id, str)
+                    or not pending_id
+                ):
+                    raise RuntimeError("Upload URL mutation returned an invalid result")
+                storage_id = self._upload_one_pending(
+                    output, upload_url, pending_id, ownership_lost
+                )
+                payload.append(
+                    {
+                        "storageId": storage_id,
+                        "pendingUploadId": pending_id,
+                        "filename": output.name,
+                        "sizeBytes": size_bytes,
+                    }
+                )
+            return payload
+        except BaseException:
+            self._discard_uploaded_outputs(payload)
+            raise
+
+    def _upload_one_pending(
+        self,
+        output: Path,
+        upload_url: str,
+        pending_id: str,
+        ownership_lost: threading.Event | None,
+    ) -> str:
+        """Run a single POST in a cancellable thread and bind its storage ID."""
+        session = requests.Session()
+        finished = threading.Event()
+        outcome: Dict[str, Any] = {}
+
+        def upload() -> None:
+            storage_id: str | None = None
+            try:
+                with output.open("rb") as handle:
+                    response = session.post(
+                        upload_url,
+                        data=handle,
+                        headers={"Content-Type": "application/octet-stream"},
+                        timeout=(10, 120),
+                    )
                 response.raise_for_status()
                 storage_id = response.json().get("storageId")
                 if not isinstance(storage_id, str) or not storage_id:
                     raise RuntimeError("Upload response did not include a storage ID")
-            if ownership_lost is not None:
-                self._require_ownership(ownership_lost)
-            payload.append(
-                {
-                    "storageId": storage_id,
-                    "filename": output.name,
-                    "sizeBytes": output.stat().st_size,
-                }
+                registered = self._mutation(
+                    "files:registerWorkerUpload",
+                    {
+                        "pendingUploadId": pending_id,
+                        "workerId": self.worker_id,
+                        "storageId": storage_id,
+                        "workerToken": self.worker_token,
+                    },
+                )
+                if registered is not True:
+                    raise RuntimeError("Uploaded object could not be registered")
+                if ownership_lost is not None and ownership_lost.is_set():
+                    self._discard_pending_upload(pending_id, storage_id)
+                    outcome["ownershipLost"] = True
+                else:
+                    outcome["storageId"] = storage_id
+            except BaseException as error:  # noqa: BLE001 - passed to owner thread
+                self._discard_pending_upload(pending_id, storage_id)
+                outcome["error"] = error
+            finally:
+                session.close()
+                finished.set()
+
+        upload_thread = threading.Thread(target=upload, daemon=True)
+        upload_thread.start()
+        while not finished.wait(0.1):
+            if ownership_lost is not None and ownership_lost.is_set():
+                session.close()
+                finished.wait(2)
+                raise JobOwnershipLost("Job ownership changed during output upload")
+        if outcome.get("ownershipLost"):
+            raise JobOwnershipLost("Job ownership changed during output upload")
+        error = outcome.get("error")
+        if isinstance(error, BaseException):
+            raise error
+        storage_id = outcome.get("storageId")
+        if not isinstance(storage_id, str) or not storage_id:
+            raise RuntimeError("Upload ended without a registered storage ID")
+        return storage_id
+
+    def _discard_pending_upload(
+        self, pending_id: str, storage_id: str | None = None
+    ) -> None:
+        """Best-effort deletion; the server-side TTL remains the fallback."""
+        try:
+            args = {
+                "pendingUploadId": pending_id,
+                "workerId": self.worker_id,
+                "workerToken": self.worker_token,
+            }
+            if storage_id is not None:
+                args["storageId"] = storage_id
+            self._mutation(
+                "files:discardWorkerUpload",
+                args,
             )
-        return payload
+        except Exception as error:  # noqa: BLE001 - cleanup must not mask owner error
+            print(f"Pending upload cleanup deferred to TTL: {error}")
+
+    def _discard_uploaded_outputs(self, outputs: List[Dict[str, Any]]) -> None:
+        for output in outputs:
+            pending_id = output.get("pendingUploadId")
+            if isinstance(pending_id, str) and pending_id:
+                self._discard_pending_upload(pending_id)
 
     def _mutation(self, path: str, args: Dict[str, Any]) -> Any:
         """Execute a mutation with thread-safe access."""
