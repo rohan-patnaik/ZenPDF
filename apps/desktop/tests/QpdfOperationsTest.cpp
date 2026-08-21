@@ -1,4 +1,5 @@
 #include "QpdfOperations.h"
+#include "QpdfPublication.h"
 
 #include <QDir>
 #include <QFile>
@@ -11,6 +12,7 @@
 #include <QThread>
 #include <QtTest>
 
+#include <cstdio>
 #include <thread>
 
 #ifdef Q_OS_UNIX
@@ -27,9 +29,12 @@ private slots:
     void refusesCanonicalSymlinkSourceOverwrite();
     void refusesHardlinkSourceOverwrite();
     void refusesChangedSourceBeforePublication();
+    void refusesSameSizeSourceChangeWithRestoredMtime();
+    void publicationNeverReplacesAppearedDestination();
+    void publicationNeverReplacesChangedDestination();
     void cancellationLeavesNoOutputOrStaging();
     void outputCapLeavesNoOutputOrStaging();
-    void preservesDestinationPermissions();
+    void refusesExistingDestination();
     void mergesExtractsAndRotates();
 };
 
@@ -177,6 +182,104 @@ void QpdfOperationsTest::refusesChangedSourceBeforePublication() {
 #endif
 }
 
+void QpdfOperationsTest::refusesSameSizeSourceChangeWithRestoredMtime() {
+#ifndef Q_OS_LINUX
+    QSKIP("Nanosecond change-time regression requires Linux");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body = "#!/bin/sh\ncp \"$3\" \"$6\"\nsleep 0.3\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QByteArray original = "%PDF-AAAA";
+    const QByteArray replacement = "%PDF-BBBB";
+    QCOMPARE(original.size(), replacement.size());
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write(original), original.size());
+    file.close();
+    const auto originalMtime = QFileInfo(source).lastModified();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    std::thread modifier([source, replacement, originalMtime] {
+        QThread::msleep(100);
+        QFile changed(source);
+        if (changed.open(QIODevice::ReadWrite | QIODevice::Truncate)) {
+            changed.write(replacement);
+            changed.flush();
+            changed.setFileTime(originalMtime, QFileDevice::FileModificationTime);
+        }
+    });
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    modifier.join();
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("changed while")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
+}
+
+void QpdfOperationsTest::publicationNeverReplacesAppearedDestination() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto staging = directory.filePath(QStringLiteral("staging.pdf"));
+    const auto destination = directory.filePath(QStringLiteral("destination.pdf"));
+    QFile staged(staging);
+    QVERIFY(staged.open(QIODevice::WriteOnly));
+    QCOMPARE(staged.write("completed"), qint64{9});
+    staged.close();
+    QFile appeared(destination);
+    QVERIFY(appeared.open(QIODevice::WriteOnly));
+    QCOMPARE(appeared.write("appeared"), qint64{8});
+    appeared.close();
+
+    QCOMPARE(QpdfPublication::publishNoReplace(staging, destination),
+             QpdfPublication::Result::DestinationExists);
+    QVERIFY(QFileInfo::exists(staging));
+    QVERIFY(appeared.open(QIODevice::ReadOnly));
+    QCOMPARE(appeared.readAll(), QByteArray("appeared"));
+}
+
+void QpdfOperationsTest::publicationNeverReplacesChangedDestination() {
+#ifndef Q_OS_UNIX
+    QSKIP("Atomic replacement fixture requires Unix");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto staging = directory.filePath(QStringLiteral("staging.pdf"));
+    const auto destination = directory.filePath(QStringLiteral("destination.pdf"));
+    const auto replacement = directory.filePath(QStringLiteral("replacement.pdf"));
+    for (const auto& item : QList<QPair<QString, QByteArray>>{
+             {staging, "completed"}, {destination, "first"}, {replacement, "replacement"}}) {
+        QFile file(item.first);
+        QVERIFY(file.open(QIODevice::WriteOnly));
+        QCOMPARE(file.write(item.second), item.second.size());
+    }
+    const auto replacementBytes = QFile::encodeName(replacement);
+    const auto destinationBytes = QFile::encodeName(destination);
+    QCOMPARE(std::rename(replacementBytes.constData(), destinationBytes.constData()), 0);
+
+    QCOMPARE(QpdfPublication::publishNoReplace(staging, destination),
+             QpdfPublication::Result::DestinationExists);
+    QFile current(destination);
+    QVERIFY(current.open(QIODevice::ReadOnly));
+    QCOMPARE(current.readAll(), QByteArray("replacement"));
+    QVERIFY(QFileInfo::exists(staging));
+#endif
+}
+
 void QpdfOperationsTest::cancellationLeavesNoOutputOrStaging() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -214,7 +317,7 @@ void QpdfOperationsTest::outputCapLeavesNoOutputOrStaging() {
     QVERIFY(stagingDirectories(directory).isEmpty());
 }
 
-void QpdfOperationsTest::preservesDestinationPermissions() {
+void QpdfOperationsTest::refusesExistingDestination() {
     if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
         QSKIP("qpdf is not installed");
     }
@@ -227,13 +330,11 @@ void QpdfOperationsTest::preservesDestinationPermissions() {
     QVERIFY(existing.open(QIODevice::WriteOnly));
     QVERIFY(existing.write("old") > 0);
     existing.close();
-    QVERIFY(QFile::setPermissions(
-        output, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ReadGroup));
-    const auto expected = QFileInfo(output).permissions();
-
     const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
-    QVERIFY2(result.succeeded, qPrintable(result.message));
-    QCOMPARE(QFileInfo(output).permissions(), expected);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("never replace")));
+    QVERIFY(existing.open(QIODevice::ReadOnly));
+    QCOMPARE(existing.readAll(), QByteArray("old"));
     QVERIFY(stagingDirectories(directory).isEmpty());
 }
 

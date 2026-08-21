@@ -22,6 +22,7 @@ add_library(zenpdf_core STATIC
     src/PrintPolicy.h
     src/QpdfOperations.cpp
     src/QpdfOperations.h
+    src/QpdfPublication.h
 )
 target_link_libraries(zenpdf_core PUBLIC Qt6::Core Qt6::Sql)
 target_include_directories(zenpdf_core PUBLIC src)

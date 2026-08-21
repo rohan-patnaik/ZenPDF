@@ -1,19 +1,27 @@
 #include "QpdfOperations.h"
+#include "QpdfPublication.h"
 
 #include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QProcess>
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
 #include <cstdio>
+#include <cerrno>
 #include <optional>
 
 #ifdef Q_OS_UNIX
+#include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#endif
+#ifdef Q_OS_LINUX
+#include <linux/fs.h>
+#include <sys/syscall.h>
 #endif
 
 namespace {
@@ -48,6 +56,10 @@ struct FileIdentity final {
 #ifdef Q_OS_UNIX
     dev_t device{};
     ino_t inode{};
+#ifdef Q_OS_LINUX
+    qint64 modifiedNs{-1};
+    qint64 changedNs{-1};
+#endif
 #endif
 };
 
@@ -67,6 +79,12 @@ std::optional<FileIdentity> fileIdentity(const QString& path, bool directory = f
     }
     identity.device = metadata.st_dev;
     identity.inode = metadata.st_ino;
+#ifdef Q_OS_LINUX
+    identity.modifiedNs = static_cast<qint64>(metadata.st_mtim.tv_sec) * 1'000'000'000LL +
+                          metadata.st_mtim.tv_nsec;
+    identity.changedNs = static_cast<qint64>(metadata.st_ctim.tv_sec) * 1'000'000'000LL +
+                         metadata.st_ctim.tv_nsec;
+#endif
 #endif
     return identity;
 }
@@ -81,10 +99,114 @@ bool sameFile(const FileIdentity& left, const FileIdentity& right) {
 
 bool unchangedFile(const FileIdentity& expected) {
     const auto current = fileIdentity(expected.path, expected.directory);
-    return current.has_value() && sameFile(expected, *current) &&
-           (expected.directory ||
-            (current->size == expected.size && current->modifiedMs == expected.modifiedMs));
+    if (!current.has_value() || !sameFile(expected, *current) || expected.directory) {
+        return current.has_value() && expected.directory && sameFile(expected, *current);
+    }
+    if (current->size != expected.size || current->modifiedMs != expected.modifiedMs) {
+        return false;
+    }
+#ifdef Q_OS_LINUX
+    return current->modifiedNs == expected.modifiedNs && current->changedNs == expected.changedNs;
+#else
+    return true;
+#endif
 }
+
+bool snapshotInput(const FileIdentity& expected, const QString& snapshotPath) {
+    QFile source(expected.path);
+    if (!source.open(QIODevice::ReadOnly)) {
+        return false;
+    }
+#ifdef Q_OS_UNIX
+    struct stat before {};
+    if (::fstat(source.handle(), &before) != 0 || !S_ISREG(before.st_mode) ||
+        before.st_dev != expected.device || before.st_ino != expected.inode) {
+        return false;
+    }
+#endif
+    QFile snapshot(snapshotPath);
+    if (!snapshot.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        return false;
+    }
+    QByteArray buffer(1024 * 1024, Qt::Uninitialized);
+    qint64 total = 0;
+    while (true) {
+        const auto bytesRead = source.read(buffer.data(), buffer.size());
+        if (bytesRead < 0) {
+            return false;
+        }
+        if (bytesRead == 0) {
+            break;
+        }
+        total += bytesRead;
+        if (total > QpdfOperations::maximumInputBytes ||
+            snapshot.write(buffer.constData(), bytesRead) != bytesRead) {
+            return false;
+        }
+    }
+    if (!snapshot.setPermissions(kOwnerFilePermissions) || !snapshot.flush()) {
+        return false;
+    }
+#ifdef Q_OS_UNIX
+    if (::fsync(snapshot.handle()) != 0) {
+        return false;
+    }
+    struct stat after {};
+    if (::fstat(source.handle(), &after) != 0 || before.st_dev != after.st_dev ||
+        before.st_ino != after.st_ino || before.st_size != after.st_size) {
+        return false;
+    }
+#ifdef Q_OS_LINUX
+    if (
+        before.st_mtim.tv_sec != after.st_mtim.tv_sec ||
+        before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
+        before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
+        before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
+        return false;
+    }
+#else
+    if (before.st_mtime != after.st_mtime || before.st_ctime != after.st_ctime) {
+        return false;
+    }
+#endif
+#endif
+    return total == expected.size;
+}
+
+}
+
+QpdfPublication::Result QpdfPublication::publishNoReplace(
+    const QString& source, const QString& destination) {
+    const auto sourceBytes = QFile::encodeName(source);
+    const auto destinationBytes = QFile::encodeName(destination);
+#ifdef Q_OS_LINUX
+    if (::syscall(SYS_renameat2,
+                  AT_FDCWD,
+                  sourceBytes.constData(),
+                  AT_FDCWD,
+                  destinationBytes.constData(),
+                  RENAME_NOREPLACE) == 0) {
+        return Result::Succeeded;
+    }
+    if (errno == EEXIST) {
+        return Result::DestinationExists;
+    }
+    if (errno != ENOSYS && errno != EINVAL) {
+        return Result::Failed;
+    }
+#endif
+#ifdef Q_OS_UNIX
+    if (::link(sourceBytes.constData(), destinationBytes.constData()) == 0) {
+        (void)::unlink(sourceBytes.constData());
+        return Result::Succeeded;
+    }
+    return errno == EEXIST ? Result::DestinationExists : Result::Failed;
+#else
+    if (QFile::rename(source, destination)) {
+        return Result::Succeeded;
+    }
+    return QFileInfo::exists(destination) ? Result::DestinationExists : Result::Failed;
+#endif
 }
 
 bool QpdfOperations::isValidPageRange(const QString& range, int pageCount) {
@@ -214,10 +336,8 @@ QpdfResult QpdfOperations::run(
     if (outputInfo.exists() && !outputInfo.isFile()) {
         return {false, QStringLiteral("The output path is not a regular file.")};
     }
-    std::optional<QFileDevice::Permissions> destinationPermissions;
     const auto destinationIdentity = fileIdentity(cleanOutput);
     if (outputInfo.exists()) {
-        destinationPermissions = outputInfo.permissions();
         if (!destinationIdentity.has_value()) {
             return {false, QStringLiteral("The output path is not a stable regular file.")};
         }
@@ -226,6 +346,7 @@ QpdfResult QpdfOperations::run(
                 return {false, QStringLiteral("Choose a new output file; the source is never overwritten.")};
             }
         }
+        return {false, QStringLiteral("Choose a new output file; organizer results never replace an existing file.")};
     }
     const auto outputDirectoryIdentity = fileIdentity(outputDirectory.absolutePath(), true);
 
@@ -239,7 +360,24 @@ QpdfResult QpdfOperations::run(
     }
     const auto temporaryPath = stagingDirectory.filePath(QStringLiteral("result.pdf"));
 
+    QHash<QString, QString> snapshotPaths;
+    for (qsizetype index = 0; index < protectedInputs.size(); ++index) {
+        const auto& input = protectedInputs.at(index);
+        const auto snapshotPath = stagingDirectory.filePath(
+            QStringLiteral("input-%1.pdf").arg(index));
+        if (!snapshotInput(input, snapshotPath)) {
+            return {false, QStringLiteral("An input PDF changed while it was being secured; no output was published.")};
+        }
+        snapshotPaths.insert(protectedInputPaths.at(index), snapshotPath);
+    }
+
     auto processArguments = arguments;
+    for (auto& argument : processArguments) {
+        const auto snapshot = snapshotPaths.constFind(argument);
+        if (snapshot != snapshotPaths.cend()) {
+            argument = *snapshot;
+        }
+    }
     processArguments << temporaryPath;
     QProcess process;
     process.setProcessChannelMode(QProcess::SeparateChannels);
@@ -295,8 +433,7 @@ QpdfResult QpdfOperations::run(
         result.size() > limits.maximumOutputBytes || result.read(5) != QByteArrayLiteral("%PDF-")) {
         return {false, QStringLiteral("The generated file did not pass basic PDF validation.")};
     }
-    const auto permissions = destinationPermissions.value_or(kOwnerFilePermissions);
-    if (!result.setPermissions(permissions) || !result.flush()) {
+    if (!result.setPermissions(kOwnerFilePermissions) || !result.flush()) {
         return {false, QStringLiteral("Could not secure the completed output file.")};
     }
 #ifdef Q_OS_UNIX
@@ -330,9 +467,11 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("The output directory changed while the operation was running; no output was published.")};
     }
 
-    const auto sourceBytes = QFile::encodeName(temporaryPath);
-    const auto destinationBytes = QFile::encodeName(cleanOutput);
-    if (std::rename(sourceBytes.constData(), destinationBytes.constData()) != 0) {
+    const auto publication = QpdfPublication::publishNoReplace(temporaryPath, cleanOutput);
+    if (publication == QpdfPublication::Result::DestinationExists) {
+        return {false, QStringLiteral("The output path appeared while the operation was running; no output was replaced.")};
+    }
+    if (publication != QpdfPublication::Result::Succeeded) {
         return {false, QStringLiteral("Could not atomically place the completed output file.")};
     }
     return {true, QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(cleanOutput))};
