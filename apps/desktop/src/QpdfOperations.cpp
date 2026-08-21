@@ -1,5 +1,6 @@
 #include "QpdfOperations.h"
 
+#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -11,6 +12,7 @@
 #include <optional>
 
 #ifdef Q_OS_UNIX
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -35,6 +37,53 @@ QpdfResult validateInput(const QString& path) {
 
 QString normalizedPath(const QString& path) {
     return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+}
+
+struct FileIdentity final {
+    QString path;
+    QString canonicalPath;
+    qint64 size{-1};
+    qint64 modifiedMs{-1};
+    bool directory{false};
+#ifdef Q_OS_UNIX
+    dev_t device{};
+    ino_t inode{};
+#endif
+};
+
+std::optional<FileIdentity> fileIdentity(const QString& path, bool directory = false) {
+    const QFileInfo info(path);
+    if (!info.exists() || (directory ? !info.isDir() : !info.isFile())) {
+        return std::nullopt;
+    }
+    FileIdentity identity{
+        normalizedPath(path), info.canonicalFilePath(), info.size(), info.lastModified().toMSecsSinceEpoch(), directory};
+#ifdef Q_OS_UNIX
+    struct stat metadata {};
+    const auto encoded = QFile::encodeName(identity.path);
+    if (::stat(encoded.constData(), &metadata) != 0 ||
+        (directory ? !S_ISDIR(metadata.st_mode) : !S_ISREG(metadata.st_mode))) {
+        return std::nullopt;
+    }
+    identity.device = metadata.st_dev;
+    identity.inode = metadata.st_ino;
+#endif
+    return identity;
+}
+
+bool sameFile(const FileIdentity& left, const FileIdentity& right) {
+#ifdef Q_OS_UNIX
+    return left.device == right.device && left.inode == right.inode;
+#else
+    return !left.canonicalPath.isEmpty() && left.canonicalPath == right.canonicalPath;
+#endif
+}
+
+bool unchangedFile(const FileIdentity& expected) {
+    const auto current = fileIdentity(expected.path, expected.directory);
+    return current.has_value() && sameFile(expected, *current) &&
+           (expected.directory ||
+            (current->size == expected.size && current->modifiedMs == expected.modifiedMs));
 }
 }
 
@@ -141,8 +190,15 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("The operation was cancelled.")};
     }
     const auto cleanOutput = normalizedPath(outputPath);
+    QList<FileIdentity> protectedInputs;
     for (const auto& input : protectedInputPaths) {
-        if (cleanOutput == normalizedPath(input)) {
+        const auto identity = fileIdentity(input);
+        if (!identity.has_value()) {
+            return {false, QStringLiteral("An input PDF changed or became unreadable.")};
+        }
+        protectedInputs.append(*identity);
+        if (cleanOutput == identity->path ||
+            (!identity->canonicalPath.isEmpty() && QFileInfo(cleanOutput).canonicalFilePath() == identity->canonicalPath)) {
             return {false, QStringLiteral("Choose a new output file; the source is never overwritten.")};
         }
     }
@@ -159,9 +215,19 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("The output path is not a regular file.")};
     }
     std::optional<QFileDevice::Permissions> destinationPermissions;
+    const auto destinationIdentity = fileIdentity(cleanOutput);
     if (outputInfo.exists()) {
         destinationPermissions = outputInfo.permissions();
+        if (!destinationIdentity.has_value()) {
+            return {false, QStringLiteral("The output path is not a stable regular file.")};
+        }
+        for (const auto& input : protectedInputs) {
+            if (sameFile(input, *destinationIdentity)) {
+                return {false, QStringLiteral("Choose a new output file; the source is never overwritten.")};
+            }
+        }
     }
+    const auto outputDirectoryIdentity = fileIdentity(outputDirectory.absolutePath(), true);
 
     QTemporaryDir stagingDirectory(outputDirectory.filePath(QStringLiteral(".zenpdf-XXXXXX")));
     if (!stagingDirectory.isValid() ||
@@ -239,6 +305,30 @@ QpdfResult QpdfOperations::run(
     }
 #endif
     result.close();
+
+    for (const auto& input : protectedInputs) {
+        if (!unchangedFile(input)) {
+            return {false, QStringLiteral("An input PDF changed while the operation was running; no output was published.")};
+        }
+    }
+    const QFileInfo currentOutputInfo(cleanOutput);
+    if (currentOutputInfo.isSymLink()) {
+        return {false, QStringLiteral("The output path changed to a symbolic link; no output was published.")};
+    }
+    const auto currentDestinationIdentity = fileIdentity(cleanOutput);
+    if (destinationIdentity.has_value()) {
+        if (!currentDestinationIdentity.has_value() ||
+            !sameFile(*destinationIdentity, *currentDestinationIdentity) ||
+            currentDestinationIdentity->size != destinationIdentity->size ||
+            currentDestinationIdentity->modifiedMs != destinationIdentity->modifiedMs) {
+            return {false, QStringLiteral("The output file changed while the operation was running; no output was published.")};
+        }
+    } else if (currentOutputInfo.exists()) {
+        return {false, QStringLiteral("The output path appeared while the operation was running; no output was published.")};
+    }
+    if (outputDirectoryIdentity.has_value() && !unchangedFile(*outputDirectoryIdentity)) {
+        return {false, QStringLiteral("The output directory changed while the operation was running; no output was published.")};
+    }
 
     const auto sourceBytes = QFile::encodeName(temporaryPath);
     const auto destinationBytes = QFile::encodeName(cleanOutput);

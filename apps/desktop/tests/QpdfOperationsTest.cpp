@@ -8,7 +8,10 @@
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QtTest>
+
+#include <thread>
 
 class QpdfOperationsTest final : public QObject {
     Q_OBJECT
@@ -17,6 +20,9 @@ private slots:
     void validatesPageRanges_data();
     void validatesPageRanges();
     void refusesSourceOverwrite();
+    void refusesCanonicalSymlinkSourceOverwrite();
+    void refusesHardlinkSourceOverwrite();
+    void refusesChangedSourceBeforePublication();
     void cancellationLeavesNoOutputOrStaging();
     void outputCapLeavesNoOutputOrStaging();
     void preservesDestinationPermissions();
@@ -80,6 +86,91 @@ void QpdfOperationsTest::refusesSourceOverwrite() {
         path, QStringLiteral("1"), 1, path);
     QVERIFY(!result.succeeded);
     QVERIFY(result.message.contains(QStringLiteral("never overwritten")));
+}
+
+void QpdfOperationsTest::refusesCanonicalSymlinkSourceOverwrite() {
+#ifndef Q_OS_UNIX
+    QSKIP("Symbolic-link identity test requires Unix");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto alias = directory.filePath(QStringLiteral("source-alias.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+    QVERIFY(QFile::link(source, alias));
+
+    const auto result = QpdfOperations::extract(alias, QStringLiteral("1"), 1, source);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("never overwritten")));
+#endif
+}
+
+void QpdfOperationsTest::refusesHardlinkSourceOverwrite() {
+#ifndef Q_OS_UNIX
+    QSKIP("Hard-link identity test requires Unix");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("hardlink.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+    const auto sourceBytes = QFile::encodeName(source);
+    const auto outputBytes = QFile::encodeName(output);
+    QCOMPARE(::link(sourceBytes.constData(), outputBytes.constData()), 0);
+
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("never overwritten")));
+#endif
+}
+
+void QpdfOperationsTest::refusesChangedSourceBeforePublication() {
+#ifndef Q_OS_UNIX
+    QSKIP("Race regression test requires Unix process fixtures");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body = "#!/bin/sh\ncp \"$3\" \"$6\"\nsleep 0.3\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-original-fixture") > 0);
+    file.close();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    std::thread modifier([source] {
+        QThread::msleep(100);
+        QFile changed(source);
+        if (changed.open(QIODevice::Append)) {
+            changed.write("-changed");
+        }
+    });
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    modifier.join();
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("changed while")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
 }
 
 void QpdfOperationsTest::cancellationLeavesNoOutputOrStaging() {
