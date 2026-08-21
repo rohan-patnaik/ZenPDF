@@ -1,24 +1,17 @@
-FROM python:3.11-slim
+FROM python:3.11.13-slim-bookworm@sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1
 
 WORKDIR /app
 
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        chromium \
-        fonts-dejavu-core \
-        fonts-liberation \
-        fonts-noto-core \
-        ghostscript \
-        jbig2enc \
-        libreoffice \
-        mupdf-tools \
-        ocrmypdf \
-        poppler-utils \
-        qpdf \
-        tesseract-ocr \
-        tesseract-ocr-eng \
-        wget \
+COPY apt-packages.lock /tmp/zenpdf-apt-packages.lock
+RUN printf '%s\n' \
+        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260817T000000Z bookworm main' \
+        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian/20260817T000000Z bookworm-updates main' \
+        'deb [check-valid-until=no] https://snapshot.debian.org/archive/debian-security/20260817T000000Z bookworm-security main' \
+        > /etc/apt/sources.list \
+    && rm -f /etc/apt/sources.list.d/debian.sources \
+    && apt-get -o Acquire::Check-Valid-Until=false -o Acquire::Retries=5 update \
+    && xargs -r apt-get -o Acquire::Retries=5 install -y --no-install-recommends < /tmp/zenpdf-apt-packages.lock \
+    && rm /tmp/zenpdf-apt-packages.lock \
     && rm -rf /var/lib/apt/lists/*
 
 RUN mkdir -p /opt/pdfsizeopt \
@@ -34,8 +27,9 @@ RUN mkdir -p /opt/pdfsizeopt \
 
 RUN addgroup --system zenpdf && adduser --system --ingroup zenpdf zenpdf
 
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY requirements-ci.lock ./requirements.lock
+RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+    && rm requirements.lock
 
 COPY zenpdf_worker ./zenpdf_worker
 COPY main.py ./main.py

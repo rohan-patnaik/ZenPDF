@@ -28,4 +28,4 @@ This Phase 0 notice index covers only the three direct Arch runtime packages. It
 
 ## Known incomplete evidence
 
-The CycloneDX file is explicitly direct-package scoped. It does not enumerate Qt/PDFium or other transitive components, corresponding-source obligations, or every installed notice. L075 therefore remains `Partial`.
+The CycloneDX file is explicitly direct-package scoped. It does not enumerate Qt/PDFium or other transitive components, corresponding-source obligations, or every installed notice. It also excludes the web and worker product-container inventories: their base image digests, the worker's dated Debian snapshot and direct APT versions, the hashed Python resolution, and the npm lock are governed by `dependencies.lock.json`, but a release-grade artifact-derived transitive SBOM and notice bundle has not been produced for them. L075 therefore remains `Partial`.

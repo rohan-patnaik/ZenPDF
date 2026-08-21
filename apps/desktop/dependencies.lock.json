@@ -1,5 +1,5 @@
 {
-  "schema": 2,
+  "schema": 3,
   "actions": {
     "checkout": {
       "repository": "actions/checkout",
@@ -23,6 +23,20 @@
       "digest": "sha256:714acd1eef9ae997d95691b1c5220ada0076185b77857c1813f02de0fa83cf7b"
     }
   },
+  "productContainers": {
+    "web": {
+      "dockerfile": "apps/web/Dockerfile",
+      "image": "node",
+      "tag": "20.19.4-bookworm-slim",
+      "digest": "sha256:6db5e436948af8f0244488a1f658c2c8e55a3ae51ca2e1686ed042be8f25f70a"
+    },
+    "worker": {
+      "dockerfile": "apps/worker/Dockerfile",
+      "image": "python",
+      "tag": "3.11.13-slim-bookworm",
+      "digest": "sha256:86adf8dbadc3d6e82ee5dd2c74bec2e1c2467cdad47886280501df722372d2e1"
+    }
+  },
   "locks": {
     "web": {
       "path": "apps/web/package-lock.json",
@@ -31,7 +45,18 @@
     "worker": {
       "path": "apps/worker/requirements-ci.lock",
       "sha256": "aca4fd0b26be75fa29941102fe9e6c85e4cb8f73ac62c338d73a5ef656fe3e17"
+    },
+    "workerApt": {
+      "path": "apps/worker/apt-packages.lock",
+      "sha256": "7eb08750aff1da97598d52b1012d5a9a58271cc57e8456285d0e643b5a126e5a"
     }
+  },
+  "debian": {
+    "snapshot": "20260817T000000Z",
+    "repositories": [
+      "https://snapshot.debian.org/archive/debian/20260817T000000Z",
+      "https://snapshot.debian.org/archive/debian-security/20260817T000000Z"
+    ]
   },
   "arch": {
     "snapshot": "2026/08/17",

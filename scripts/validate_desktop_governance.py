@@ -67,6 +67,31 @@ def validate_matrix(text: str) -> Counter[str]:
     return statuses
 
 
+def validate_evidence_references(root: Path, text: str) -> None:
+    """Require every code-formatted test evidence path and symbol to resolve."""
+    for line in text.splitlines():
+        if not re.match(r"^\| L\d{3} \|", line):
+            continue
+        row = [cell.strip() for cell in line.strip("|").split("|")]
+        for reference in re.findall(r"`([^`]+)`", row[5]):
+            path_text, separator, symbol = reference.partition("::")
+            if not re.search(r"\.(?:cpp|py|ts|tsx|sh)$", path_text):
+                continue
+            candidates = (
+                [root / path_text]
+                if "/" in path_text
+                else list(root.rglob(path_text))
+            )
+            matches = [candidate for candidate in candidates if candidate.is_file()]
+            require(len(matches) == 1, f"{row[0]} evidence path does not resolve uniquely: {path_text}")
+            if separator:
+                require(re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", symbol) is not None,
+                        f"{row[0]} evidence symbol has invalid syntax: {symbol}")
+                source = matches[0].read_text(encoding="utf-8")
+                require(re.search(rf"\b{re.escape(symbol)}\b", source) is not None,
+                        f"{row[0]} evidence symbol is absent from {path_text}: {symbol}")
+
+
 def parse_hash_manifest(text: str) -> dict[str, str]:
     entries: dict[str, str] = {}
     for line in text.splitlines():
@@ -131,13 +156,34 @@ def validate_workflow(text: str, lock: dict) -> None:
                     f"step {line.strip()} lacks a timeout")
 
 
+def validate_product_containers(root: Path, lock: dict) -> None:
+    """Validate immutable product image and direct runtime inputs."""
+    for item in lock["productContainers"].values():
+        dockerfile = (root / item["dockerfile"]).read_text(encoding="utf-8")
+        expected_from = f'FROM {item["image"]}:{item["tag"]}@{item["digest"]}'
+        require(expected_from in dockerfile, f'{item["dockerfile"]} base image is not locked')
+        require(re.fullmatch(r"sha256:[0-9a-f]{64}", item["digest"]) is not None,
+                f'{item["dockerfile"]} has an invalid image digest')
+    worker_dockerfile = (root / "apps/worker/Dockerfile").read_text(encoding="utf-8")
+    require("--require-hashes" in worker_dockerfile,
+            "worker product image must install a hashed Python resolution")
+    require(Path(lock["locks"]["worker"]["path"]).name in worker_dockerfile,
+            "worker product image does not use the governed Python lock")
+    require(all(repository in worker_dockerfile for repository in lock["debian"]["repositories"]),
+            "worker product image does not use the governed Debian snapshots")
+    apt_lock = (root / lock["locks"]["workerApt"]["path"]).read_text(encoding="utf-8")
+    apt_requirements = [line for line in apt_lock.splitlines() if line]
+    require(bool(apt_requirements) and all("=" in line for line in apt_requirements),
+            "worker APT lock contains an unversioned direct package")
+
+
 def validate_dependency_evidence(root: Path = ROOT) -> None:
     lock = json.loads((root / LOCK.relative_to(ROOT)).read_text(encoding="utf-8"))
     sbom = json.loads((root / SBOM.relative_to(ROOT)).read_text(encoding="utf-8"))
     policy = json.loads((root / POLICY.relative_to(ROOT)).read_text(encoding="utf-8"))
     notices = (root / NOTICES.relative_to(ROOT)).read_text(encoding="utf-8")
     workflow = (root / WORKFLOW.relative_to(ROOT)).read_text(encoding="utf-8")
-    require(lock.get("schema") == 2, "unsupported dependency-lock schema")
+    require(lock.get("schema") == 3, "unsupported dependency-lock schema")
     validate_workflow(workflow, lock)
 
     for item in lock["locks"].values():
@@ -149,6 +195,8 @@ def validate_dependency_evidence(root: Path = ROOT) -> None:
     require(bool(requirement_starts), "worker lock has no resolved requirements")
     require(all("==" in line for line in requirement_starts), "worker lock contains an unresolved requirement")
     require("--hash=sha256:" in worker_lock, "worker lock contains no hashes")
+
+    validate_product_containers(root, lock)
 
     manifest = parse_hash_manifest((root / lock["arch"]["hashManifest"]).read_text(encoding="utf-8"))
     expected_manifest = {item["filename"]: item["sha256"] for item in lock["arch"]["packages"]}
@@ -183,7 +231,9 @@ def validate_dependency_evidence(root: Path = ROOT) -> None:
 
 def main() -> None:
     try:
-        counts = validate_matrix(PLAN.read_text(encoding="utf-8"))
+        plan = PLAN.read_text(encoding="utf-8")
+        counts = validate_matrix(plan)
+        validate_evidence_references(ROOT, plan)
         validate_dependency_evidence()
     except (GovernanceError, KeyError, TypeError, json.JSONDecodeError) as error:
         raise SystemExit(f"desktop governance validation failed: {error}") from error

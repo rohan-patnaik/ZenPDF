@@ -43,7 +43,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | Cache/cancellation/long-document tests missing | N/A |
 | L014 | Outline and bookmark navigation | M1 / Reader | Outline adapter | Partial | Malformed/deep/named-destination tests missing | Producer corpus missing |
 | L015 | Metadata inspection | M1 / Reader | Metadata adapter | Partial | Malformed/XMP fixtures missing | Standard/XMP producer corpus missing |
-| L016 | Private recent-files history and purge | M1 / State | SQLite | Partial | `CoreTest.cpp`; platform forensic run remains | N/A |
+| L016 | Private recent-files history and purge | M1 / State | SQLite | Partial | `apps/desktop/tests/LocalStateTest.cpp::clearingPurgesPathsFromDatabaseFiles`; platform forensic run remains | N/A |
 | L017 | Page navigation and labels | M1 / Reader | Qt PDF adapter | Partial | UI automation/page-label fixtures missing | Nondecimal page-label corpus missing |
 | L018 | Zoom, actual size, fit width/page | M1 / Reader | Render adapter | Partial | DPI/shortcut/position tests missing | Reference-render comparison missing |
 | L019 | Non-destructive view rotation | M1 / Reader | Render adapter | Not started | Rotation and source-unchanged fixtures | Independent-reader source hash |
@@ -99,7 +99,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L069 | Accessibility checker | M5 / Accessibility | Ruleset decision | Not started | Versioned-rule false-positive corpus | Independent checker comparison |
 | L070 | Portfolios/packages, batch actions, watched folders, and CLI | M5 / Automation | Package/isolation/CLI contract decisions | Not started | Package traversal, dry-run, rollback, and version tests | Standard collection/package and CLI contract |
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
-| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Input/output/time caps tested; memory/render corpus missing | N/A |
+| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::outputCapLeavesNoOutputOrStaging` and `apps/worker/tests/test_worker_runtime.py::test_hung_tool_hits_wall_limit_and_kills_descendant`; input-size, decompression, memory, and render corpus remains | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
 | L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Pinned Ubuntu CI build is green; artifact comparison missing | Clean Arch rebuild missing |
 | L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |

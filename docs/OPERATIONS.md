@@ -41,7 +41,7 @@ This document is the single operational runbook for local runs, deploys, securit
 App URL: `http://localhost:3000`
 
 ## Docker compose local stack
-- `docker compose up --build`
+- Export `NEXT_PUBLIC_CONVEX_URL` and `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` in the invoking shell (Next.js embeds these public values at build time), then run `docker compose up --build`.
 - Use host Convex URLs in env when running in containers:
   - `NEXT_PUBLIC_CONVEX_URL=http://host.docker.internal:3210`
   - `ZENPDF_CONVEX_URL=http://host.docker.internal:3210`

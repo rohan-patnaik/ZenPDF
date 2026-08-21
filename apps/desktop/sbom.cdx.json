@@ -13,7 +13,8 @@
     "properties": [
       {"name": "zenpdf:inventory-scope", "value": "direct-arch-packages"},
       {"name": "zenpdf:transitive-inventory-complete", "value": "false"},
-      {"name": "zenpdf:arch-snapshot", "value": "2026/08/17"}
+      {"name": "zenpdf:arch-snapshot", "value": "2026/08/17"},
+      {"name": "zenpdf:excluded-product-inventories", "value": "web-container,worker-container"}
     ]
   },
   "components": [
