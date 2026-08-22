@@ -9,6 +9,7 @@
 #include <QPdfWriter>
 #include <QProcess>
 #include <QStandardPaths>
+#include <QStringDecoder>
 #include <QTemporaryDir>
 #include <QThread>
 #include <QtTest>
@@ -593,15 +594,24 @@ void QpdfOperationsTest::noisyHelperDiagnosticsAreBoundedAndPrivate() {
     const auto binDirectory = directory.filePath(QStringLiteral("bin"));
     QVERIFY(QDir().mkdir(binDirectory));
     const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    const auto capturedPathFile = directory.filePath(QStringLiteral("captured-helper-path"));
     QFile script(fakeQpdf);
     QVERIFY(script.open(QIODevice::WriteOnly));
     const QByteArray body =
         "#!/bin/sh\n"
         "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
+        "printf %s \"$1\" >\"$CAPTURED_QPDF_PATH\"\n"
         "path_bytes=$(printf %s \"$1\" | wc -c)\n"
-        "used=$((2 * (path_bytes + 1)))\n"
+        "leading=512\n"
+        "repetitions=20\n"
+        "used=$((leading + repetitions * (path_bytes + 1)))\n"
         "padding=$((8192 - used - path_bytes / 2))\n"
-        "printf '%s\\n%s\\n' \"$1\" \"$1\" >&2\n"
+        "head -c \"$leading\" /dev/zero | tr '\\000' ' ' >&2\n"
+        "i=0\n"
+        "while [ $i -lt $repetitions ]; do\n"
+        "  printf '%s\\n' \"$1\" >&2\n"
+        "  i=$((i + 1))\n"
+        "done\n"
         "head -c \"$padding\" /dev/zero | tr '\\000' x >&2\n"
         "printf '%s\\n' \"$1\" >&2\n"
         "head -c 20000 /dev/zero | tr '\\000' y >&2\n"
@@ -617,16 +627,31 @@ void QpdfOperationsTest::noisyHelperDiagnosticsAreBoundedAndPrivate() {
     file.close();
 
     const auto originalPath = qgetenv("PATH");
+    const auto originalCapturedPath = qgetenv("CAPTURED_QPDF_PATH");
+    qputenv("CAPTURED_QPDF_PATH", QFile::encodeName(capturedPathFile));
     qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
     const auto result = QpdfOperations::extract(
         source, QStringLiteral("1"), 1, output, nullptr, QpdfLimits{1024, 5'000});
     qputenv("PATH", originalPath);
+    if (originalCapturedPath.isNull()) {
+        qunsetenv("CAPTURED_QPDF_PATH");
+    } else {
+        qputenv("CAPTURED_QPDF_PATH", originalCapturedPath);
+    }
 
     QVERIFY(!result.succeeded);
+    QFile capturedPath(capturedPathFile);
+    QVERIFY(capturedPath.open(QIODevice::ReadOnly));
+    const auto sensitiveToken = QString::fromLocal8Bit(capturedPath.readAll());
+    QVERIFY(!sensitiveToken.isEmpty());
     QVERIFY(result.message.toUtf8().size() <= 8 * 1024);
     QVERIFY(result.message.contains(QStringLiteral("<private temporary directory>")));
     QVERIFY(!result.message.contains(QStringLiteral(".zenpdf-")));
     QVERIFY(!result.message.contains(directory.path()));
+    QVERIFY(!result.message.contains(sensitiveToken.left(sensitiveToken.size() / 2)));
+    QStringDecoder decoder(QStringDecoder::Utf8);
+    (void)decoder.decode(result.message.toUtf8());
+    QVERIFY(!decoder.hasError());
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(stagingDirectories(directory).isEmpty());
 

@@ -288,12 +288,24 @@ QString truncateDiagnostic(QString diagnostic) {
 }
 
 QString sanitizedDiagnostic(const QByteArray& captured, const QStringList& sensitiveTokens) {
-    auto diagnostic = QString::fromLocal8Bit(captured);
-    const auto replacement = QStringLiteral("<private temporary directory>");
+    auto safePrefix = captured.left(kMaximumDiagnosticBytes);
+    const auto replacement = QByteArrayLiteral("<private temporary directory>");
     for (const auto& token : sensitiveTokens) {
-        diagnostic.replace(token, replacement);
+        const auto encodedToken = QFile::encodeName(token);
+        if (encodedToken.isEmpty()) {
+            continue;
+        }
+        safePrefix.replace(encodedToken, replacement);
+        const auto maximumPartial = std::min(encodedToken.size() - 1, safePrefix.size());
+        for (auto prefixSize = maximumPartial; prefixSize > 0; --prefixSize) {
+            if (safePrefix.endsWith(encodedToken.first(prefixSize))) {
+                safePrefix.chop(prefixSize);
+                safePrefix.append(replacement);
+                break;
+            }
+        }
     }
-    return truncateDiagnostic(diagnostic.trimmed());
+    return truncateDiagnostic(QString::fromLocal8Bit(safePrefix).trimmed());
 }
 
 struct FileIdentity final {
