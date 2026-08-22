@@ -23,17 +23,20 @@ class LauncherTest(unittest.TestCase):
             binary = bin_dir / "zenpdf"
             binary.write_text(f"#!/bin/sh\n{zenpdf_body}\n", encoding="utf-8")
             binary.chmod(0o700)
+        else:
+            for command in ("chmod", "mkdir"):
+                (bin_dir / command).symlink_to(Path("/usr/bin") / command)
         env = os.environ.copy()
         env.update(
             {
                 "HOME": str(root),
-                "PATH": f"{bin_dir}:/usr/bin:/bin",
+                "PATH": str(bin_dir) if zenpdf_body is None else f"{bin_dir}:/usr/bin:/bin",
                 "XDG_STATE_HOME": str(root / "state"),
                 "ZENPDF_LAUNCH_GRACE_SECONDS": "0.05",
             }
         )
         result = subprocess.run(
-            ["sh", str(LAUNCHER)], env=env, text=True, capture_output=True, timeout=3
+            ["/bin/sh", str(LAUNCHER)], env=env, text=True, capture_output=True, timeout=3
         )
         return result, root / "state" / "zenpdf" / "launcher.log"
 
