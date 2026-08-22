@@ -5,6 +5,7 @@ import { mutation, query } from "./_generated/server";
 import type { MutationCtx } from "./_generated/server";
 
 import { resolveOrCreateUser, resolveUser } from "./lib/auth";
+import { normalizeAnonId, reservationBelongsTo } from "./lib/browser_uploads";
 import { resolveBudgetState } from "./lib/budget";
 import { throwFriendlyError } from "./lib/errors";
 import { assertTransition } from "./lib/job_state";
@@ -19,9 +20,10 @@ import {
 import { assertWorkerToken } from "./lib/worker_auth";
 
 const jobInput = v.object({
+  reservationId: v.id("browserUploadReservations"),
   storageId: v.id("_storage"),
   filename: v.string(),
-  sizeBytes: v.optional(v.number()),
+  sizeBytes: v.number(),
 });
 
 const pendingJobOutput = v.object({
@@ -112,7 +114,7 @@ export const createJob = mutation({
   handler: async (ctx, args) => {
     const now = Date.now();
     const { userId, tier } = await resolveOrCreateUser(ctx);
-    const anonId = args.anonId?.trim() || undefined;
+    const anonId = normalizeAnonId(args.anonId);
     const storedAnonId = userId ? undefined : anonId;
     if (!userId && !storedAnonId) {
       throwFriendlyError("USER_SESSION_REQUIRED");
@@ -124,6 +126,38 @@ export const createJob = mutation({
         : undefined;
     if (!SUPPORTED_TOOLS.has(args.tool)) {
       throwFriendlyError("USER_INPUT_INVALID", { tool: args.tool });
+    }
+    const reservations = [];
+    const seenReservations = new Set<string>();
+    for (const input of args.inputs) {
+      if (seenReservations.has(input.reservationId)) {
+        throwFriendlyError("USER_INPUT_INVALID");
+      }
+      seenReservations.add(input.reservationId);
+      const reservation = await ctx.db.get(input.reservationId);
+      if (!reservation) {
+        return throwFriendlyError("USER_INPUT_INVALID");
+      }
+      if (
+        !reservationBelongsTo(reservation, userId, resolvedAnonId) ||
+        reservation.status !== "bound" ||
+        reservation.expiresAt <= now ||
+        reservation.storageId !== input.storageId ||
+        reservation.filename !== input.filename ||
+        reservation.sizeBytes !== input.sizeBytes
+      ) {
+        throwFriendlyError("USER_INPUT_INVALID");
+      }
+      const metadata = await ctx.db.system.get(input.storageId);
+      if (
+        !metadata ||
+        metadata.size !== reservation.sizeBytes ||
+        (metadata.contentType !== undefined &&
+          metadata.contentType.toLowerCase() !== reservation.contentType)
+      ) {
+        throwFriendlyError("USER_INPUT_INVALID");
+      }
+      reservations.push(reservation);
     }
     const devBypass =
       process.env.ZENPDF_DEV_MODE === "1" &&
@@ -211,11 +245,23 @@ export const createJob = mutation({
       startedAt: undefined,
       finishedAt: undefined,
       lastHeartbeatAt: undefined,
-      inputs: args.inputs,
+      inputs: args.inputs.map(({ storageId, filename, sizeBytes }) => ({
+        storageId,
+        filename,
+        sizeBytes,
+      })),
       outputs: undefined,
       createdAt: now,
       updatedAt: now,
     });
+
+    for (const reservation of reservations) {
+      await ctx.db.patch(reservation._id, {
+        status: "consumed",
+        jobId,
+        consumedAt: now,
+      });
+    }
 
     await incrementUsage(ctx, userId, resolvedAnonId, tier, now, { jobs: 1 });
     await incrementGlobalUsage(ctx, now, { jobs: 1 });

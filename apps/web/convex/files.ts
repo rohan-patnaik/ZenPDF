@@ -115,6 +115,13 @@ export const bindBrowserUpload = mutation({
     ) {
       throwFriendlyError("USER_INPUT_INVALID");
     }
+    const existingBinding = await ctx.db
+      .query("browserUploadReservations")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .first();
+    if (existingBinding) {
+      return throwFriendlyError("USER_INPUT_INVALID");
+    }
     await ctx.db.patch(reservation._id, {
       status: "bound",
       storageId: args.storageId,

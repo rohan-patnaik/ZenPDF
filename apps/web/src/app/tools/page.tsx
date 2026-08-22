@@ -987,7 +987,8 @@ export default function ToolsPage() {
   const activeToolPanelRef = useRef<HTMLDivElement | null>(null);
   const devModeAvailable = process.env.NODE_ENV === "development";
 
-  const generateUploadUrl = useMutation(api.files.generateUploadUrl);
+  const beginBrowserUpload = useMutation(api.files.beginBrowserUpload);
+  const bindBrowserUpload = useMutation(api.files.bindBrowserUpload);
   const createJob = useMutation(api.jobs.createJob);
   const jobsArgs = useMemo(
     () => (anonId ? { anonId } : {}),
@@ -1321,6 +1322,7 @@ export default function ToolsPage() {
     setStatus(needsFiles ? "Uploading files..." : "Preparing job...");
     try {
       const uploads = [] as Array<{
+        reservationId: string;
         storageId: string;
         filename: string;
         sizeBytes: number;
@@ -1328,8 +1330,18 @@ export default function ToolsPage() {
       if (needsFiles) {
         for (const file of files) {
           uploads.push(
-            await uploadFile(file, () =>
-              generateUploadUrl({ anonId: anonId ?? undefined }),
+            await uploadFile(
+              file,
+              (intent) =>
+                beginBrowserUpload({
+                  ...intent,
+                  anonId: anonId ?? undefined,
+                }),
+              (binding) =>
+                bindBrowserUpload({
+                  ...binding,
+                  anonId: anonId ?? undefined,
+                }),
             ),
           );
         }

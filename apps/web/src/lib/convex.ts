@@ -3,7 +3,12 @@ import { makeFunctionReference } from "convex/server";
 import type { BudgetSnapshot } from "../../convex/lib/budget";
 import type { GlobalLimits, PlanLimits, PlanTier } from "./limits";
 
-type JobInput = { storageId: string; filename: string; sizeBytes?: number };
+type JobInput = {
+  reservationId: string;
+  storageId: string;
+  filename: string;
+  sizeBytes: number;
+};
 
 type UsageCounter = {
   periodStart: number;
@@ -46,11 +51,21 @@ type FeedbackListResponse = {
 
 export const api = {
   files: {
-    generateUploadUrl: makeFunctionReference<
+    beginBrowserUpload: makeFunctionReference<
       "mutation",
-      { anonId?: string; workerToken?: string },
-      string
-    >("files:generateUploadUrl"),
+      {
+        anonId?: string;
+        filename: string;
+        sizeBytes: number;
+        contentType: string;
+      },
+      { reservationId: string; uploadUrl: string; expiresAt: number }
+    >("files:beginBrowserUpload"),
+    bindBrowserUpload: makeFunctionReference<
+      "mutation",
+      { reservationId: string; storageId: string; anonId?: string },
+      { reservationId: string; storageId: string }
+    >("files:bindBrowserUpload"),
     getOutputDownloadUrl: makeFunctionReference<
       "query",
       { jobId: string; storageId: string; anonId?: string; allowAnonAccess?: boolean },

@@ -1,18 +1,38 @@
 export type UploadInput = {
+  reservationId: string;
   storageId: string;
   filename: string;
   sizeBytes: number;
 };
 
+type BrowserUploadReservation = {
+  reservationId: string;
+  uploadUrl: string;
+  expiresAt: number;
+};
+
 export const uploadFile = async (
   file: File,
-  generateUploadUrl: () => Promise<string>,
+  beginUpload: (intent: {
+    filename: string;
+    sizeBytes: number;
+    contentType: string;
+  }) => Promise<BrowserUploadReservation>,
+  bindUpload: (binding: {
+    reservationId: string;
+    storageId: string;
+  }) => Promise<unknown>,
 ) => {
-  const uploadUrl = await generateUploadUrl();
-  const response = await fetch(uploadUrl, {
+  const contentType = file.type || "application/octet-stream";
+  const reservation = await beginUpload({
+    filename: file.name,
+    sizeBytes: file.size,
+    contentType,
+  });
+  const response = await fetch(reservation.uploadUrl, {
     method: "POST",
     headers: {
-      "Content-Type": file.type || "application/octet-stream",
+      "Content-Type": contentType,
     },
     body: file,
   });
@@ -22,8 +42,13 @@ export const uploadFile = async (
   }
 
   const payload = (await response.json()) as { storageId: string };
+  await bindUpload({
+    reservationId: reservation.reservationId,
+    storageId: payload.storageId,
+  });
 
   return {
+    reservationId: reservation.reservationId,
     storageId: payload.storageId,
     filename: file.name,
     sizeBytes: file.size,
