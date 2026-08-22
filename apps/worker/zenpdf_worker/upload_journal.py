@@ -5,12 +5,20 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import stat
 import time
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List
+
+
+JOURNAL_NAME_RE = re.compile(r"^(?P<key>[0-9a-f]{64})\.json$")
+PROBE_NAME_RE = re.compile(r"^\.write-test-(?P<pid>[1-9][0-9]*)-(?P<nonce>[0-9a-f]{32})$")
+TEMP_NAME_RE = re.compile(
+    r"^\.(?P<key>[0-9a-f]{64})\.json\.(?P<nonce>[0-9a-f]{32})\.tmp$"
+)
 
 
 class JournalCapacityError(RuntimeError):
@@ -38,6 +46,7 @@ class UploadJournal:
 
     def __init__(self, root: Path) -> None:
         self.root = root
+        self.expected_uid = os.geteuid()
         self.max_entries = _bounded_env_int(
             "ZENPDF_UPLOAD_JOURNAL_MAX_ENTRIES", 1024, 10_000
         )
@@ -155,7 +164,9 @@ class UploadJournal:
         """Remove a confirmed entry durably."""
         target = self._path(pending_upload_id)
         try:
-            target.unlink()
+            metadata = target.lstat()
+            self._validate_identity(metadata)
+            self._unlink_authenticated(target, metadata)
         except FileNotFoundError:
             return
         self._fsync_root()
@@ -195,10 +206,71 @@ class UploadJournal:
         scan = self._scan_directory(clean_owned=True)
         return bool(scan.json_paths) or not scan.complete
 
-    @staticmethod
-    def _is_owned_transient(name: str) -> bool:
-        return name.startswith(".write-test-") or (
-            name.startswith(".") and name.endswith(".tmp")
+    def _validate_identity(self, metadata: os.stat_result) -> None:
+        if (
+            not stat.S_ISREG(metadata.st_mode)
+            or metadata.st_uid != self.expected_uid
+            or stat.S_IMODE(metadata.st_mode) != 0o600
+            or metadata.st_nlink != 1
+        ):
+            raise JournalCapacityError(
+                "Upload recovery directory contains unauthenticated entry"
+            )
+
+    def _unlink_authenticated(self, path: Path, expected: os.stat_result) -> None:
+        current = path.lstat()
+        self._validate_identity(current)
+        if current.st_dev != expected.st_dev or current.st_ino != expected.st_ino:
+            raise JournalCapacityError("Upload recovery entry changed during cleanup")
+        path.unlink()
+
+    def _read_owned_bytes(self, path: Path, maximum: int) -> bytes:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            opened = os.fstat(descriptor)
+            self._validate_identity(opened)
+            with os.fdopen(descriptor, "rb", closefd=False) as handle:
+                return handle.read(maximum + 1)
+        finally:
+            os.close(descriptor)
+
+    def _authenticate_transient(self, path: Path, name: str) -> None:
+        probe = PROBE_NAME_RE.fullmatch(name)
+        if probe:
+            if self._read_owned_bytes(path, 5) != b"ready":
+                raise JournalCapacityError(
+                    "Upload recovery probe content authentication failed"
+                )
+            return
+        temporary = TEMP_NAME_RE.fullmatch(name)
+        if temporary:
+            encoded = self._read_owned_bytes(path, self.max_entry_bytes)
+            if len(encoded) > self.max_entry_bytes:
+                raise JournalCapacityError(
+                    "Upload recovery temp content authentication failed"
+                )
+            try:
+                value = json.loads(encoded)
+            except (ValueError, UnicodeDecodeError):
+                raise JournalCapacityError(
+                    "Upload recovery temp content authentication failed"
+                ) from None
+            pending_upload_id = (
+                value.get("pendingUploadId") if isinstance(value, dict) else None
+            )
+            if (
+                not isinstance(pending_upload_id, str)
+                or not pending_upload_id
+                or value.get("action") not in {"register", "uploaded", "discard"}
+                or self._key(pending_upload_id) != temporary.group("key")
+            ):
+                raise JournalCapacityError(
+                    "Upload recovery temp key binding failed"
+                )
+            return
+        raise JournalCapacityError(
+            "Upload recovery directory contains unknown entry"
         )
 
     def _scan_directory(self, clean_owned: bool) -> _DirectoryScan:
@@ -223,10 +295,10 @@ class UploadJournal:
                 path = Path(item.path)
                 try:
                     metadata = item.stat(follow_symlinks=False)
-                except OSError as error:
+                except OSError:
                     raise JournalCapacityError(
                         "Upload recovery directory metadata unreadable"
-                    ) from error
+                    ) from None
                 total_bytes += max(metadata.st_size, 0)
                 if total_bytes > self.scan_max_bytes:
                     complete = False
@@ -235,20 +307,23 @@ class UploadJournal:
                     raise JournalCapacityError(
                         "Upload recovery directory contains unsafe entry type"
                     )
-                if item.name.endswith(".json"):
+                self._validate_identity(metadata)
+                journal_match = JOURNAL_NAME_RE.fullmatch(item.name)
+                if journal_match:
                     json_paths.append(path)
                     continue
-                if self._is_owned_transient(item.name):
+                if PROBE_NAME_RE.fullmatch(item.name) or TEMP_NAME_RE.fullmatch(item.name):
+                    self._authenticate_transient(path, item.name)
                     stale = now - metadata.st_mtime >= self.transient_stale_seconds
                     if clean_owned and stale and cleaned < self.transient_cleanup_batch:
                         try:
-                            path.unlink()
+                            self._unlink_authenticated(path, metadata)
                             cleaned += 1
                             removed_any = True
-                        except OSError as error:
+                        except OSError:
                             raise JournalCapacityError(
                                 "Upload recovery transient cleanup failed"
-                            ) from error
+                            ) from None
                     continue
                 raise JournalCapacityError(
                     "Upload recovery directory contains unknown entry"
@@ -265,35 +340,31 @@ class UploadJournal:
     def _read_entry(self, path: Path) -> Dict[str, Any] | None:
         try:
             metadata = path.lstat()
-            if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > self.max_entry_bytes:
-                self._reject(path)
-                return None
-            with path.open("rb") as handle:
-                encoded = handle.read(self.max_entry_bytes + 1)
+            self._validate_identity(metadata)
+            match = JOURNAL_NAME_RE.fullmatch(path.name)
+            if not match or metadata.st_size > self.max_entry_bytes:
+                raise JournalCapacityError("Upload recovery journal entry is invalid")
+            encoded = self._read_owned_bytes(path, self.max_entry_bytes)
             if len(encoded) > self.max_entry_bytes:
-                self._reject(path)
-                return None
+                raise JournalCapacityError("Upload recovery journal entry is oversized")
             value = json.loads(encoded)
             if (
                 not isinstance(value, dict)
                 or not isinstance(value.get("pendingUploadId"), str)
                 or value.get("action") not in {"register", "uploaded", "discard"}
             ):
-                self._reject(path)
-                return None
-            os.chmod(path, 0o600)
+                raise JournalCapacityError("Upload recovery journal content is invalid")
+            if self._key(value["pendingUploadId"]) != match.group("key"):
+                raise JournalCapacityError("Upload recovery journal key binding failed")
             return value
-        except (FileNotFoundError, OSError, ValueError, UnicodeDecodeError):
-            self._reject(path)
+        except FileNotFoundError:
             return None
-
-    def _reject(self, path: Path) -> None:
-        """Remove non-journal input so hostile files cannot accumulate."""
-        try:
-            path.unlink()
-            self._fsync_root()
-        except (FileNotFoundError, OSError):
-            pass
+        except JournalCapacityError:
+            raise
+        except (OSError, ValueError, UnicodeDecodeError):
+            raise JournalCapacityError(
+                "Upload recovery journal entry is unreadable"
+            ) from None
 
     def _fsync_root(self) -> None:
         descriptor = os.open(self.root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
