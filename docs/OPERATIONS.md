@@ -35,6 +35,8 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_UPLOAD_DEADLINE_SECONDS` (hard total output POST deadline; default 60)
   - `ZENPDF_UPLOAD_JOURNAL_DIR` (durable recovery volume; default `/var/lib/zenpdf-worker/upload-recovery`)
   - `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRIES`, `ZENPDF_UPLOAD_JOURNAL_MAX_BYTES`, and `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRY_BYTES` (hard recovery-spool limits; defaults 1024, 8 MiB, and 4 KiB)
+  - `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_ENTRIES`, `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_BYTES`, and `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_MS` (hard whole-directory inspection budgets; defaults 2048, 16 MiB, and 100 ms)
+  - `ZENPDF_UPLOAD_JOURNAL_TRANSIENT_CLEANUP_BATCH` and `ZENPDF_UPLOAD_JOURNAL_TRANSIENT_STALE_SECONDS` (bounded cleanup for owned probe/temp remnants; defaults 32 and 300)
   - `ZENPDF_UPLOAD_RECOVERY_BATCH_SIZE` (maximum entries attempted per poll; default 32)
   - `ZENPDF_UPLOAD_RETRY_BASE_MS` and `ZENPDF_UPLOAD_RETRY_MAX_MS` (persisted exponential retry bounds; defaults 1000 and 300000)
   - `ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS` and `ZENPDF_UPLOAD_SHUTDOWN_MAX_OPERATIONS` (hard graceful-drain bounds; defaults 30 and 64)
