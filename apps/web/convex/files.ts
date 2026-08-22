@@ -9,13 +9,8 @@ import { assertWorkerToken } from "./lib/worker_auth";
 import { resolveGlobalLimits } from "./lib/limits";
 
 export const generateUploadUrl = mutation({
-  args: { anonId: v.optional(v.string()), workerToken: v.optional(v.string()) },
+  args: { anonId: v.optional(v.string()) },
   handler: async (ctx, args) => {
-    if (args.workerToken) {
-      assertWorkerToken(args.workerToken);
-      return ctx.storage.generateUploadUrl();
-    }
-
     const { userId } = await resolveUser(ctx);
     if (!userId && !args.anonId) {
       throwFriendlyError("USER_SESSION_REQUIRED");

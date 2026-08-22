@@ -64,6 +64,12 @@ const discardWorkerUpload = makeFunctionReference<
   boolean
 >("files:discardWorkerUpload");
 
+const generateUploadUrl = makeFunctionReference<
+  "mutation",
+  { anonId?: string },
+  string
+>("files:generateUploadUrl");
+
 type CapacitySnapshot = {
   budget: { monthlyBudgetUsage: number; status: string };
 };
@@ -75,6 +81,48 @@ const getCapacitySnapshot = makeFunctionReference<
 >("capacity:getCapacitySnapshot");
 
 describe("job system", () => {
+  it("keeps generic uploads browser-scoped even with a valid worker token", async () => {
+    const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
+    process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
+    try {
+      const anonymous = convexTest(schema, modules);
+      await expect(
+        anonymous.mutation(
+          generateUploadUrl,
+          { workerToken: "test-worker-token" } as never,
+        ),
+      ).rejects.toThrow();
+      await expect(anonymous.mutation(generateUploadUrl, {})).rejects.toThrow();
+
+      const signedIn = convexTest(schema, modules).withIdentity({
+        subject: "user_upload",
+        email: "upload@example.com",
+      });
+      const now = Date.now();
+      await signedIn.run(async (ctx) => {
+        await ctx.db.insert("users", {
+          clerkUserId: "user_upload",
+          email: "upload@example.com",
+          tier: "FREE_ACCOUNT",
+          createdAt: now,
+          updatedAt: now,
+        });
+      });
+      await expect(signedIn.mutation(generateUploadUrl, {})).resolves.toMatch(
+        /^https?:\/\//,
+      );
+      await expect(
+        anonymous.mutation(generateUploadUrl, { anonId: "anon-browser" }),
+      ).resolves.toMatch(/^https?:\/\//);
+    } finally {
+      if (previousWorkerToken === undefined) {
+        delete process.env.ZENPDF_WORKER_TOKEN;
+      } else {
+        process.env.ZENPDF_WORKER_TOKEN = previousWorkerToken;
+      }
+    }
+  });
+
   it("rejects jobs when monthly budget is exceeded", async () => {
     const t = convexTest(schema, modules);
     const now = Date.now();
