@@ -1,6 +1,9 @@
 #include "DocumentSession.h"
 
+#include <QDir>
 #include <QSignalSpy>
+#include <QFile>
+#include <QFileInfo>
 #include <QTemporaryDir>
 #include <QUndoCommand>
 #include <QtTest>
@@ -8,6 +11,10 @@
 #include <limits>
 #include <memory>
 #include <utility>
+
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
 
 class DocumentSessionTest final : public QObject {
     Q_OBJECT
@@ -23,6 +30,11 @@ private slots:
     void handlesObsoleteCommands();
     void mirrorsActionTextTransitions();
     void ownsCommandsAndRejectsNull();
+    void tracksSourceRevisionAndDetectsRestoredMtimeEdit();
+    void distinguishesSourceReplacementDeletionAndRestoration();
+    void tracksSymlinkEntryAndTargetIdentity();
+    void neverAdoptsAnInitiallyMissingSource();
+    void classifiesSourceStatFailure();
 };
 
 namespace {
@@ -414,6 +426,146 @@ void DocumentSessionTest::ownsCommandsAndRejectsNull() {
         QVERIFY(session.isDirty());
     }
     QCOMPARE(destructions, 1);
+}
+
+void DocumentSessionTest::tracksSourceRevisionAndDetectsRestoredMtimeEdit() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write("original"), qint64{8});
+    file.close();
+    const auto originalModified = QFileInfo(path).lastModified();
+
+    DocumentSession session(path);
+    QSignalSpy revisionChanges(&session, &DocumentSession::sourceRevisionStatusChanged);
+    QVERIFY(session.hasTrackedSourceRevision());
+    QCOMPARE(session.sourceRevisionStatus(), DocumentSession::SourceRevisionStatus::Unchanged);
+    QVERIFY(session.sourceRevisionMessage().isEmpty());
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Unchanged);
+    QCOMPARE(revisionChanges.count(), 0);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArrayLiteral("original"));
+    file.close();
+
+    QVERIFY(file.open(QIODevice::ReadWrite));
+    QCOMPARE(file.write("modified"), qint64{8});
+    QVERIFY(file.flush());
+    QVERIFY(file.setFileTime(originalModified, QFileDevice::FileModificationTime));
+    file.close();
+
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Modified);
+    QVERIFY(session.sourceRevisionMessage().contains(QStringLiteral("changed after")));
+    QCOMPARE(revisionChanges.count(), 1);
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Modified);
+    QCOMPARE(revisionChanges.count(), 1);
+    QCOMPARE(session.filePath(), path);
+    QVERIFY(file.open(QIODevice::ReadOnly));
+    QCOMPARE(file.readAll(), QByteArrayLiteral("modified"));
+}
+
+void DocumentSessionTest::distinguishesSourceReplacementDeletionAndRestoration() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    const auto heldPath = directory.filePath(QStringLiteral("held.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write("source"), qint64{6});
+    file.close();
+
+    DocumentSession session(path);
+    QSignalSpy revisionChanges(&session, &DocumentSession::sourceRevisionStatusChanged);
+    QVERIFY(QFile::rename(path, heldPath));
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Missing);
+    QCOMPARE(revisionChanges.count(), 1);
+
+    QVERIFY(QFile::rename(heldPath, path));
+    // Restoring the same inode still changes ctime, so the guard stays conservative.
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Modified);
+    QCOMPARE(revisionChanges.count(), 2);
+
+    QVERIFY(QFile::rename(path, heldPath));
+    file.setFileName(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write("source"), qint64{6});
+    file.close();
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Replaced);
+    QCOMPARE(revisionChanges.count(), 3);
+
+    QVERIFY(QFile::remove(path));
+    QVERIFY(QDir().mkdir(path));
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Replaced);
+    QCOMPARE(revisionChanges.count(), 4);
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Replaced);
+    QCOMPARE(revisionChanges.count(), 4);
+    QCOMPARE(session.filePath(), path);
+}
+
+void DocumentSessionTest::tracksSymlinkEntryAndTargetIdentity() {
+#ifndef Q_OS_UNIX
+    QSKIP("Symbolic-link identity requires Unix");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto firstTarget = directory.filePath(QStringLiteral("first.pdf"));
+    const auto secondTarget = directory.filePath(QStringLiteral("second.pdf"));
+    const auto alias = directory.filePath(QStringLiteral("alias.pdf"));
+    for (const auto& target : {firstTarget, secondTarget}) {
+        QFile file(target);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+        QCOMPARE(file.write("source"), qint64{6});
+    }
+    QVERIFY(QFile::link(firstTarget, alias));
+
+    DocumentSession session(alias);
+    QVERIFY(session.hasTrackedSourceRevision());
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Unchanged);
+    QVERIFY(QFile::remove(alias));
+    QVERIFY(QFile::link(secondTarget, alias));
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Replaced);
+    QCOMPARE(session.filePath(), alias);
+#endif
+}
+
+void DocumentSessionTest::neverAdoptsAnInitiallyMissingSource() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("future.pdf"));
+    DocumentSession session(path);
+    QSignalSpy revisionChanges(&session, &DocumentSession::sourceRevisionStatusChanged);
+    QVERIFY(!session.hasTrackedSourceRevision());
+    QCOMPARE(session.sourceRevisionStatus(), DocumentSession::SourceRevisionStatus::Untracked);
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write("later"), qint64{5});
+    file.close();
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Untracked);
+    QCOMPARE(revisionChanges.count(), 0);
+    QVERIFY(!session.hasTrackedSourceRevision());
+}
+
+void DocumentSessionTest::classifiesSourceStatFailure() {
+#ifndef Q_OS_UNIX
+    QSKIP("Deterministic stat-failure fixture requires Unix symbolic links");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write("source"), qint64{6});
+    file.close();
+    DocumentSession session(path);
+
+    QVERIFY(QFile::remove(path));
+    const auto encodedPath = QFile::encodeName(path);
+    QCOMPARE(::symlink("document.pdf", encodedPath.constData()), 0);
+    QCOMPARE(session.revalidateSourceRevision(), DocumentSession::SourceRevisionStatus::Unavailable);
+    QVERIFY(session.sourceRevisionMessage().contains(QStringLiteral("could not be verified")));
+#endif
 }
 
 QTEST_MAIN(DocumentSessionTest)

@@ -9,6 +9,7 @@
 #include <memory>
 
 class MainWindow;
+class DocumentSourceRevision;
 class QUndoCommand;
 
 class DocumentSession final : public QObject {
@@ -28,6 +29,16 @@ public:
     };
     Q_ENUM(PushRejection)
 
+    enum class SourceRevisionStatus {
+        Untracked,
+        Unchanged,
+        Modified,
+        Replaced,
+        Missing,
+        Unavailable,
+    };
+    Q_ENUM(SourceRevisionStatus)
+
     explicit DocumentSession(QString filePath,
                              quint64 retainedByteLimit = defaultRetainedByteLimit,
                              QObject* parent = nullptr);
@@ -46,9 +57,13 @@ public:
     [[nodiscard]] quint64 remainingRetainedBytes() const;
     [[nodiscard]] PushRejection lastPushRejection() const;
     [[nodiscard]] QString lastPushRejectionMessage() const;
+    [[nodiscard]] bool hasTrackedSourceRevision() const;
+    [[nodiscard]] SourceRevisionStatus sourceRevisionStatus() const;
+    [[nodiscard]] QString sourceRevisionMessage() const;
 
     [[nodiscard]] bool push(std::unique_ptr<QUndoCommand> command,
                             quint64 retainedBytes);
+    [[nodiscard]] SourceRevisionStatus revalidateSourceRevision();
     void undo();
     void redo();
     void markSaved();
@@ -58,6 +73,8 @@ signals:
     void retainedBytesChanged(quint64 retainedBytes);
     void commandRejected(DocumentSession::PushRejection reason, const QString& message);
     void obsoleteCommandDiscarded(const QString& message);
+    void sourceRevisionStatusChanged(DocumentSession::SourceRevisionStatus status,
+                                     const QString& message);
 
 private:
     friend class MainWindow;
@@ -66,6 +83,7 @@ private:
     void reconcileCommandLifetimes();
 
     QString filePath_;
+    std::unique_ptr<DocumentSourceRevision> sourceRevision_;
     QUndoStack undoStack_;
     QVector<quint64> retainedCosts_;
     QVector<std::shared_ptr<int>> commandStates_;
