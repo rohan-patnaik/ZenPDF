@@ -1,6 +1,6 @@
-import { makeFunctionReference } from "convex/server";
 import { v } from "convex/values";
 
+import { internal } from "./_generated/api";
 import type { Id } from "./_generated/dataModel";
 import {
   internalAction,
@@ -25,6 +25,31 @@ const DEFAULT_BACKFILL_JOBS = 25;
 const MAX_REFERENCES_PER_JOB = 100;
 
 type CleanupMode = "dryRun" | "delete";
+type BackfillResult = {
+  status: "pending" | "complete" | "blocked";
+  processed: number;
+};
+type FinalizeResult = {
+  deleted: number;
+  bytesDeleted: number;
+  protected: number;
+};
+type MarkResult = {
+  runId: Id<"storageCleanupRuns">;
+  status: "completed" | "failed";
+  candidateIds: Id<"storageCleanupRecords">[];
+};
+type CleanupActionResult = {
+  mode: CleanupMode;
+  backfill: BackfillResult["status"];
+  runId?: Id<"storageCleanupRuns">;
+  status?: MarkResult["status"];
+  candidateIds?: Id<"storageCleanupRecords">[];
+  retried?: FinalizeResult;
+  deleted?: number;
+  bytesDeleted?: number;
+  protected?: number;
+};
 
 const boundedInteger = (
   value: string | undefined,
@@ -542,47 +567,16 @@ export const finalizeStorageCandidates = internalMutation({
   },
 });
 
-const backfillReference = makeFunctionReference<
-  "mutation",
-  { maxJobs: number },
-  { status: "pending" | "complete" | "blocked"; processed: number }
->("storage_cleanup:backfillStorageReferences");
-
-const markReference = makeFunctionReference<
-  "mutation",
-  {
-    mode: CleanupMode;
-    graceMs: number;
-    maxInspected: number;
-    maxDeleted: number;
-    maxBytesDeleted: number;
-    maxWallMs: number;
-  },
-  {
-    runId: Id<"storageCleanupRuns">;
-    status: "completed" | "failed";
-    candidateIds: Id<"storageCleanupRecords">[];
-  }
->("storage_cleanup:markStorageCandidates");
-
-const finalizeReference = makeFunctionReference<
-  "mutation",
-  {
-    runId?: Id<"storageCleanupRuns">;
-    maxDeleted: number;
-    maxBytesDeleted: number;
-    maxWallMs: number;
-  },
-  { deleted: number; bytesDeleted: number; protected: number }
->("storage_cleanup:finalizeStorageCandidates");
-
 export const runStorageCleanup = internalAction({
   args: {},
-  handler: async (ctx) => {
+  handler: async (ctx): Promise<CleanupActionResult> => {
     const bounds = getConfiguredBounds();
-    const backfill = await ctx.runMutation(backfillReference, {
-      maxJobs: bounds.maxBackfillJobs,
-    });
+    const backfill: BackfillResult = await ctx.runMutation(
+      internal.storage_cleanup.backfillStorageReferences,
+      {
+        maxJobs: bounds.maxBackfillJobs,
+      },
+    );
     if (backfill.status !== "complete") {
       return { mode: "dryRun" as const, backfill: backfill.status };
     }
@@ -590,29 +584,38 @@ export const runStorageCleanup = internalAction({
       process.env.ZENPDF_STORAGE_SWEEP_DELETE_ENABLED === "1"
         ? "delete"
         : "dryRun";
-    const retried =
+    const retried: FinalizeResult | undefined =
       mode === "delete"
-        ? await ctx.runMutation(finalizeReference, {
-            maxDeleted: bounds.maxDeleted,
-            maxBytesDeleted: bounds.maxBytesDeleted,
-            maxWallMs: bounds.maxWallMs,
-          })
+        ? await ctx.runMutation(
+            internal.storage_cleanup.finalizeStorageCandidates,
+            {
+              maxDeleted: bounds.maxDeleted,
+              maxBytesDeleted: bounds.maxBytesDeleted,
+              maxWallMs: bounds.maxWallMs,
+            },
+          )
         : undefined;
-    const marked = await ctx.runMutation(markReference, {
-      mode,
-      graceMs: bounds.graceMs,
-      maxInspected: bounds.maxInspected,
-      maxDeleted: bounds.maxDeleted,
-      maxBytesDeleted: bounds.maxBytesDeleted,
-      maxWallMs: bounds.maxWallMs,
-    });
-    if (mode === "delete" && marked.status === "completed") {
-      const finalized = await ctx.runMutation(finalizeReference, {
-        runId: marked.runId,
+    const marked: MarkResult = await ctx.runMutation(
+      internal.storage_cleanup.markStorageCandidates,
+      {
+        mode,
+        graceMs: bounds.graceMs,
+        maxInspected: bounds.maxInspected,
         maxDeleted: bounds.maxDeleted,
         maxBytesDeleted: bounds.maxBytesDeleted,
         maxWallMs: bounds.maxWallMs,
-      });
+      },
+    );
+    if (mode === "delete" && marked.status === "completed") {
+      const finalized: FinalizeResult = await ctx.runMutation(
+        internal.storage_cleanup.finalizeStorageCandidates,
+        {
+          runId: marked.runId,
+          maxDeleted: bounds.maxDeleted,
+          maxBytesDeleted: bounds.maxBytesDeleted,
+          maxWallMs: bounds.maxWallMs,
+        },
+      );
       return {
         mode,
         backfill: backfill.status,

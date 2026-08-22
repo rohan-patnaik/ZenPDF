@@ -1,13 +1,11 @@
 import { cronJobs, makeFunctionReference } from "convex/server";
 
+import { internal } from "./_generated/api";
+
 const crons = cronJobs();
 
 const cleanupArtifacts = makeFunctionReference<"mutation">(
   "cleanup:cleanupExpiredArtifacts",
-);
-
-const cleanupStorageOrphans = makeFunctionReference<"action">(
-  "storage_cleanup:runStorageCleanup",
 );
 
 crons.interval(
@@ -20,7 +18,7 @@ crons.interval(
 crons.interval(
   "bounded storage orphan sweep",
   { hours: 1 },
-  cleanupStorageOrphans,
+  internal.storage_cleanup.runStorageCleanup,
   {},
 );
 
