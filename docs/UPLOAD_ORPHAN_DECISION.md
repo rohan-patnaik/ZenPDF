@@ -56,10 +56,11 @@ This has the smallest implementation cost and no destructive sweep risk, but it 
 The implementation uses:
 
 - one-time, 15-minute browser reservations bound to the authenticated user or anonymous session;
-- atomic reservation validation, storage validation, job-reference insertion, job creation, and reservation consumption;
+- binding only after reference backfill is complete, with an exact defined content type, an object creation time inside the ticket window, and no existing job, artifact, pending-upload, reservation, or cleanup ownership;
+- atomic reservation validation, repeated storage metadata validation, job-reference insertion, job creation, and reservation consumption;
 - a bounded legacy job-reference backfill that gates every destructive sweep;
 - a 72-hour default storage age gate with a non-configurable 48-hour minimum;
-- stable `_storage` pagination and per-run row, delete-count, byte, and wall-time caps;
+- stable `_storage` pagination with bounded page size, plus action-wide delete-count, byte, and wall-time caps shared by retries and new work; an object above the ordinary byte budget may be deleted only by itself and remains hard-capped at the worker's 2 GiB output limit;
 - a durable candidate record followed by a separate mutation that rechecks job references, artifacts, live pending worker uploads, and live browser reservations before deletion;
 - a retained deletion tombstone that causes later browser binds, job creation, or worker registration to fail;
 - run evidence limited to storage IDs, object age/size, aggregate backlog metrics, cleanup run IDs, and completed check flags.

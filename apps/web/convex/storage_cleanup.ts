@@ -23,6 +23,7 @@ const DEFAULT_WALL_MS = 1_000;
 const MAX_BACKFILL_JOBS = 50;
 const DEFAULT_BACKFILL_JOBS = 25;
 const MAX_REFERENCES_PER_JOB = 100;
+export const MAX_STORAGE_OBJECT_BYTES = 2 * 1024 * 1024 * 1024;
 
 type CleanupMode = "dryRun" | "delete";
 type BackfillResult = {
@@ -50,6 +51,18 @@ type CleanupActionResult = {
   bytesDeleted?: number;
   protected?: number;
 };
+
+export const canDeleteStorageObject = (
+  objectBytes: number,
+  maxBytesDeleted: number,
+  deletedAlready: number,
+  bytesDeletedAlready: number,
+) =>
+  Number.isSafeInteger(objectBytes) &&
+  objectBytes >= 0 &&
+  objectBytes <= MAX_STORAGE_OBJECT_BYTES &&
+  (bytesDeletedAlready + objectBytes <= maxBytesDeleted ||
+    (deletedAlready === 0 && bytesDeletedAlready === 0));
 
 const boundedInteger = (
   value: string | undefined,
@@ -130,31 +143,25 @@ const livePendingUploadExists = async (
   ctx: MutationCtx,
   storageId: Id<"_storage">,
   now: number,
-) => {
-  return (
-    (await ctx.db
+) =>
+  (await ctx.db
     .query("pendingUploads")
       .withIndex("by_storage_expiry", (q) =>
         q.eq("storageId", storageId).gt("expiresAt", now),
       )
-      .first()) !== null
-  );
-};
+      .first()) !== null;
 
 const liveReservationExists = async (
   ctx: MutationCtx,
   storageId: Id<"_storage">,
   now: number,
-) => {
-  return (
-    (await ctx.db
+) =>
+  (await ctx.db
     .query("browserUploadReservations")
       .withIndex("by_storage_expiry", (q) =>
         q.eq("storageId", storageId).gt("expiresAt", now),
       )
-      .first()) !== null
-  );
-};
+      .first()) !== null;
 
 const hasAuthoritativeReference = async (
   ctx: MutationCtx,
@@ -273,6 +280,7 @@ export const markStorageCandidates = internalMutation({
     maxDeleted: v.number(),
     maxBytesDeleted: v.number(),
     maxWallMs: v.number(),
+    deadlineAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const startedAt = Date.now();
@@ -286,7 +294,7 @@ export const markStorageCandidates = internalMutation({
       Math.min(Math.floor(args.maxInspected), MAX_INSPECTED),
     );
     const maxDeleted = Math.max(
-      1,
+      0,
       Math.min(Math.floor(args.maxDeleted), MAX_DELETED),
     );
     const maxBytesDeleted = Math.max(
@@ -296,6 +304,10 @@ export const markStorageCandidates = internalMutation({
     const maxWallMs = Math.max(
       50,
       Math.min(Math.floor(args.maxWallMs), MAX_WALL_MS),
+    );
+    const deadlineAt = Math.min(
+      args.deadlineAt ?? startedAt + maxWallMs,
+      startedAt + maxWallMs,
     );
     const runId = await ctx.db.insert("storageCleanupRuns", {
       mode: args.mode,
@@ -319,6 +331,14 @@ export const markStorageCandidates = internalMutation({
       await ctx.db.patch(runId, {
         status: "failed",
         errorCode: "REFERENCE_BACKFILL_INCOMPLETE",
+        completedAt: Date.now(),
+      });
+      return { runId, status: "failed" as const, candidateIds: [] };
+    }
+    if (Date.now() >= deadlineAt) {
+      await ctx.db.patch(runId, {
+        status: "failed",
+        errorCode: "WALL_TIME_BOUND",
         completedAt: Date.now(),
       });
       return { runId, status: "failed" as const, candidateIds: [] };
@@ -350,7 +370,7 @@ export const markStorageCandidates = internalMutation({
       size: number;
     }> = [];
     for (const storage of page.page) {
-      if (Date.now() - startedAt >= maxWallMs) {
+      if (Date.now() >= deadlineAt) {
         await ctx.db.patch(runId, {
           status: "failed",
           inspected: page.page.length,
@@ -373,25 +393,11 @@ export const markStorageCandidates = internalMutation({
         oldestEligibleAt ?? storage._creationTime,
         storage._creationTime,
       );
-      const cleanupRecords = await ctx.db
+      const cleanupRecord = await ctx.db
         .query("storageCleanupRecords")
         .withIndex("by_storage", (q) => q.eq("storageId", storage._id))
-        .take(2);
-      if (cleanupRecords.length > 1) {
-        await ctx.db.patch(runId, {
-          status: "failed",
-          inspected: page.page.length,
-          eligible,
-          eligibleBytes,
-          protected: protectedCount,
-          candidates: 0,
-          candidateBytes: 0,
-          errorCode: "AMBIGUOUS_CLEANUP_STATE",
-          completedAt: Date.now(),
-        });
-        return { runId, status: "failed" as const, candidateIds: [] };
-      }
-      if (cleanupRecords.length === 1) {
+        .first();
+      if (cleanupRecord) {
         protectedCount += 1;
         continue;
       }
@@ -404,7 +410,7 @@ export const markStorageCandidates = internalMutation({
         protectedCount += 1;
         continue;
       }
-      if (storage.size > maxBytesDeleted) {
+      if (storage.size > MAX_STORAGE_OBJECT_BYTES) {
         protectedCount += 1;
         continue;
       }
@@ -461,6 +467,9 @@ export const finalizeStorageCandidates = internalMutation({
     maxDeleted: v.number(),
     maxBytesDeleted: v.number(),
     maxWallMs: v.number(),
+    deletedAlready: v.optional(v.number()),
+    bytesDeletedAlready: v.optional(v.number()),
+    deadlineAt: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const startedAt = Date.now();
@@ -484,7 +493,7 @@ export const finalizeStorageCandidates = internalMutation({
       return { deleted: 0, bytesDeleted: 0, protected: 0 };
     }
     const maxDeleted = Math.max(
-      1,
+      0,
       Math.min(Math.floor(args.maxDeleted), MAX_DELETED),
     );
     const maxBytesDeleted = Math.max(
@@ -495,18 +504,31 @@ export const finalizeStorageCandidates = internalMutation({
       50,
       Math.min(Math.floor(args.maxWallMs), MAX_WALL_MS),
     );
+    const deletedAlready = Math.max(0, Math.floor(args.deletedAlready ?? 0));
+    const bytesDeletedAlready = Math.max(
+      0,
+      Math.floor(args.bytesDeletedAlready ?? 0),
+    );
+    const deadlineAt = Math.min(
+      args.deadlineAt ?? startedAt + maxWallMs,
+      startedAt + maxWallMs,
+    );
+    const remainingDeletes = Math.max(0, maxDeleted - deletedAlready);
+    if (remainingDeletes === 0 || Date.now() >= deadlineAt) {
+      return { deleted: 0, bytesDeleted: 0, protected: 0 };
+    }
     const records = await ctx.db
       .query("storageCleanupRecords")
       .withIndex("by_run_state", (q) =>
         q.eq("runId", runId!).eq("state", "candidate"),
       )
-      .take(maxDeleted);
+      .take(remainingDeletes);
     let deleted = 0;
     let bytesDeleted = 0;
     let protectedCount = 0;
 
     for (const record of records) {
-      if (Date.now() - startedAt >= maxWallMs) {
+      if (Date.now() >= deadlineAt) {
         break;
       }
       const metadata = await ctx.db.system.get(record.storageId);
@@ -522,25 +544,17 @@ export const finalizeStorageCandidates = internalMutation({
       }
       const deletionBytes = metadata?.size ?? 0;
       if (
-        deletionBytes > maxBytesDeleted ||
-        bytesDeleted + deletionBytes > maxBytesDeleted
+        !canDeleteStorageObject(
+          deletionBytes,
+          maxBytesDeleted,
+          deletedAlready + deleted,
+          bytesDeletedAlready + bytesDeleted,
+        )
       ) {
         continue;
       }
       if (metadata) {
         await ctx.storage.delete(record.storageId);
-      }
-      const expiredReservations = await ctx.db
-        .query("browserUploadReservations")
-        .withIndex("by_storage", (q) => q.eq("storageId", record.storageId))
-        .take(2);
-      for (const reservation of expiredReservations) {
-        if (reservation.expiresAt <= startedAt) {
-          await ctx.db.patch(reservation._id, {
-            status: "deleted",
-            deletedAt: startedAt,
-          });
-        }
       }
       await ctx.db.patch(record._id, {
         state: "deleted",
@@ -573,7 +587,9 @@ export const finalizeStorageCandidates = internalMutation({
 export const runStorageCleanup = internalAction({
   args: {},
   handler: async (ctx): Promise<CleanupActionResult> => {
+    const actionStartedAt = Date.now();
     const bounds = getConfiguredBounds();
+    const deadlineAt = actionStartedAt + bounds.maxWallMs;
     const backfill: BackfillResult = await ctx.runMutation(
       internal.storage_cleanup.backfillStorageReferences,
       {
@@ -595,6 +611,9 @@ export const runStorageCleanup = internalAction({
               maxDeleted: bounds.maxDeleted,
               maxBytesDeleted: bounds.maxBytesDeleted,
               maxWallMs: bounds.maxWallMs,
+              deletedAlready: 0,
+              bytesDeletedAlready: 0,
+              deadlineAt,
             },
           )
         : undefined;
@@ -604,9 +623,13 @@ export const runStorageCleanup = internalAction({
         mode,
         graceMs: bounds.graceMs,
         maxInspected: bounds.maxInspected,
-        maxDeleted: bounds.maxDeleted,
+        maxDeleted: Math.max(
+          0,
+          bounds.maxDeleted - (retried?.deleted ?? 0),
+        ),
         maxBytesDeleted: bounds.maxBytesDeleted,
         maxWallMs: bounds.maxWallMs,
+        deadlineAt,
       },
     );
     if (mode === "delete" && marked.status === "completed") {
@@ -617,6 +640,9 @@ export const runStorageCleanup = internalAction({
           maxDeleted: bounds.maxDeleted,
           maxBytesDeleted: bounds.maxBytesDeleted,
           maxWallMs: bounds.maxWallMs,
+          deletedAlready: retried?.deleted ?? 0,
+          bytesDeletedAlready: retried?.bytesDeleted ?? 0,
+          deadlineAt,
         },
       );
       return {
@@ -624,7 +650,21 @@ export const runStorageCleanup = internalAction({
         backfill: backfill.status,
         retried,
         ...marked,
-        ...finalized,
+        deleted: (retried?.deleted ?? 0) + finalized.deleted,
+        bytesDeleted:
+          (retried?.bytesDeleted ?? 0) + finalized.bytesDeleted,
+        protected: (retried?.protected ?? 0) + finalized.protected,
+      };
+    }
+    if (mode === "delete") {
+      return {
+        mode,
+        backfill: backfill.status,
+        retried,
+        ...marked,
+        deleted: retried?.deleted ?? 0,
+        bytesDeleted: retried?.bytesDeleted ?? 0,
+        protected: retried?.protected ?? 0,
       };
     }
     return { mode, backfill: backfill.status, ...marked };

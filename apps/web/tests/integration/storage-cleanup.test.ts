@@ -2,8 +2,11 @@ import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
+import {
+  canDeleteStorageObject,
+  MAX_STORAGE_OBJECT_BYTES,
+} from "../../convex/storage_cleanup";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
@@ -44,7 +47,12 @@ const finalizeCandidates = makeFunctionReference<
 const runCleanup = makeFunctionReference<
   "action",
   Record<string, never>,
-  { mode: "dryRun" | "delete"; backfill: string }
+  {
+    mode: "dryRun" | "delete";
+    backfill: string;
+    deleted?: number;
+    bytesDeleted?: number;
+  }
 >("storage_cleanup:runStorageCleanup");
 
 const beginBrowserUpload = makeFunctionReference<
@@ -112,6 +120,23 @@ afterEach(() => {
 });
 
 describe("bounded storage orphan cleanup", () => {
+  it("allows one bounded deletion for the maximum 2 GiB worker object", () => {
+    expect(
+      canDeleteStorageObject(MAX_STORAGE_OBJECT_BYTES, 128 * 1024 * 1024, 0, 0),
+    ).toBe(true);
+    expect(
+      canDeleteStorageObject(
+        MAX_STORAGE_OBJECT_BYTES + 1,
+        128 * 1024 * 1024,
+        0,
+        0,
+      ),
+    ).toBe(false);
+    expect(
+      canDeleteStorageObject(MAX_STORAGE_OBJECT_BYTES, 128 * 1024 * 1024, 1, 1),
+    ).toBe(false);
+  });
+
   it("runs from cron configuration in dry-run mode by default", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
@@ -166,22 +191,86 @@ describe("bounded storage orphan cleanup", () => {
     ).toMatchObject({ storageId, kind: "jobInput" });
   });
 
+  it("retains storage when a live pending row follows multiple expired rows", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const storageId = await makeOldStorage(t, "pending");
+    await t.mutation(backfill, { maxJobs: 25 });
+    const livePendingId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const jobId = await ctx.db.insert("jobs", {
+        anonId: "pending-reference-owner",
+        tier: "ANON",
+        tool: "merge",
+        status: "running",
+        attempts: 1,
+        maxAttempts: 3,
+        inputs: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      for (let index = 0; index < 2; index += 1) {
+        await ctx.db.insert("pendingUploads", {
+          jobId,
+          workerId: `expired-${index}`,
+          filename: "expired.pdf",
+          sizeBytes: 7,
+          storageId,
+          createdAt: now - 120_000,
+          expiresAt: now - 60_000 + index,
+        });
+      }
+      return ctx.db.insert("pendingUploads", {
+        jobId,
+        workerId: "live-third",
+        filename: "live.pdf",
+        sizeBytes: 7,
+        storageId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+      });
+    });
+
+    expect(
+      (
+        await t.mutation(markCandidates, {
+          mode: "delete",
+          ...bounds,
+        })
+      ).candidateIds,
+    ).toEqual([]);
+    await t.run(async (ctx) => {
+      await ctx.db.patch(livePendingId, { expiresAt: Date.now() - 1 });
+    });
+    expect(
+      (
+        await t.mutation(markCandidates, {
+          mode: "delete",
+          ...bounds,
+        })
+      ).candidateIds,
+    ).toHaveLength(1);
+  });
+
   it("proves both serialized bind/delete orderings and rejects post-delete binding", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
     const boundFirstId = await makeOldStorage(t, "bound");
     const deleteFirstId = await makeOldStorage(t, "delete");
     await t.mutation(backfill, { maxJobs: 25 });
-    const boundFirstReservation = await t.mutation(beginBrowserUpload, {
-      anonId: "cleanup-race-anon",
-      filename: "bound.pdf",
-      sizeBytes: 5,
-      contentType: "application/octet-stream",
-    });
-    await t.mutation(bindBrowserUpload, {
-      reservationId: boundFirstReservation.reservationId,
-      storageId: boundFirstId,
-      anonId: "cleanup-race-anon",
+    await t.run(async (ctx) => {
+      const now = Date.now();
+      await ctx.db.insert("browserUploadReservations", {
+        anonId: "cleanup-race-anon",
+        status: "bound",
+        filename: "bound.pdf",
+        sizeBytes: 5,
+        contentType: "application/octet-stream",
+        storageId: boundFirstId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+        boundAt: now,
+      });
     });
     const deleteFirstReservation = await t.mutation(beginBrowserUpload, {
       anonId: "cleanup-race-anon",
@@ -227,16 +316,19 @@ describe("bounded storage orphan cleanup", () => {
     const storageId = await makeOldStorage(t, "output");
     const deleteFirstStorageId = await makeOldStorage(t, "doomed");
     await t.mutation(backfill, { maxJobs: 25 });
-    const temporaryProtection = await t.mutation(beginBrowserUpload, {
-      anonId: "worker-delete-protection",
-      filename: "doomed.pdf",
-      sizeBytes: 6,
-      contentType: "application/octet-stream",
-    });
-    await t.mutation(bindBrowserUpload, {
-      reservationId: temporaryProtection.reservationId,
-      storageId: deleteFirstStorageId,
-      anonId: "worker-delete-protection",
+    const temporaryProtection = await t.run(async (ctx) => {
+      const now = Date.now();
+      return ctx.db.insert("browserUploadReservations", {
+        anonId: "worker-delete-protection",
+        status: "bound",
+        filename: "doomed.pdf",
+        sizeBytes: 6,
+        contentType: "application/octet-stream",
+        storageId: deleteFirstStorageId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+        boundAt: now,
+      });
     });
     const { jobId, pendingUploadId } = await t.run(async (ctx) => {
       const now = Date.now();
@@ -303,7 +395,7 @@ describe("bounded storage orphan cleanup", () => {
 
     await t.run(async (ctx) => {
       await ctx.db.patch(
-        temporaryProtection.reservationId as Id<"browserUploadReservations">,
+        temporaryProtection,
         { status: "expired", expiresAt: Date.now() - 1 },
       );
     });
@@ -452,6 +544,35 @@ describe("bounded storage orphan cleanup", () => {
     ).toMatchObject({ deleted: 1 });
     expect(await t.run(async (ctx) => ctx.db.system.get(firstId))).toBeNull();
     expect(await t.run(async (ctx) => ctx.db.system.get(secondId))).toBeNull();
+  });
+
+  it("shares delete-count and byte budgets across retried and new work", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("ZENPDF_STORAGE_SWEEP_DELETE_ENABLED", "1");
+    vi.stubEnv("ZENPDF_STORAGE_SWEEP_MAX_DELETED", "1");
+    vi.stubEnv("ZENPDF_STORAGE_SWEEP_MAX_BYTES", "5");
+    const t = convexTest(schema, modules);
+    const firstId = await makeOldStorage(t, "first");
+    const secondId = await makeOldStorage(t, "later");
+    await t.mutation(backfill, { maxJobs: 25 });
+    const oldRun = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+      maxInspected: 1,
+      maxDeleted: 1,
+      maxBytesDeleted: 5,
+    });
+    expect(oldRun.candidateIds).toHaveLength(1);
+
+    const result = await t.action(runCleanup, {});
+
+    expect(result).toMatchObject({
+      mode: "delete",
+      deleted: 1,
+      bytesDeleted: 5,
+    });
+    expect(await t.run(async (ctx) => ctx.db.system.get(firstId))).toBeNull();
+    expect(await t.run(async (ctx) => ctx.db.system.get(secondId))).not.toBeNull();
   });
 
   it("treats a candidate already missing from storage as a successful deletion", async () => {
