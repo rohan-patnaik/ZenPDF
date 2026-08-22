@@ -59,6 +59,14 @@ class UploadJournal:
             return
         self._fsync_root()
 
+    def load(self, pending_upload_id: str) -> Dict[str, Any] | None:
+        """Load one entry directly by its opaque pending-upload identifier."""
+        try:
+            value = json.loads(self._path(pending_upload_id).read_text(encoding="utf-8"))
+        except (FileNotFoundError, OSError, ValueError):
+            return None
+        return value if isinstance(value, dict) else None
+
     def entries(self) -> List[Dict[str, Any]]:
         """Return valid entries, preserving malformed files for operator recovery."""
         if not self.root.exists():

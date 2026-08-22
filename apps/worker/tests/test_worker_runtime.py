@@ -328,6 +328,75 @@ def test_registration_and_cleanup_transport_failures_recover_from_journal(
     assert recovered_worker.upload_journal.entries() == []
 
 
+def test_completion_response_loss_keeps_committed_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _RecoveryUploadWorker()
+    entry = {
+        "jobId": "job-1",
+        "pendingUploadId": "pending-1",
+        "storageId": "stored-committed",
+        "action": "uploaded",
+    }
+    worker.upload_journal.save(entry)
+    worker.upload_state = "committed"
+
+    worker._discard_pending_upload("pending-1")
+
+    assert worker.upload_journal.entries() == []
+    assert all(path != "files:discardWorkerUpload" for path, _args in worker.mutations)
+
+
+def test_lost_completion_and_cleanup_removed_row_reconcile_idempotently(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _RecoveryUploadWorker()
+    entry = {
+        "jobId": "job-1",
+        "pendingUploadId": "pending-1",
+        "storageId": "stored-cleaned",
+        "action": "uploaded",
+    }
+    worker.upload_journal.save(entry)
+    worker.upload_state = "registered"
+    worker.discard_failures = 1
+
+    worker._discard_pending_upload("pending-1")
+    retained = worker.upload_journal.load("pending-1")
+    assert retained is not None
+    assert retained["action"] == "discard"
+
+    worker.upload_state = "deleted"
+    discard_calls = sum(
+        path == "files:discardWorkerUpload" for path, _args in worker.mutations
+    )
+    worker._recover_pending_uploads()
+    assert worker.upload_journal.entries() == []
+    assert (
+        sum(path == "files:discardWorkerUpload" for path, _args in worker.mutations)
+        == discard_calls
+    )
+
+
+def test_missing_pending_row_with_live_unknown_object_is_retained(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker = _RecoveryUploadWorker()
+    entry = {
+        "jobId": "job-1",
+        "pendingUploadId": "pending-1",
+        "storageId": "stored-unknown",
+        "action": "discard",
+    }
+    worker.upload_journal.save(entry)
+    worker.upload_state = "orphaned"
+
+    worker._recover_pending_uploads()
+
+    assert worker.upload_journal.load("pending-1") == entry
+    assert all(path != "files:discardWorkerUpload" for path, _args in worker.mutations)
+
+
 def test_completion_rejection_discards_registered_uploads(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

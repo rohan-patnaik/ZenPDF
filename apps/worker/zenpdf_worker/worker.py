@@ -1047,15 +1047,14 @@ class ZenPdfWorker:
     def _discard_pending_upload(
         self, pending_id: str, storage_id: str | None = None
     ) -> None:
-        """Persist deletion intent and reconcile it without losing retry state."""
-        entry = next(
-            (
-                item
-                for item in self.upload_journal.entries()
-                if item.get("pendingUploadId") == pending_id
-            ),
-            None,
-        )
+        """Reconcile ambiguous completion before persisting deletion intent."""
+        entry = self.upload_journal.load(pending_id)
+        if entry is not None:
+            try:
+                self._reconcile_upload_entry(entry)
+            except Exception as error:  # noqa: BLE001 - durable intent remains
+                print(f"Pending upload cleanup retained for retry: {error}")
+            return
         if entry is None and storage_id is not None:
             entry = {
                 "jobId": "unknown",
@@ -1063,8 +1062,6 @@ class ZenPdfWorker:
                 "storageId": storage_id,
                 "action": "discard",
             }
-        if entry is not None:
-            entry["action"] = "discard"
             self.upload_journal.save(entry)
         try:
             args = {
@@ -1104,6 +1101,7 @@ class ZenPdfWorker:
         if not all(isinstance(value, str) and value for value in (pending_id, storage_id)):
             return
         action = entry.get("action")
+        registration_rejected = False
         if action == "register":
             registered = self._mutation(
                 "files:registerWorkerUpload",
@@ -1121,7 +1119,13 @@ class ZenPdfWorker:
             entry["action"] = "discard"
             self.upload_journal.save(entry)
             action = "discard"
-        if action == "uploaded" and isinstance(job_id, str) and job_id != "unknown":
+            registration_rejected = True
+        if (
+            action in {"uploaded", "discard"}
+            and not registration_rejected
+            and isinstance(job_id, str)
+            and job_id != "unknown"
+        ):
             state = self._query(
                 "files:getWorkerUploadState",
                 {
@@ -1139,7 +1143,7 @@ class ZenPdfWorker:
                 entry["action"] = "discard"
                 self.upload_journal.save(entry)
                 action = "discard"
-            else:
+            elif state in {"orphaned", "mismatch"}:
                 return
         if action == "discard":
             discarded = self._mutation(
