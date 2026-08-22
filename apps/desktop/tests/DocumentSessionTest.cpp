@@ -217,15 +217,17 @@ void DocumentSessionTest::accountsForBranchingAndUndoRedo() {
 }
 
 void DocumentSessionTest::releasesOldestEvictedCost() {
-    DocumentSession session(QStringLiteral("document.pdf"),
-                            DocumentSession::maximumUndoCommands);
+    DocumentSession session(QStringLiteral("document.pdf"), 10);
     int destructions = 0;
-    for (int index = 0; index < DocumentSession::maximumUndoCommands + 1; ++index) {
-        QVERIFY(session.push(std::make_unique<TrackedCommand>(&destructions), 1));
+    QVERIFY(session.push(std::make_unique<TrackedCommand>(&destructions), 10));
+    for (int index = 1; index < DocumentSession::maximumUndoCommands; ++index) {
+        QVERIFY(session.push(std::make_unique<TrackedCommand>(&destructions), 0));
     }
+    QCOMPARE(session.retainedBytes(), quint64(10));
+    QVERIFY(session.push(std::make_unique<TrackedCommand>(&destructions), 1));
 
     QCOMPARE(session.undoCommandCount(), DocumentSession::maximumUndoCommands);
-    QCOMPARE(session.retainedBytes(), quint64(DocumentSession::maximumUndoCommands));
+    QCOMPARE(session.retainedBytes(), quint64(1));
     QCOMPARE(destructions, 1);
 }
 
