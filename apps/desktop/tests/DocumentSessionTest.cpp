@@ -5,6 +5,7 @@
 #include <QUndoCommand>
 #include <QtTest>
 
+#include <memory>
 #include <utility>
 
 class DocumentSessionTest final : public QObject {
@@ -14,6 +15,7 @@ private slots:
     void tracksCleanDirtyUndoAndRedo();
     void savedRevisionFollowsUndoAndBranching();
     void boundsUndoHistory();
+    void ownsCommandsAndRejectsNull();
 };
 
 namespace {
@@ -28,6 +30,18 @@ public:
 private:
     int* value_;
     int amount_;
+};
+
+class TrackedCommand final : public QUndoCommand {
+public:
+    explicit TrackedCommand(int* destructions) : destructions_(destructions) {}
+    ~TrackedCommand() override { ++*destructions_; }
+
+    void redo() override {}
+    void undo() override {}
+
+private:
+    int* destructions_;
 };
 }
 
@@ -45,7 +59,8 @@ void DocumentSessionTest::tracksCleanDirtyUndoAndRedo() {
     QVERIFY(!session.canUndo());
     QVERIFY(!session.canRedo());
 
-    session.push(new AddCommand(&value, 3, QStringLiteral("Add pages")));
+    QVERIFY(session.push(
+        std::make_unique<AddCommand>(&value, 3, QStringLiteral("Add pages"))));
     QCOMPARE(value, 3);
     QVERIFY(session.isDirty());
     QVERIFY(session.canUndo());
@@ -65,7 +80,7 @@ void DocumentSessionTest::tracksCleanDirtyUndoAndRedo() {
 void DocumentSessionTest::savedRevisionFollowsUndoAndBranching() {
     DocumentSession session(QStringLiteral("document.pdf"));
     int value = 0;
-    session.push(new AddCommand(&value, 1));
+    QVERIFY(session.push(std::make_unique<AddCommand>(&value, 1)));
     session.markSaved();
     QVERIFY(!session.isDirty());
 
@@ -77,7 +92,7 @@ void DocumentSessionTest::savedRevisionFollowsUndoAndBranching() {
     QVERIFY(!session.isDirty());
 
     session.undo();
-    session.push(new AddCommand(&value, 5));
+    QVERIFY(session.push(std::make_unique<AddCommand>(&value, 5)));
     QCOMPARE(value, 5);
     QVERIFY(session.isDirty());
     QVERIFY(!session.canRedo());
@@ -87,7 +102,7 @@ void DocumentSessionTest::boundsUndoHistory() {
     DocumentSession session(QStringLiteral("document.pdf"));
     int value = 0;
     for (int index = 0; index < DocumentSession::maximumUndoCommands + 1; ++index) {
-        session.push(new AddCommand(&value, 1));
+        QVERIFY(session.push(std::make_unique<AddCommand>(&value, 1)));
     }
 
     QCOMPARE(session.undoCommandCount(), DocumentSession::maximumUndoCommands);
@@ -97,6 +112,27 @@ void DocumentSessionTest::boundsUndoHistory() {
     }
     QCOMPARE(value, 1);
     QVERIFY(session.isDirty());
+}
+
+void DocumentSessionTest::ownsCommandsAndRejectsNull() {
+    int destructions = 0;
+    {
+        DocumentSession session(QStringLiteral("document.pdf"));
+        QSignalSpy stateChanges(&session, &DocumentSession::stateChanged);
+        std::unique_ptr<QUndoCommand> empty;
+        QVERIFY(!session.push(std::move(empty)));
+        QCOMPARE(session.undoCommandCount(), 0);
+        QVERIFY(!session.isDirty());
+        QCOMPARE(stateChanges.count(), 0);
+
+        auto command = std::make_unique<TrackedCommand>(&destructions);
+        QVERIFY(session.push(std::move(command)));
+        QVERIFY(command == nullptr);
+        QCOMPARE(destructions, 0);
+        QCOMPARE(session.undoCommandCount(), 1);
+        QVERIFY(session.isDirty());
+    }
+    QCOMPARE(destructions, 1);
 }
 
 QTEST_MAIN(DocumentSessionTest)

@@ -271,14 +271,15 @@ void MainWindow::openPdf(const QString& path) {
         tabs_->removeTab(0);
         welcome->deleteLater();
     }
-    const int index = tabs_->addTab(document, document->displayName());
-    tabs_->setTabToolTip(index, QDir::toNativeSeparators(cleanPath));
     undoGroup_->addStack(&document->session().undoStack());
     connect(&document->session(), &DocumentSession::stateChanged, this, [this, document] {
         updateDocumentState(*document);
     });
+    const int index = tabs_->addTab(document, document->displayName());
+    tabs_->setTabToolTip(index, QDir::toNativeSeparators(cleanPath));
     updateDocumentState(*document);
     tabs_->setCurrentIndex(index);
+    undoGroup_->setActiveStack(&document->session().undoStack());
     QString stateError;
     if (!localState_.recordRecentFile(cleanPath, &stateError)) {
         qWarning("Could not record recent file: %s", qPrintable(stateError));

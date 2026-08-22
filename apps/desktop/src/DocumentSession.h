@@ -4,6 +4,8 @@
 #include <QString>
 #include <QUndoStack>
 
+#include <memory>
+
 class MainWindow;
 class QUndoCommand;
 
@@ -25,7 +27,7 @@ public:
     [[nodiscard]] QString undoText() const;
     [[nodiscard]] QString redoText() const;
 
-    void push(QUndoCommand* command);
+    [[nodiscard]] bool push(std::unique_ptr<QUndoCommand> command);
     void undo();
     void redo();
     void markSaved();

@@ -19,6 +19,7 @@
 #include <QUndoCommand>
 #include <QtTest>
 
+#include <memory>
 #include <utility>
 
 class MainWindowTest final : public QObject {
@@ -26,6 +27,7 @@ class MainWindowTest final : public QObject {
 
 private slots:
     void exposesKeyboardAccessibleDeleteAction();
+    void routesUndoForFirstDocumentImmediately();
     void routesUndoAndDirtyStateToActiveDocument();
     void dirtyTabRequiresExplicitDiscard();
     void dirtyWindowRequiresExplicitDiscard();
@@ -79,6 +81,29 @@ void MainWindowTest::exposesKeyboardAccessibleDeleteAction() {
     QVERIFY(action->statusTip().contains(QStringLiteral("unchanged")));
 }
 
+void MainWindowTest::routesUndoForFirstDocumentImmediately() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    createPdf(path, QStringLiteral("Document"));
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    window.openFiles({path});
+    auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
+    QVERIFY(undoAction != nullptr);
+    int value = 0;
+
+    QVERIFY(window.currentDocument()->session().push(
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change"))));
+    QCOMPARE(value, 1);
+    QVERIFY(undoAction->isEnabled());
+    QVERIFY(undoAction->text().contains(QStringLiteral("First change")));
+    undoAction->trigger();
+    QCOMPARE(value, 0);
+    QVERIFY(!window.currentDocument()->session().isDirty());
+}
+
 void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
@@ -103,7 +128,8 @@ void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
     auto* first = qobject_cast<DocumentWidget*>(window.tabs_->widget(0));
     QVERIFY(first != nullptr);
     int value = 0;
-    first->session().push(new AddCommand(&value, 1, QStringLiteral("First change")));
+    QVERIFY(first->session().push(
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change"))));
     QCOMPARE(value, 1);
     QVERIFY(window.tabs_->tabText(0).endsWith('*'));
     QVERIFY(!window.tabs_->tabText(1).endsWith('*'));
@@ -134,7 +160,8 @@ void MainWindowTest::dirtyTabRequiresExplicitDiscard() {
     auto* document = window.currentDocument();
     QVERIFY(document != nullptr);
     int value = 0;
-    document->session().push(new AddCommand(&value, 1, QStringLiteral("Unsaved change")));
+    QVERIFY(document->session().push(
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change"))));
 
     answerMessageBox(QMessageBox::Cancel);
     window.closeTab(0);
@@ -158,8 +185,8 @@ void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
     MainWindow window(state);
     window.openFiles({path});
     int value = 0;
-    window.currentDocument()->session().push(
-        new AddCommand(&value, 1, QStringLiteral("Unsaved change")));
+    QVERIFY(window.currentDocument()->session().push(
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change"))));
 
     QCloseEvent cancelEvent;
     answerMessageBox(QMessageBox::Cancel);

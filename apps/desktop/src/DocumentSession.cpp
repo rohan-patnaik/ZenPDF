@@ -1,6 +1,7 @@
 #include "DocumentSession.h"
 
 #include <QFileInfo>
+#include <QUndoCommand>
 
 DocumentSession::DocumentSession(QString filePath, QObject* parent)
     : QObject(parent),
@@ -54,8 +55,12 @@ QUndoStack& DocumentSession::undoStack() {
     return undoStack_;
 }
 
-void DocumentSession::push(QUndoCommand* command) {
-    undoStack_.push(command);
+bool DocumentSession::push(std::unique_ptr<QUndoCommand> command) {
+    if (command == nullptr) {
+        return false;
+    }
+    undoStack_.push(command.release());
+    return true;
 }
 
 void DocumentSession::undo() {
