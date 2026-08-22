@@ -69,12 +69,27 @@ export const canDeleteStorageObject = (
   maxBytesDeleted: number,
   deletedAlready: number,
   bytesDeletedAlready: number,
-) =>
-  Number.isSafeInteger(objectBytes) &&
-  objectBytes >= 0 &&
-  objectBytes <= MAX_STORAGE_OBJECT_BYTES &&
-  (bytesDeletedAlready + objectBytes <= maxBytesDeleted ||
-    (deletedAlready === 0 && bytesDeletedAlready === 0));
+) => {
+  if (
+    !Number.isSafeInteger(objectBytes) ||
+    objectBytes < 0 ||
+    !Number.isSafeInteger(maxBytesDeleted) ||
+    maxBytesDeleted < 1 ||
+    !Number.isSafeInteger(deletedAlready) ||
+    deletedAlready < 0 ||
+    !Number.isSafeInteger(bytesDeletedAlready) ||
+    bytesDeletedAlready < 0
+  ) {
+    return false;
+  }
+  if (objectBytes <= maxBytesDeleted - bytesDeletedAlready) {
+    return true;
+  }
+  // Storage deletion operates on metadata and does not read the object body.
+  // One fully unowned oversized orphan may therefore be the invocation's
+  // first and sole deletion without weakening the ordinary cumulative budget.
+  return deletedAlready === 0 && bytesDeletedAlready === 0;
+};
 
 const boundedInteger = (
   value: string | undefined,
@@ -385,6 +400,24 @@ export const markStorageCandidates = internalMutation({
       if (storage._creationTime > startedAt - graceMs) {
         continue;
       }
+      if (
+        !Number.isSafeInteger(storage.size) ||
+        storage.size < 0 ||
+        !Number.isSafeInteger(eligibleBytes + storage.size)
+      ) {
+        await ctx.db.patch(runId, {
+          status: "failed",
+          inspected: page.page.length,
+          eligible,
+          eligibleBytes,
+          protected: protectedCount + 1,
+          candidates: 0,
+          candidateBytes: 0,
+          errorCode: "INVALID_STORAGE_METADATA",
+          completedAt: Date.now(),
+        });
+        return { runId, status: "failed" as const, candidateIds: [] };
+      }
       eligible += 1;
       eligibleBytes += storage.size;
       oldestEligibleAt = Math.min(
@@ -402,10 +435,6 @@ export const markStorageCandidates = internalMutation({
       if (
         await storageIdHasLiveAuthoritativeOwner(ctx, storage._id, startedAt)
       ) {
-        protectedCount += 1;
-        continue;
-      }
-      if (storage.size > MAX_STORAGE_OBJECT_BYTES) {
         protectedCount += 1;
         continue;
       }

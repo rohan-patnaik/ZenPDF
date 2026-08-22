@@ -19,7 +19,7 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_STORAGE_SWEEP_GRACE_HOURS` defaults to 72; values below the hard 48-hour minimum are ignored.
   - `ZENPDF_STORAGE_SWEEP_MAX_INSPECTED` defaults to 50 and is hard-capped at 100 rows per run.
   - `ZENPDF_STORAGE_SWEEP_MAX_DELETED` defaults to 5 and is hard-capped at 10 objects per run.
-  - `ZENPDF_STORAGE_SWEEP_MAX_BYTES` defaults to 134217728 and is hard-capped at 268435456 ordinary bytes per action. One object larger than that budget may be deleted only when it is the action's sole deletion, with an absolute 2 GiB ceiling matching the worker output limit.
+  - `ZENPDF_STORAGE_SWEEP_MAX_BYTES` defaults to 134217728 and is hard-capped at 268435456 ordinary bytes per action. One aged, fully unowned object larger than that budget may be deleted only as the action's first and sole deletion. This constant-time orphan-recovery exception deletes by storage ID without reading body bytes and may exceed the separate 2 GiB producer ceiling; invalid or unsafe metadata fails closed.
   - `ZENPDF_STORAGE_SWEEP_MAX_WALL_MS` defaults to 1000 and is hard-capped at 5000 ms per action. Each mutation receives only the action's remaining monotonic budget, so a frozen database wall clock cannot extend the run.
   - `ZENPDF_STORAGE_BACKFILL_MAX_JOBS` defaults to 25 and is hard-capped at 50 jobs per run.
 - Optional donate/feedback env vars as needed

@@ -60,7 +60,7 @@ The implementation uses:
 - atomic reservation validation, repeated storage metadata validation, job-reference insertion, job creation, and reservation consumption;
 - a bounded legacy job-reference backfill that gates every destructive sweep;
 - a 72-hour default storage age gate with a non-configurable 48-hour minimum;
-- stable `_storage` pagination with bounded page size, plus an action-wide monotonic wall-time cap shared by backfill, retries, and new work and delete-count/byte caps shared by retry and new work; an object above the ordinary byte budget may be deleted only by itself and remains hard-capped at the worker's 2 GiB output limit;
+- stable `_storage` pagination with bounded page size, plus an action-wide monotonic wall-time cap shared by backfill, retries, and new work and ordinary delete-count/byte caps shared by retry and new work; one aged, fully unowned oversized orphan may be the action's first and sole deletion even above the separate 2 GiB producer ceiling because deletion uses metadata and storage ID without reading body bytes, while invalid or unsafe metadata fails closed;
 - a durable candidate record followed by a separate mutation that rechecks job references, artifacts, live pending worker uploads, and live browser reservations before deletion;
 - the same serialized ownership recheck in legacy artifact/pending expiry cleanup, so a live owner always retains shared bytes;
 - producer-side rejection of browser plan limits, upload intents, and worker output-limit configuration above the authoritative 2 GiB ceiling;

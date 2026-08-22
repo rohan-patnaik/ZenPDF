@@ -290,7 +290,7 @@ describe("bounded storage orphan cleanup", () => {
     );
   });
 
-  it("allows one bounded deletion for the maximum 2 GiB worker object", () => {
+  it("allows one constant-time oversized orphan deletion only as the first deletion", () => {
     expect(
       canDeleteStorageObject(MAX_STORAGE_OBJECT_BYTES, 128 * 1024 * 1024, 0, 0),
     ).toBe(true);
@@ -301,10 +301,90 @@ describe("bounded storage orphan cleanup", () => {
         0,
         0,
       ),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       canDeleteStorageObject(MAX_STORAGE_OBJECT_BYTES, 128 * 1024 * 1024, 1, 1),
     ).toBe(false);
+    expect(canDeleteStorageObject(Number.MAX_SAFE_INTEGER + 1, 128, 0, 0)).toBe(
+      false,
+    );
+  });
+
+  it("recovers an aged oversized direct-upload orphan without deleting owners or a second object", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+    const t = convexTest(schema, modules);
+    await t.mutation(backfill, { maxJobs: 25 });
+    const ticket = await t.mutation(beginBrowserUpload, {
+      anonId: "oversized-orphan-anon",
+      filename: "declared-small.pdf",
+      sizeBytes: 1,
+      contentType: "application/pdf",
+    });
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.001Z"));
+    const { oversizedId, ownedOversizedId, ordinaryId } = await t.run(
+      async (ctx) => {
+        const oversizedId = await ctx.storage.store(new Blob(["x"]));
+        const ownedOversizedId = await ctx.storage.store(new Blob(["y"]));
+        const ordinaryId = await ctx.storage.store(new Blob(["ordinary"]));
+        await ctx.db.patch(
+          oversizedId as never,
+          {
+            size: MAX_STORAGE_OBJECT_BYTES + 1,
+            contentType: "application/pdf",
+          } as never,
+        );
+        await ctx.db.patch(
+          ownedOversizedId as never,
+          {
+            size: MAX_STORAGE_OBJECT_BYTES + 1,
+          } as never,
+        );
+        await ctx.db.insert("artifacts", {
+          storageId: ownedOversizedId,
+          kind: "output",
+          filename: "owned.bin",
+          createdAt: Date.now(),
+          expiresAt: Date.now() + 7 * 24 * 60 * 60 * 1000,
+        });
+        return { oversizedId, ownedOversizedId, ordinaryId };
+      },
+    );
+    await expect(
+      t.mutation(bindBrowserUpload, {
+        reservationId: ticket.reservationId,
+        storageId: oversizedId,
+        anonId: "oversized-orphan-anon",
+      }),
+    ).rejects.toThrow();
+
+    vi.setSystemTime(new Date("2026-01-05T00:00:00Z"));
+    const marked = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+    });
+    expect(marked.candidateIds).toHaveLength(2);
+    expect(
+      await t.mutation(finalizeCandidates, {
+        runId: marked.runId,
+        maxDeleted: 5,
+        maxBytesDeleted: 1024 * 1024,
+        maxWallMs: 1000,
+      }),
+    ).toMatchObject({
+      deleted: 1,
+      bytesDeleted: MAX_STORAGE_OBJECT_BYTES + 1,
+      protected: 0,
+    });
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(oversizedId)),
+    ).toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(ownedOversizedId)),
+    ).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(ordinaryId)),
+    ).not.toBeNull();
   });
 
   it("accepts a 2 GiB browser ticket and rejects one byte more", async () => {
