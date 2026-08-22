@@ -9,7 +9,10 @@ export const cleanupExpiredArtifacts = mutation({
   },
   handler: async (ctx, args) => {
     const now = Date.now();
-    const batchSize = Math.min(args.batchSize ?? 50, 500);
+    const requestedBatchSize = args.batchSize ?? 50;
+    const batchSize = Number.isFinite(requestedBatchSize)
+      ? Math.max(1, Math.min(Math.floor(requestedBatchSize), 500))
+      : 50;
     const expired = await ctx.db
       .query("artifacts")
       .withIndex("by_expires", (q) => q.lt("expiresAt", now))
