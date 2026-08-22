@@ -1,6 +1,7 @@
 import { v } from "convex/values";
 
 import { mutation } from "./_generated/server";
+import { storageIdHasLiveAuthoritativeOwner } from "./lib/storage_ownership";
 
 export const cleanupExpiredArtifacts = mutation({
   args: {
@@ -19,7 +20,13 @@ export const cleanupExpiredArtifacts = mutation({
     for (const artifact of expired) {
       try {
         const meta = await ctx.db.system.get(artifact.storageId);
-        if (meta) {
+        const protectedStorage = await storageIdHasLiveAuthoritativeOwner(
+          ctx,
+          artifact.storageId,
+          now,
+          { artifactId: artifact._id },
+        );
+        if (meta && !protectedStorage) {
           await ctx.storage.delete(artifact.storageId);
         }
         await ctx.db.delete(artifact._id);
@@ -38,7 +45,13 @@ export const cleanupExpiredArtifacts = mutation({
       try {
         if (upload.storageId) {
           const meta = await ctx.db.system.get(upload.storageId);
-          if (meta) {
+          const protectedStorage = await storageIdHasLiveAuthoritativeOwner(
+            ctx,
+            upload.storageId,
+            now,
+            { pendingUploadId: upload._id },
+          );
+          if (meta && !protectedStorage) {
             await ctx.storage.delete(upload.storageId);
           }
         }

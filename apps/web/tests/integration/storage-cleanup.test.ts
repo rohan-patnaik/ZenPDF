@@ -55,6 +55,12 @@ const runCleanup = makeFunctionReference<
   }
 >("storage_cleanup:runStorageCleanup");
 
+const cleanupExpiredArtifacts = makeFunctionReference<
+  "mutation",
+  { batchSize?: number },
+  { deleted: number; pendingDeleted: number }
+>("cleanup:cleanupExpiredArtifacts");
+
 const beginBrowserUpload = makeFunctionReference<
   "mutation",
   { anonId?: string; filename: string; sizeBytes: number; contentType: string },
@@ -120,6 +126,105 @@ afterEach(() => {
 });
 
 describe("bounded storage orphan cleanup", () => {
+  it("serializes legacy expiry cleanup with a third live pending owner", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const sharedId = await t.run(async (ctx) =>
+      ctx.storage.store(new Blob(["shared"])),
+    );
+    const expiredOnlyId = await t.run(async (ctx) =>
+      ctx.storage.store(new Blob(["expired-only"])),
+    );
+    await t.mutation(backfill, { maxJobs: 25 });
+    const livePendingId = await t.run(async (ctx) => {
+      const now = Date.now();
+      const jobId = await ctx.db.insert("jobs", {
+        anonId: "legacy-cleanup-owner",
+        tier: "ANON",
+        tool: "merge",
+        status: "running",
+        attempts: 1,
+        maxAttempts: 3,
+        inputs: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("artifacts", {
+        jobId,
+        storageId: sharedId,
+        kind: "output",
+        filename: "shared.pdf",
+        createdAt: now - 120_000,
+        expiresAt: now - 60_000,
+      });
+      await ctx.db.insert("artifacts", {
+        jobId,
+        storageId: expiredOnlyId,
+        kind: "output",
+        filename: "expired-only.pdf",
+        createdAt: now - 120_000,
+        expiresAt: now - 60_000,
+      });
+      for (let index = 0; index < 2; index += 1) {
+        await ctx.db.insert("pendingUploads", {
+          jobId,
+          workerId: `expired-${index}`,
+          filename: "shared.pdf",
+          sizeBytes: 6,
+          storageId: sharedId,
+          createdAt: now - 120_000,
+          expiresAt: now - 60_000 + index,
+        });
+      }
+      return ctx.db.insert("pendingUploads", {
+        jobId,
+        workerId: "live-third",
+        filename: "shared.pdf",
+        sizeBytes: 6,
+        storageId: sharedId,
+        createdAt: now,
+        expiresAt: now + 60_000,
+      });
+    });
+
+    expect(await t.mutation(cleanupExpiredArtifacts, { batchSize: 2 })).toEqual(
+      {
+        deleted: 2,
+        pendingDeleted: 0,
+      },
+    );
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(sharedId)),
+    ).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(expiredOnlyId)),
+    ).toBeNull();
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(livePendingId, { expiresAt: Date.now() - 1 });
+    });
+    expect(await t.mutation(cleanupExpiredArtifacts, { batchSize: 2 })).toEqual(
+      {
+        deleted: 0,
+        pendingDeleted: 2,
+      },
+    );
+    expect(await t.run(async (ctx) => ctx.db.system.get(sharedId))).toBeNull();
+    expect(await t.mutation(cleanupExpiredArtifacts, { batchSize: 2 })).toEqual(
+      {
+        deleted: 0,
+        pendingDeleted: 1,
+      },
+    );
+    expect(await t.run(async (ctx) => ctx.db.system.get(sharedId))).toBeNull();
+    expect(await t.mutation(cleanupExpiredArtifacts, { batchSize: 2 })).toEqual(
+      {
+        deleted: 0,
+        pendingDeleted: 0,
+      },
+    );
+  });
+
   it("allows one bounded deletion for the maximum 2 GiB worker object", () => {
     expect(
       canDeleteStorageObject(MAX_STORAGE_OBJECT_BYTES, 128 * 1024 * 1024, 0, 0),
@@ -145,7 +250,9 @@ describe("bounded storage orphan cleanup", () => {
     const result = await t.action(runCleanup, {});
 
     expect(result).toMatchObject({ mode: "dryRun", backfill: "complete" });
-    expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(storageId)),
+    ).not.toBeNull();
     const records = await t.run(async (ctx) =>
       ctx.db.query("storageCleanupRecords").collect(),
     );
@@ -180,7 +287,9 @@ describe("bounded storage orphan cleanup", () => {
     });
 
     expect(marked.candidateIds).toEqual([]);
-    expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(storageId)),
+    ).not.toBeNull();
     expect(
       await t.run(async (ctx) =>
         ctx.db
@@ -283,7 +392,9 @@ describe("bounded storage orphan cleanup", () => {
       ...bounds,
     });
     expect(marked.candidateIds).toHaveLength(1);
-    expect(await t.run(async (ctx) => ctx.db.system.get(boundFirstId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(boundFirstId)),
+    ).not.toBeNull();
     await expect(
       t.mutation(bindBrowserUpload, {
         reservationId: deleteFirstReservation.reservationId,
@@ -299,7 +410,9 @@ describe("bounded storage orphan cleanup", () => {
         maxWallMs: 1000,
       }),
     ).toMatchObject({ deleted: 1 });
-    expect(await t.run(async (ctx) => ctx.db.system.get(deleteFirstId))).toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(deleteFirstId)),
+    ).toBeNull();
     await expect(
       t.mutation(bindBrowserUpload, {
         reservationId: deleteFirstReservation.reservationId,
@@ -383,7 +496,9 @@ describe("bounded storage orphan cleanup", () => {
       workerToken: "cleanup-worker-token",
     });
     expect(completed?.status).toBe("succeeded");
-    expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(storageId)),
+    ).not.toBeNull();
     expect(
       await t.run(async (ctx) =>
         ctx.db
@@ -394,10 +509,10 @@ describe("bounded storage orphan cleanup", () => {
     ).toMatchObject({ kind: "jobOutput" });
 
     await t.run(async (ctx) => {
-      await ctx.db.patch(
-        temporaryProtection,
-        { status: "expired", expiresAt: Date.now() - 1 },
-      );
+      await ctx.db.patch(temporaryProtection, {
+        status: "expired",
+        expiresAt: Date.now() - 1,
+      });
     });
 
     const deleteFirst = await t.run(async (ctx) => {
@@ -490,7 +605,9 @@ describe("bounded storage orphan cleanup", () => {
       }),
     ).toMatchObject({ deleted: 1, bytesDeleted: 6 });
     expect(await t.run(async (ctx) => ctx.db.system.get(orphanId))).toBeNull();
-    expect(await t.run(async (ctx) => ctx.db.system.get(referencedId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(referencedId)),
+    ).not.toBeNull();
     expect(
       await t.run(async (ctx) =>
         ctx.db
@@ -572,7 +689,9 @@ describe("bounded storage orphan cleanup", () => {
       bytesDeleted: 5,
     });
     expect(await t.run(async (ctx) => ctx.db.system.get(firstId))).toBeNull();
-    expect(await t.run(async (ctx) => ctx.db.system.get(secondId))).not.toBeNull();
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(secondId)),
+    ).not.toBeNull();
   });
 
   it("treats a candidate already missing from storage as a successful deletion", async () => {

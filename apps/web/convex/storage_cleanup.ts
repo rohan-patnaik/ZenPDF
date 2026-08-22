@@ -7,7 +7,10 @@ import {
   internalMutation,
   type MutationCtx,
 } from "./_generated/server";
-import { STORAGE_CLEANUP_STATE_NAME } from "./lib/storage_ownership";
+import {
+  STORAGE_CLEANUP_STATE_NAME,
+  storageIdHasLiveAuthoritativeOwner,
+} from "./lib/storage_ownership";
 
 const MIN_GRACE_MS = 48 * 60 * 60 * 1000;
 const MAX_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -80,12 +83,16 @@ const boundedInteger = (
 };
 
 const getConfiguredBounds = () => ({
-  graceMs: boundedInteger(
-    process.env.ZENPDF_STORAGE_SWEEP_GRACE_HOURS,
-    DEFAULT_GRACE_MS / (60 * 60 * 1000),
-    MIN_GRACE_MS / (60 * 60 * 1000),
-    MAX_GRACE_MS / (60 * 60 * 1000),
-  ) * 60 * 60 * 1000,
+  graceMs:
+    boundedInteger(
+      process.env.ZENPDF_STORAGE_SWEEP_GRACE_HOURS,
+      DEFAULT_GRACE_MS / (60 * 60 * 1000),
+      MIN_GRACE_MS / (60 * 60 * 1000),
+      MAX_GRACE_MS / (60 * 60 * 1000),
+    ) *
+    60 *
+    60 *
+    1000,
   maxInspected: boundedInteger(
     process.env.ZENPDF_STORAGE_SWEEP_MAX_INSPECTED,
     DEFAULT_INSPECTED,
@@ -123,60 +130,6 @@ const getState = async (ctx: MutationCtx) =>
     .query("storageCleanupState")
     .withIndex("by_name", (q) => q.eq("name", STORAGE_CLEANUP_STATE_NAME))
     .unique();
-
-const storageReferenceExists = async (
-  ctx: MutationCtx,
-  storageId: Id<"_storage">,
-) =>
-  (await ctx.db
-    .query("storageReferences")
-    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-    .first()) !== null;
-
-const artifactExists = async (ctx: MutationCtx, storageId: Id<"_storage">) =>
-  (await ctx.db
-    .query("artifacts")
-    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-    .first()) !== null;
-
-const livePendingUploadExists = async (
-  ctx: MutationCtx,
-  storageId: Id<"_storage">,
-  now: number,
-) =>
-  (await ctx.db
-    .query("pendingUploads")
-      .withIndex("by_storage_expiry", (q) =>
-        q.eq("storageId", storageId).gt("expiresAt", now),
-      )
-      .first()) !== null;
-
-const liveReservationExists = async (
-  ctx: MutationCtx,
-  storageId: Id<"_storage">,
-  now: number,
-) =>
-  (await ctx.db
-    .query("browserUploadReservations")
-      .withIndex("by_storage_expiry", (q) =>
-        q.eq("storageId", storageId).gt("expiresAt", now),
-      )
-      .first()) !== null;
-
-const hasAuthoritativeReference = async (
-  ctx: MutationCtx,
-  storageId: Id<"_storage">,
-  now: number,
-) => {
-  const [jobReference, artifact, pendingUpload, reservation] =
-    await Promise.all([
-      storageReferenceExists(ctx, storageId),
-      artifactExists(ctx, storageId),
-      livePendingUploadExists(ctx, storageId, now),
-      liveReservationExists(ctx, storageId, now),
-    ]);
-  return { jobReference, artifact, pendingUpload, reservation };
-};
 
 export const backfillStorageReferences = internalMutation({
   args: { maxJobs: v.number() },
@@ -401,12 +354,9 @@ export const markStorageCandidates = internalMutation({
         protectedCount += 1;
         continue;
       }
-      const references = await hasAuthoritativeReference(
-        ctx,
-        storage._id,
-        startedAt,
-      );
-      if (Object.values(references).some(Boolean)) {
+      if (
+        await storageIdHasLiveAuthoritativeOwner(ctx, storage._id, startedAt)
+      ) {
         protectedCount += 1;
         continue;
       }
@@ -532,12 +482,14 @@ export const finalizeStorageCandidates = internalMutation({
         break;
       }
       const metadata = await ctx.db.system.get(record.storageId);
-      const references = await hasAuthoritativeReference(
-        ctx,
-        record.storageId,
-        startedAt,
-      );
-      if (Object.values(references).some(Boolean)) {
+      if (
+        await storageIdHasLiveAuthoritativeOwner(
+          ctx,
+          record.storageId,
+          startedAt,
+          { cleanupRecordId: record._id },
+        )
+      ) {
         await ctx.db.delete(record._id);
         protectedCount += 1;
         continue;
@@ -623,10 +575,7 @@ export const runStorageCleanup = internalAction({
         mode,
         graceMs: bounds.graceMs,
         maxInspected: bounds.maxInspected,
-        maxDeleted: Math.max(
-          0,
-          bounds.maxDeleted - (retried?.deleted ?? 0),
-        ),
+        maxDeleted: Math.max(0, bounds.maxDeleted - (retried?.deleted ?? 0)),
         maxBytesDeleted: bounds.maxBytesDeleted,
         maxWallMs: bounds.maxWallMs,
         deadlineAt,
@@ -651,8 +600,7 @@ export const runStorageCleanup = internalAction({
         retried,
         ...marked,
         deleted: (retried?.deleted ?? 0) + finalized.deleted,
-        bytesDeleted:
-          (retried?.bytesDeleted ?? 0) + finalized.bytesDeleted,
+        bytesDeleted: (retried?.bytesDeleted ?? 0) + finalized.bytesDeleted,
         protected: (retried?.protected ?? 0) + finalized.protected,
       };
     }
