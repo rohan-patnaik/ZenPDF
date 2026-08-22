@@ -188,12 +188,12 @@ class UploadJournal:
         try:
             metadata = path.lstat()
             if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > self.max_entry_bytes:
-                self._quarantine(path)
+                self._reject(path)
                 return None
             with path.open("rb") as handle:
                 encoded = handle.read(self.max_entry_bytes + 1)
             if len(encoded) > self.max_entry_bytes:
-                self._quarantine(path)
+                self._reject(path)
                 return None
             value = json.loads(encoded)
             if (
@@ -201,17 +201,19 @@ class UploadJournal:
                 or not isinstance(value.get("pendingUploadId"), str)
                 or value.get("action") not in {"register", "uploaded", "discard"}
             ):
-                self._quarantine(path)
+                self._reject(path)
                 return None
             os.chmod(path, 0o600)
             return value
         except (FileNotFoundError, OSError, ValueError, UnicodeDecodeError):
-            self._quarantine(path)
+            self._reject(path)
             return None
 
-    def _quarantine(self, path: Path) -> None:
+    def _reject(self, path: Path) -> None:
+        """Remove non-journal input so hostile files cannot accumulate."""
         try:
-            path.replace(path.with_suffix(f".rejected-{uuid.uuid4().hex}"))
+            path.unlink()
+            self._fsync_root()
         except (FileNotFoundError, OSError):
             pass
 

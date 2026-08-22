@@ -63,7 +63,7 @@ def test_hostile_thousands_of_oversized_files_have_bounded_scan(
     elapsed = time.monotonic() - started_at
 
     assert elapsed < 1
-    assert len(list(root.glob("*.rejected-*"))) <= 17
+    assert len(list(root.glob("*.json"))) == 2_000 - 17
 
 
 def test_journal_total_byte_limit_blocks_new_entries(
