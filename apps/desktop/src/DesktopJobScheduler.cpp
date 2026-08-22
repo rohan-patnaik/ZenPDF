@@ -80,10 +80,18 @@ bool DesktopJobScheduler::cancel(quint64 id) {
         }
     }
     const auto running = runningJobs_.constFind(id);
-    if (running == runningJobs_.cend()) {
+    if (running != runningJobs_.cend()) {
+        (*running)->store(true);
+        return true;
+    }
+    const auto completed = completedJobs_.find(id);
+    if (completed == completedJobs_.end()) {
         return false;
     }
-    (*running)->store(true);
+    completed->cancelled->store(true);
+    completed->completion = Completion::Cancelled;
+    completed->value.clear();
+    completed->message = tr("The background job was cancelled.");
     return true;
 }
 
@@ -97,6 +105,12 @@ bool DesktopJobScheduler::shutdown(int timeoutMilliseconds) {
     }
     for (const auto& cancelled : std::as_const(runningJobs_)) {
         cancelled->store(true);
+    }
+    for (auto& completed : completedJobs_) {
+        completed.cancelled->store(true);
+        completed.completion = Completion::Cancelled;
+        completed.value.clear();
+        completed.message = tr("The background job was cancelled.");
     }
     emit countsChanged(runningJobCount(), 0);
     deliverReadyCompletions();

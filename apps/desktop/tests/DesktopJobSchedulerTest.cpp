@@ -16,6 +16,8 @@ class DesktopJobSchedulerTest final : public QObject {
 private slots:
     void appliesAdmissionAndSubmissionOrder();
     void boundsCompletionsWaitingForEarlierJob();
+    void cancelsCompletionBufferedBehindEarlierJob();
+    void shutdownCancelsCompletionBufferedBehindEarlierJob();
     void cancelsQueuedAndRunningJobsOnce();
     void cancellationCompletionRaceDeliversOnce();
     void isolatesAndBoundsExceptions();
@@ -113,6 +115,69 @@ void DesktopJobSchedulerTest::boundsCompletionsWaitingForEarlierJob() {
     releaseFirst.release();
     QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 3, 2'000);
     QCOMPARE(scheduler.pendingCompletionCount(), 0);
+}
+
+void DesktopJobSchedulerTest::cancelsCompletionBufferedBehindEarlierJob() {
+    DesktopJobScheduler scheduler(2, 0);
+    QSignalSpy finished(&scheduler, &DesktopJobScheduler::jobFinished);
+    QSemaphore firstStarted;
+    QSemaphore releaseFirst;
+
+    const auto first = scheduler.submit([&](const std::atomic_bool&) {
+        firstStarted.release();
+        releaseFirst.acquire();
+        return QVariant{QStringLiteral("first")};
+    });
+    QVERIFY(first.accepted);
+    QVERIFY(firstStarted.tryAcquire(1, 1'000));
+    const auto second = scheduler.submit([](const std::atomic_bool&) {
+        return QVariant{QStringLiteral("must be discarded")};
+    });
+    QVERIFY(second.accepted);
+    QTRY_COMPARE_WITH_TIMEOUT(scheduler.pendingCompletionCount(), 1, 2'000);
+    QCOMPARE(finished.count(), 0);
+
+    QVERIFY(scheduler.cancel(second.id));
+    QVERIFY(scheduler.cancel(second.id));
+    releaseFirst.release();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, 2'000);
+    QCOMPARE(finished.at(0).at(0).toULongLong(), first.id);
+    QCOMPARE(qvariant_cast<DesktopJobScheduler::Completion>(finished.at(0).at(1)),
+             DesktopJobScheduler::Completion::Succeeded);
+    QCOMPARE(finished.at(1).at(0).toULongLong(), second.id);
+    QCOMPARE(qvariant_cast<DesktopJobScheduler::Completion>(finished.at(1).at(1)),
+             DesktopJobScheduler::Completion::Cancelled);
+    QVERIFY(!finished.at(1).at(2).isValid());
+    QVERIFY(!finished.at(1).at(3).toString().isEmpty());
+    QVERIFY(!scheduler.cancel(second.id));
+}
+
+void DesktopJobSchedulerTest::shutdownCancelsCompletionBufferedBehindEarlierJob() {
+    DesktopJobScheduler scheduler(2, 0);
+    QSignalSpy finished(&scheduler, &DesktopJobScheduler::jobFinished);
+    QSemaphore firstStarted;
+    QSemaphore releaseFirst;
+
+    QVERIFY(scheduler.submit([&](const std::atomic_bool&) {
+        firstStarted.release();
+        releaseFirst.acquire();
+        return QVariant{QStringLiteral("first")};
+    }).accepted);
+    QVERIFY(firstStarted.tryAcquire(1, 1'000));
+    QVERIFY(scheduler.submit([](const std::atomic_bool&) {
+        return QVariant{QStringLiteral("must be discarded")};
+    }).accepted);
+    QTRY_COMPARE_WITH_TIMEOUT(scheduler.pendingCompletionCount(), 1, 2'000);
+
+    QVERIFY(!scheduler.shutdown(10));
+    releaseFirst.release();
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 2, 2'000);
+    for (const auto& arguments : finished) {
+        QCOMPARE(qvariant_cast<DesktopJobScheduler::Completion>(arguments.at(1)),
+                 DesktopJobScheduler::Completion::Cancelled);
+        QVERIFY(!arguments.at(2).isValid());
+    }
+    QVERIFY(scheduler.shutdown(100));
 }
 
 void DesktopJobSchedulerTest::cancelsQueuedAndRunningJobsOnce() {
