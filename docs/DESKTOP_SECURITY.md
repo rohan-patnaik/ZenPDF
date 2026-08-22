@@ -29,6 +29,10 @@ The modal organizer uses this scheduler for admission, cancellation, ordered ter
 
 These remain count and lifecycle bounds, not whole-job resource isolation. Captured task state and result payload bytes are not measured, no generic in-process task can be forcibly terminated, and a non-cooperative task can outlive timed shutdown. Future reader adapters still need task-specific payload, memory, output, and deadline controls; broad parsers and converters still require separately reviewed process boundaries.
 
+The thumbnail model separately caps deferred owner-thread work at 64 distinct pending pages. It bounds accepted render dimensions to 128 by 512 pixels and charges each cached pixmap four bytes per pixel against a 32 MiB `QCache` ceiling; duplicate requests add no entry, and least-recently-used cached pixmaps are evicted at the exact boundary. Cancellation, document replacement, page-count reset, and source destruction stop the queued timer and discard pending, cached, and failed-page state. A render failure is remembered until that reset so repeated view queries cannot create an unbounded retry loop.
+
+These controls do not isolate PDF parsing or rendering. The render call is synchronous on the `QPdfDocument` owner thread, cannot be interrupted once entered, and has no hard timeout. The cache charge is declared pixel storage rather than measured process, Qt object, allocator, or graphics-driver memory, and image decoding may use additional transient memory. Background rendering would require a separately owned document/password lifecycle and is not claimed here.
+
 ## Local data and privacy
 
 The local state database contains recent paths, timestamps, preferences, index metadata, recovery metadata, and future audit entries. Logs contain application events and error categories; document bytes, extracted text, form values, passwords, cryptographic keys, and full user paths must not be logged by default. Users must be able to clear recent history and derived indexes without touching their documents.
@@ -59,3 +63,4 @@ Corrupt, encrypted, unsupported, or resource-exhausting documents fail closed wi
 - Integration fixtures cover malformed object graphs, extreme dimensions, encryption, forms, annotations, page edits, cancellation, and save/reopen.
 - Sanitizer and fuzz jobs target adapters and helper protocols before broad format support is marked verified.
 - Real Arch/Wayland and Omarchy Quattro validation remains a release gate because offscreen CI cannot reproduce compositor, portal, printing, or assistive-technology behavior.
+- The post-publication thumbnail gate follows `docs/THUMBNAIL_WAYLAND_ACCEPTANCE.md`; it must use the exact reviewed and CI-green installed package rather than a developer build.

@@ -14,16 +14,16 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 
 ## Published implementation baseline
 
-This organizer-scheduler integration starts from published branch commit `3ebc672c66c424e717ef3dd24c977afeaef31419`, tree `d8fa0d15fcec354cc6d095747e8b4b2b8432c906`. Exact-tip [CI run 32583202543](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32583202543) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the published scheduler baseline only; it is not evidence for later commits or a capability status change.
+This thumbnail foundation starts from published branch commit `6c21ed3186b383d05fb57ab38b517af77ad441fa`, tree `97da3f199169ec8c898c55d690fe9c14fd35d7dd`. Exact-tip [CI run 32584624911](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32584624911) passed governance, web, worker, desktop Arch package, and product-container jobs. An installed exact-SHA Omarchy/Wayland acceptance pass was also recorded for that baseline, while native chooser assistive-technology gaps, a live cancellation announcement capture, persistent save/recovery, and long-document reader resource evidence remained. Those results validate the published baseline only; they are not evidence for this later thumbnail implementation.
 
 ## Counts
 
 | Status | Count |
 | --- | ---: |
 | Not started | 45 |
-| Partial | 30 |
+| Partial | 31 |
 | Verified | 0 |
-| Blocked | 1 |
+| Blocked | 0 |
 | **Total** | **76** |
 
 ## Capability matrix
@@ -44,7 +44,7 @@ This organizer-scheduler integration starts from published branch commit `3ebc67
 | L010 | Password-protected PDF open | M1 / Reader | Qt PDF adapter | Partial | `DocumentWidgetTest.cpp` verifies password clearing | Encrypted producer matrix remains |
 | L011 | Continuous page rendering and scrolling | M1 / Reader | Render adapter | Partial | Long/corrupt/render-budget corpus missing | Mixed page-box corpus missing |
 | L012 | Full-document text search | M1 / Reader | Text adapter | Partial | Unicode/no-text/highlight tests missing | Tagged and untagged producer corpus missing |
-| L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | Shared bounded scheduler lifecycle tests exist; thumbnail integration, cache/payload budgets, cancellation, and long-document tests remain | N/A |
+| L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | `ThumbnailModelTest.cpp` covers owner-thread FIFO deferral, a 64-request boundary, duplicate suppression, cancellation/readmission, 128x512 render bounds, exact 32 MiB four-byte pixel-cost eviction, failure suppression, document reset/destruction, and an 80-page generated fixture; synchronous render timeout/isolation, hostile independent producers, transient/true heap bounds, and installed exact-SHA Wayland/AT evidence for this slice remain | N/A |
 | L014 | Outline and bookmark navigation | M1 / Reader | Outline adapter | Partial | Malformed/deep/named-destination tests missing | Producer corpus missing |
 | L015 | Metadata inspection | M1 / Reader | Metadata adapter | Partial | Malformed/XMP fixtures missing | Standard/XMP producer corpus missing |
 | L016 | Private recent-files history and purge | M1 / State | SQLite | Partial | `apps/desktop/tests/LocalStateTest.cpp::clearingPurgesPathsFromDatabaseFiles`; platform forensic run remains | N/A |
@@ -103,11 +103,11 @@ This organizer-scheduler integration starts from published branch commit `3ebc67
 | L069 | Accessibility checker | M5 / Accessibility | Ruleset decision | Not started | Versioned-rule false-positive corpus | Independent checker comparison |
 | L070 | Portfolios/packages, batch actions, watched folders, and CLI | M5 / Automation | Package/isolation/CLI contract decisions | Not started | Package traversal, dry-run, rollback, and version tests | Standard collection/package and CLI contract |
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
-| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Organizer hostile limits, caller-declared undo-cost admission, and integrated scheduler count/cancellation/exception/shutdown tests exist; scheduler payload bytes, true heap, decompression, whole-job memory, and render corpus remain | N/A |
+| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Organizer hostile limits, caller-declared undo-cost admission, integrated scheduler lifecycle tests, and thumbnail pending/dimension/cache-cost boundaries exist; scheduler payload bytes, transient/true heap, decompression, whole-job memory, hard render timeout, and hostile producer corpus remain | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
-| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32583202543 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
+| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32584624911 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
 | L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |
-| L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Blocked | No compatible session available in current CI/Windows host | Required before release claim |
+| L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Partial | Installed exact-SHA baseline acceptance was recorded; the new thumbnail slice requires `docs/THUMBNAIL_WAYLAND_ACCEPTANCE.md`, and chooser AT plus live cancellation-announcement evidence remain | Required before release claim |
 
 ## Governance
 
