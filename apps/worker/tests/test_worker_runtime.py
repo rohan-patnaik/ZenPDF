@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 import os
 import subprocess
 import threading
@@ -395,7 +396,8 @@ def test_mutation_result_detects_reclaimed_job() -> None:
 def test_close_ignoring_blocked_upload_process_is_killed_on_lease_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    started = threading.Event()
+    started = multiprocessing.get_context("fork").Event()
+
     class FakeSession:
         def post(self, *_args, **_kwargs) -> None:
             started.set()
@@ -670,7 +672,7 @@ def test_recovery_rejects_hostile_upload_prefixed_exception_code(
 def test_shutdown_kills_active_upload_process_tree_promptly(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    started = threading.Event()
+    started = multiprocessing.get_context("fork").Event()
     descendant_file = tmp_path / "upload-descendant.pid"
 
     class BlockedSession:
@@ -1254,7 +1256,11 @@ def test_missing_pending_row_with_live_unknown_object_is_retained(
 
     worker._recover_pending_uploads()
 
-    assert worker.upload_journal.load("pending-1") == entry
+    retained = worker.upload_journal.load("pending-1")
+    assert retained is not None
+    assert {key: retained[key] for key in entry} == entry
+    assert retained["attempts"] == 1
+    assert isinstance(retained["nextAttemptAt"], int)
     assert all(path != "files:discardWorkerUpload" for path, _args in worker.mutations)
 
 
