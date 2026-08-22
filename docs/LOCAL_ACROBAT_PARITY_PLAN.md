@@ -14,7 +14,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 
 ## Published implementation baseline
 
-This retained-cost work starts from published branch commit `5f6781ecb97ec1bfe9a44f1f1dbeffccc8aa958b`, tree `3f22d3552b30104c3f225a380515d5c6a8a5f800`. Exact-tip [CI run 32578453464](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32578453464) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the published lifecycle baseline only; it is not evidence for later commits or a capability status change.
+This scheduler work starts from published branch commit `d8e00f3a5fe5a774e5083c7f83e9334d5307c088`, tree `e1904ebfc9e2df74e9cad6b6df1c991193ac3913`. Exact-tip [CI run 32580938913](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32580938913) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the published retained-cost baseline only; it is not evidence for later commits or a capability status change.
 
 ## Counts
 
@@ -44,7 +44,7 @@ This retained-cost work starts from published branch commit `5f6781ecb97ec1bfe9a
 | L010 | Password-protected PDF open | M1 / Reader | Qt PDF adapter | Partial | `DocumentWidgetTest.cpp` verifies password clearing | Encrypted producer matrix remains |
 | L011 | Continuous page rendering and scrolling | M1 / Reader | Render adapter | Partial | Long/corrupt/render-budget corpus missing | Mixed page-box corpus missing |
 | L012 | Full-document text search | M1 / Reader | Text adapter | Partial | Unicode/no-text/highlight tests missing | Tagged and untagged producer corpus missing |
-| L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | Cache/cancellation/long-document tests missing | N/A |
+| L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | Shared bounded scheduler lifecycle tests exist; thumbnail integration, cache/payload budgets, cancellation, and long-document tests remain | N/A |
 | L014 | Outline and bookmark navigation | M1 / Reader | Outline adapter | Partial | Malformed/deep/named-destination tests missing | Producer corpus missing |
 | L015 | Metadata inspection | M1 / Reader | Metadata adapter | Partial | Malformed/XMP fixtures missing | Standard/XMP producer corpus missing |
 | L016 | Private recent-files history and purge | M1 / State | SQLite | Partial | `apps/desktop/tests/LocalStateTest.cpp::clearingPurgesPathsFromDatabaseFiles`; platform forensic run remains | N/A |
@@ -57,7 +57,7 @@ This retained-cost work starts from published branch commit `5f6781ecb97ec1bfe9a
 | L023 | Merge documents into a new file | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; forms/outlines corpus remains | Independent-reader reopen remains |
 | L024 | Extract page ranges into a new file | M1 / Organizer | Structure adapter | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence`; broad permission fixtures remain | Generated outline/annotation fixture reopens in Qt PDF; independent producer corpus missing |
 | L025 | Persistently rotate page ranges | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; UI/reopen matrix remains | Independent-reader reopen remains |
-| L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | Unix qpdf process-group cleanup, bounded helper channels, parent-directory fsync, timeout/output/no-clobber tests in `QpdfOperationsTest.cpp`; blocking filesystem calls, non-Unix tree cleanup, and crash injection remain | N/A |
+| L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | Unix qpdf process-group cleanup plus bounded helper channels and a separately tested shared scheduler foundation; scheduler integration, blocking filesystem calls, non-Unix tree cleanup, and crash injection remain | N/A |
 | L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | Extraction/deletion and clean-output tests plus count and caller-declared retained-cost admission for a per-document undo foundation; real heap use is not bounded and no persistent mutation, save, insert/reorder/replace/crop/split, or mutation-backed undo exists | Generated outline/annotation fixture only; mixed-box and independent-reader corpus missing |
 | L028 | View and safely extract embedded attachments | M1 / Reader | Attachment parser/isolation decision | Not started | Hostile-name/type/size/explicit-destination fixtures | Standard embedded-file corpus required |
 | L029 | View and fill basic AcroForms | M1 / Forms | Forms engine decision | Not started | Field/appearance/save/reopen fixtures | Multiple-reader form round trip |
@@ -103,9 +103,9 @@ This retained-cost work starts from published branch commit `5f6781ecb97ec1bfe9a
 | L069 | Accessibility checker | M5 / Accessibility | Ruleset decision | Not started | Versioned-rule false-positive corpus | Independent checker comparison |
 | L070 | Portfolios/packages, batch actions, watched folders, and CLI | M5 / Automation | Package/isolation/CLI contract decisions | Not started | Package traversal, dry-run, rollback, and version tests | Standard collection/package and CLI contract |
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
-| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Organizer sparse-input, range/page-count, bounded noisy-helper, output-cap, descendant-cleanup, and caller-declared undo-cost admission tests plus `apps/worker/tests/test_worker_runtime.py::test_hung_tool_hits_wall_limit_and_kills_descendant`; true heap, decompression, whole-job memory, and render corpus remains | N/A |
+| L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Organizer hostile limits, caller-declared undo-cost admission, and scheduler count/cancellation/exception/shutdown tests exist; scheduler payload bytes, true heap, decompression, whole-job memory, and render corpus remain | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
-| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32578453464 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
+| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32580938913 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
 | L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |
 | L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Blocked | No compatible session available in current CI/Windows host | Required before release claim |
 

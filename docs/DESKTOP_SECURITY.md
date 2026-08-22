@@ -23,6 +23,10 @@ The following initial budgets are release gates, not assumptions that libraries 
 
 Features must apply stricter limits when their engine cannot safely meet these ceilings. Cancellation is cooperative first and process termination is the last boundary for isolated helpers. A cancelled transformation must not replace the source or leave a result presented as complete.
 
+The shared scheduler foundation defaults to two running and 32 queued jobs, caps all admitted-but-undelivered work at 34, runs the queue FIFO, and delivers terminal results once in submission order on its owning Qt thread. Capacity, missing-task, shutdown, and invalid-configuration failures are explicit. Queued cancellation prevents execution; running cancellation is cooperative and checked again at owner-thread delivery so cancellation wins the completion race. Shutdown rejects new submissions, cancels outstanding work, and reports whether its timed join completed. Final destruction joins without a deadline to protect scheduler-owned state.
+
+These are count and lifecycle bounds, not whole-job resource isolation. Captured task state and result payload bytes are not measured, no generic in-process task can be forcibly terminated, and a non-cooperative task can outlive timed shutdown. Each future adapter must add task-specific payload, memory, output, and deadline controls; broad parsers and converters still require the separately reviewed process boundary. The scheduler is not yet connected to product workflows, including the existing QtConcurrent organizer dialog.
+
 ## Local data and privacy
 
 The local state database contains recent paths, timestamps, preferences, index metadata, recovery metadata, and future audit entries. Logs contain application events and error categories; document bytes, extracted text, form values, passwords, cryptographic keys, and full user paths must not be logged by default. Users must be able to clear recent history and derived indexes without touching their documents.
