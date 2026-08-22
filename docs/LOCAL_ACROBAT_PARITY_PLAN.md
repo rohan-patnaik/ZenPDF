@@ -14,7 +14,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 
 ## Published implementation baseline
 
-This M1 work starts from published branch commit `8e5b33693f0703681b13977d3b8ab110bb5422e2`, tree `923f1a754ccb01aa1e24494ccd6c1ee93038ab2c`. Exact-tip [CI run 32570385928](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32570385928) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the Option 1 publication baseline only; it is not evidence for later commits or a desktop capability status change.
+This lifecycle work starts from published branch commit `477b6b2b37acbd411467de3f788f775c133ddb7f`, tree `f0d2552e1aa0b76532ffc0f81e1d8db7c59cefb3`. Exact-tip [CI run 32577217995](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32577217995) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the published organizer baseline only; it is not evidence for later commits or a lifecycle capability status change.
 
 ## Counts
 
@@ -33,7 +33,7 @@ This M1 work starts from published branch commit `8e5b33693f0703681b13977d3b8ab1
 | ID | Local capability | Owner | Deps | Status | Tests | Interop evidence |
 | --- | --- | --- | --- | --- | --- | --- |
 | L001 | Native Arch/Wayland application launch | M0 / Platform | Qt, package | Partial | CI configure/build/CTest; real-session smoke missing | Omarchy Quattro launch record missing |
-| L002 | Multi-document tabbed workspace | M0 / Shell | Qt Widgets | Partial | Core/UI lifecycle and recovery tests missing | N/A |
+| L002 | Multi-document tabbed workspace | M0 / Shell | Qt Widgets | Partial | `DocumentSessionTest.cpp` and `MainWindowTest.cpp` cover bounded per-tab undo state, active routing, dirty markers, and clean organizer tabs; save/recovery and real-session lifecycle remain | N/A |
 | L003 | System theme, scaling, and high contrast | M0 / Accessibility | Qt platform theme | Partial | Portal, fractional-scale, contrast tests missing | Wayland compositor matrix missing |
 | L004 | Persistent local preferences | M0 / State | QSettings | Partial | Corrupt/migration fixtures missing | N/A |
 | L005 | Private bounded local diagnostics | M0 / Operations | Filesystem policy | Partial | `LoggingTest.cpp`; crash/privacy review remains | N/A |
@@ -58,7 +58,7 @@ This M1 work starts from published branch commit `8e5b33693f0703681b13977d3b8ab1
 | L024 | Extract page ranges into a new file | M1 / Organizer | Structure adapter | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence`; broad permission fixtures remain | Generated outline/annotation fixture reopens in Qt PDF; independent producer corpus missing |
 | L025 | Persistently rotate page ranges | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; UI/reopen matrix remains | Independent-reader reopen remains |
 | L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | Unix qpdf process-group cleanup, bounded helper channels, parent-directory fsync, timeout/output/no-clobber tests in `QpdfOperationsTest.cpp`; blocking filesystem calls, non-Unix tree cleanup, and crash injection remain | N/A |
-| L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence` and `apps/desktop/tests/MainWindowTest.cpp::successfulOrganizerOutputOpensAsCleanTab`; insert/reorder/replace/crop/split/undo remain | Generated outline/annotation fixture only; mixed-box and independent-reader corpus missing |
+| L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | Extraction/deletion and clean-output tests plus bounded per-document undo infrastructure; no persistent mutation command, save, insert/reorder/replace/crop/split, or mutation-backed undo exists | Generated outline/annotation fixture only; mixed-box and independent-reader corpus missing |
 | L028 | View and safely extract embedded attachments | M1 / Reader | Attachment parser/isolation decision | Not started | Hostile-name/type/size/explicit-destination fixtures | Standard embedded-file corpus required |
 | L029 | View and fill basic AcroForms | M1 / Forms | Forms engine decision | Not started | Field/appearance/save/reopen fixtures | Multiple-reader form round trip |
 | L030 | Preserve existing annotations/forms on save | M1 / Organizer | Write adapter decision | Partial | Generated retained text-annotation/outline fixture passes `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence`; forms/tagged/signed corpus missing | Multiple-reader comparison missing |
@@ -105,7 +105,7 @@ This M1 work starts from published branch commit `8e5b33693f0703681b13977d3b8ab1
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
 | L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | Organizer sparse-input, range/page-count, bounded noisy-helper, output-cap, and descendant-cleanup tests plus `apps/worker/tests/test_worker_runtime.py::test_hung_tool_hits_wall_limit_and_kills_descendant`; decompression, whole-job memory, and render corpus remains | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
-| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32570385928 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
+| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32577217995 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
 | L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |
 | L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Blocked | No compatible session available in current CI/Windows host | Required before release claim |
 
