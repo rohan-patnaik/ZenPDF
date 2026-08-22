@@ -616,6 +616,38 @@ def test_backend_and_tool_failures_never_reach_logs_or_failure_payload(
     assert worker.failure_args["errorMessage"] == "Processing failed. Please retry."
 
 
+def test_client_transport_credentials_are_ephemeral() -> None:
+    class CapturingClient:
+        def __init__(self) -> None:
+            self.references: list[dict] = []
+            self.tokens_seen_during_call: list[object] = []
+
+        def mutation(self, _path: str, args: dict) -> object:
+            self.references.append(args)
+            self.tokens_seen_during_call.append(args.get("workerToken"))
+            return True
+
+        def query(self, _path: str, args: dict) -> object:
+            self.references.append(args)
+            self.tokens_seen_during_call.append(args.get("workerToken"))
+            return "result"
+
+    worker = ZenPdfWorker(
+        "https://example.invalid", "worker-a", "worker-secret"
+    )
+    client = CapturingClient()
+    worker.client = client  # type: ignore[assignment]
+    semantic_args = {"workerId": "worker-a"}
+
+    assert worker._mutation("jobs:test", semantic_args) is True
+    assert worker._query("files:test", semantic_args) == "result"
+
+    assert client.tokens_seen_during_call == ["worker-secret", "worker-secret"]
+    assert client.references == [{}, {}]
+    assert "worker-secret" not in repr(client.references)
+    assert semantic_args == {"workerId": "worker-a"}
+
+
 def test_cleanup_and_failure_reporting_logs_only_stable_classes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -1357,7 +1389,6 @@ def test_registration_rejection_deletes_returned_storage_id(
             "pendingUploadId": "pending-1",
             "workerId": "worker-a",
             "storageId": "stored-rejected",
-            "workerToken": "token",
         }
     ]
 

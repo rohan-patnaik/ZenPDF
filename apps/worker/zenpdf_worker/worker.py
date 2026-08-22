@@ -413,7 +413,7 @@ class ZenPdfWorker:
             self._require_supervisor_ready()
             job = self._mutation(
                 "jobs:claimNextJob",
-                {"workerId": self.worker_id, "workerToken": self.worker_token},
+                {"workerId": self.worker_id},
             )
             if not job:
                 self._shutdown_requested.wait(max(poll_interval, 0.0))
@@ -482,7 +482,6 @@ class ZenPdfWorker:
                     "toolResult": run_result.tool_result,
                     "minutesUsed": elapsed_minutes,
                     "bytesProcessed": bytes_processed,
-                    "workerToken": self.worker_token,
                 },
             )
             if not self._is_owned_job(completed, "succeeded"):
@@ -552,7 +551,6 @@ class ZenPdfWorker:
                 "jobId": job_id,
                 "workerId": self.worker_id,
                 "progress": progress,
-                "workerToken": self.worker_token,
             },
         )
         return self._is_owned_job(result)
@@ -593,7 +591,6 @@ class ZenPdfWorker:
                 "workerId": self.worker_id,
                 "errorCode": error_code,
                 "errorMessage": error_message,
-                "workerToken": self.worker_token,
             },
         )
         if not self._is_owned_job(result, "failed"):
@@ -638,7 +635,6 @@ class ZenPdfWorker:
                 "files:getDownloadUrl",
                 {
                     "storageId": item["storageId"],
-                    "workerToken": self.worker_token,
                 },
             )
             if not url:
@@ -1090,7 +1086,6 @@ class ZenPdfWorker:
                         "workerId": self.worker_id,
                         "filename": output.name,
                         "sizeBytes": size_bytes,
-                        "workerToken": self.worker_token,
                     },
                 )
                 if not isinstance(pending, dict):
@@ -1271,7 +1266,6 @@ class ZenPdfWorker:
             args = {
                 "pendingUploadId": pending_id,
                 "workerId": self.worker_id,
-                "workerToken": self.worker_token,
             }
             if storage_id is not None:
                 args["storageId"] = storage_id
@@ -1314,7 +1308,6 @@ class ZenPdfWorker:
                     "pendingUploadId": pending_id,
                     "workerId": self.worker_id,
                     "storageId": storage_id,
-                    "workerToken": self.worker_token,
                 },
             )
             if registered is True:
@@ -1338,7 +1331,6 @@ class ZenPdfWorker:
                     "pendingUploadId": pending_id,
                     "workerId": self.worker_id,
                     "storageId": storage_id,
-                    "workerToken": self.worker_token,
                 },
             )
             if state in {"committed", "deleted"}:
@@ -1357,7 +1349,6 @@ class ZenPdfWorker:
                     "pendingUploadId": pending_id,
                     "workerId": self.worker_id,
                     "storageId": storage_id,
-                    "workerToken": self.worker_token,
                 },
             )
             if discarded is True:
@@ -1452,14 +1443,24 @@ class ZenPdfWorker:
                 return
 
     def _mutation(self, path: str, args: Dict[str, Any]) -> Any:
-        """Execute a mutation with thread-safe access."""
-        with self._client_lock:
-            return self.client.mutation(path, args)
+        """Execute a mutation with an ephemeral transport credential."""
+        transport_args = dict(args)
+        transport_args["workerToken"] = self.worker_token
+        try:
+            with self._client_lock:
+                return self.client.mutation(path, transport_args)
+        finally:
+            transport_args.clear()
 
     def _query(self, path: str, args: Dict[str, Any]) -> Any:
-        """Execute a query with thread-safe access."""
-        with self._client_lock:
-            return self.client.query(path, args)
+        """Execute a query with an ephemeral transport credential."""
+        transport_args = dict(args)
+        transport_args["workerToken"] = self.worker_token
+        try:
+            with self._client_lock:
+                return self.client.query(path, transport_args)
+        finally:
+            transport_args.clear()
 
 
 def _run_supervised(
