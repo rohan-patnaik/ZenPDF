@@ -20,6 +20,7 @@ private slots:
     void boundsRenderSizes();
     void defersDeduplicatesAndRendersFifo();
     void capsCancelsAndReadmitsLongDocumentRequests();
+    void readmitsARejectedVisibleRequestWhenCapacityDrains();
     void boundsCacheAndEvictsTheLeastRecentlyUsedThumbnail();
     void suppressesFailedRenderRetries();
     void rejectsOversizedRendererOutput();
@@ -129,6 +130,7 @@ void ThumbnailModelTest::capsCancelsAndReadmitsLongDocumentRequests() {
     QVERIFY(document != nullptr);
     ThumbnailModel model(document.get());
     QSignalSpy finished(&model, &ThumbnailModel::thumbnailFinished);
+    QSignalSpy changed(&model, &QAbstractItemModel::dataChanged);
     int renderCalls = 0;
     model.renderer_ = [&](QPdfDocument&, int, const QSize& size) {
         ++renderCalls;
@@ -150,6 +152,44 @@ void ThumbnailModelTest::capsCancelsAndReadmitsLongDocumentRequests() {
     QTRY_COMPARE_WITH_TIMEOUT(finished.count(), 1, 2'000);
     QCOMPARE(finished.at(0).at(0).toInt(), lastPage);
     QCOMPARE(renderCalls, 1);
+    QCOMPARE(changed.count(), 1);
+}
+
+void ThumbnailModelTest::readmitsARejectedVisibleRequestWhenCapacityDrains() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    constexpr auto pageCount = ThumbnailModel::maximumPendingRequests + 1;
+    const auto path = directory.filePath(QStringLiteral("capacity-drain.pdf"));
+    createPdf(path, pageCount);
+    auto document = loadPdf(path);
+    QVERIFY(document != nullptr);
+    ThumbnailModel model(document.get());
+    QSignalSpy finished(&model, &ThumbnailModel::thumbnailFinished);
+    QList<int> renderOrder;
+    model.renderer_ = [&](QPdfDocument&, int page, const QSize& size) {
+        renderOrder.append(page);
+        return QImage(size, QImage::Format_ARGB32_Premultiplied);
+    };
+    const auto rejectedIndex = model.index(pageCount - 1);
+    connect(&model, &QAbstractItemModel::dataChanged, &model,
+            [&](const QModelIndex& first, const QModelIndex& last, const QList<int>& roles) {
+                if (first.row() <= rejectedIndex.row() && last.row() >= rejectedIndex.row()
+                    && roles.contains(Qt::DecorationRole)) {
+                    (void)model.data(rejectedIndex, Qt::DecorationRole);
+                }
+            });
+
+    for (auto page = 0; page < pageCount; ++page) {
+        (void)model.data(model.index(page), Qt::DecorationRole);
+    }
+    QCOMPARE(model.pendingRequestCount(), ThumbnailModel::maximumPendingRequests);
+
+    QTRY_COMPARE_WITH_TIMEOUT(finished.count(), pageCount, 2'000);
+    QCOMPARE(renderOrder.size(), pageCount);
+    QCOMPARE(renderOrder.first(), 0);
+    QCOMPARE(renderOrder.last(), pageCount - 1);
+    QCOMPARE(model.pendingRequestCount(), 0);
+    QVERIFY(model.data(rejectedIndex, Qt::DecorationRole).canConvert<QPixmap>());
 }
 
 void ThumbnailModelTest::boundsCacheAndEvictsTheLeastRecentlyUsedThumbnail() {

@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 ThumbnailModel::ThumbnailModel(QPdfDocument* document, QObject* parent)
     : QAbstractListModel(parent),
@@ -59,6 +60,7 @@ int ThumbnailModel::cancelPendingRequests() {
     renderTimer_.stop();
     pendingPages_.clear();
     pendingSet_.clear();
+    capacityWasExhausted_ = false;
     return cancelled;
 }
 
@@ -105,8 +107,11 @@ std::optional<QSize> ThumbnailModel::boundedRenderSize(const QSizeF& pointSize) 
 
 bool ThumbnailModel::requestThumbnail(int page) {
     if (document_.isNull() || page < 0 || page >= document_->pageCount()
-        || cache_.contains(page) || failedPages_.contains(page) || pendingSet_.contains(page)
-        || pendingPages_.size() >= static_cast<qsizetype>(maximumPendingRequests)) {
+        || cache_.contains(page) || failedPages_.contains(page) || pendingSet_.contains(page)) {
+        return false;
+    }
+    if (pendingPages_.size() >= static_cast<qsizetype>(maximumPendingRequests)) {
+        capacityWasExhausted_ = true;
         return false;
     }
     pendingPages_.enqueue(page);
@@ -121,9 +126,9 @@ void ThumbnailModel::renderNext() {
         return;
     }
     const auto page = pendingPages_.dequeue();
-    pendingSet_.remove(page);
     const QPointer<QPdfDocument> source = document_;
     const auto generation = documentGeneration_;
+    const auto notifyCapacityAvailable = std::exchange(capacityWasExhausted_, false);
 
     bool succeeded = false;
     if (!source.isNull() && source->thread() == QThread::currentThread()
@@ -162,11 +167,20 @@ void ThumbnailModel::renderNext() {
     if (!succeeded) {
         failedPages_.insert(page);
     }
+    pendingSet_.remove(page);
     const QPointer<ThumbnailModel> self(this);
     emit thumbnailFinished(page, succeeded);
-    if (!self.isNull()) {
-        scheduleNext();
+    if (self.isNull()) {
+        return;
     }
+    if (notifyCapacityAvailable && source == document_
+        && generation == documentGeneration_ && rowCount() > 0) {
+        emit dataChanged(index(0), index(rowCount() - 1), {Qt::DecorationRole});
+        if (self.isNull()) {
+            return;
+        }
+    }
+    scheduleNext();
 }
 
 void ThumbnailModel::resetForDocumentChange() {

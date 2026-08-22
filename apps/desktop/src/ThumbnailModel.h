@@ -60,4 +60,5 @@ private:
     QMetaObject::Connection destroyedConnection_;
     Renderer renderer_;
     quint64 documentGeneration_{0};
+    bool capacityWasExhausted_{false};
 };
