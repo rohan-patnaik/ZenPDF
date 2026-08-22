@@ -11,13 +11,15 @@
 #include <QRegularExpression>
 #include <QTemporaryDir>
 
-#include <cstdio>
-#include <cerrno>
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
+#include <limits>
 #include <optional>
 
 #ifdef Q_OS_UNIX
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <unistd.h>
 #endif
@@ -31,9 +33,200 @@ constexpr int kMaximumInputs = 100;
 constexpr int kStartTimeoutMs = 5'000;
 constexpr int kProcessPollMs = 100;
 constexpr qsizetype kMaximumDiagnosticBytes = 8 * 1024;
+constexpr qsizetype kMaximumPageCountOutputBytes = 64;
 constexpr auto kOwnerDirectoryPermissions =
     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
 constexpr auto kOwnerFilePermissions = QFileDevice::ReadOwner | QFileDevice::WriteOwner;
+
+class BoundedProcess final {
+public:
+    explicit BoundedProcess(qsizetype standardOutputLimit = 0)
+        : m_standardOutputLimit(standardOutputLimit) {
+#ifdef Q_OS_UNIX
+        int standardOutputPipe[2] = {-1, -1};
+        int standardErrorPipe[2] = {-1, -1};
+        if (::pipe(standardOutputPipe) != 0 || ::pipe(standardErrorPipe) != 0) {
+            closeFd(standardOutputPipe[0]);
+            closeFd(standardOutputPipe[1]);
+            closeFd(standardErrorPipe[0]);
+            closeFd(standardErrorPipe[1]);
+            return;
+        }
+        m_standardOutputRead = standardOutputPipe[0];
+        m_standardOutputWrite = standardOutputPipe[1];
+        m_standardErrorRead = standardErrorPipe[0];
+        m_standardErrorWrite = standardErrorPipe[1];
+        if (!setNonBlocking(m_standardOutputRead) || !setNonBlocking(m_standardErrorRead) ||
+            !setCloseOnExec(m_standardOutputRead) || !setCloseOnExec(m_standardOutputWrite) ||
+            !setCloseOnExec(m_standardErrorRead) || !setCloseOnExec(m_standardErrorWrite)) {
+            closePipes();
+            return;
+        }
+        m_ready = true;
+        const int standardOutputWrite = m_standardOutputWrite;
+        const int standardErrorWrite = m_standardErrorWrite;
+        m_process.setProcessChannelMode(QProcess::ForwardedChannels);
+        m_process.setChildProcessModifier([standardOutputWrite, standardErrorWrite] {
+            if (::setsid() == -1 || ::dup2(standardOutputWrite, STDOUT_FILENO) == -1 ||
+                ::dup2(standardErrorWrite, STDERR_FILENO) == -1) {
+                _exit(127);
+            }
+        });
+#else
+        m_ready = true;
+        m_process.setProcessChannelMode(QProcess::SeparateChannels);
+#endif
+    }
+
+    ~BoundedProcess() {
+        terminateTree();
+#ifdef Q_OS_UNIX
+        closePipes();
+#endif
+    }
+
+    BoundedProcess(const BoundedProcess&) = delete;
+    BoundedProcess& operator=(const BoundedProcess&) = delete;
+
+    [[nodiscard]] bool isReady() const { return m_ready; }
+
+    void start(const QString& program, const QStringList& arguments) {
+        m_process.start(program, arguments, QIODevice::ReadOnly);
+#ifdef Q_OS_UNIX
+        closeFd(m_standardOutputWrite);
+        closeFd(m_standardErrorWrite);
+#endif
+    }
+
+    [[nodiscard]] bool waitForStarted(int timeoutMs) {
+        const bool started = m_process.waitForStarted(timeoutMs);
+        if (started) {
+            m_processGroup = m_process.processId();
+        }
+        return started;
+    }
+
+    [[nodiscard]] bool waitForFinished(int timeoutMs) {
+        const bool finished = m_process.waitForFinished(timeoutMs);
+        drain();
+        return finished;
+    }
+
+    void drain() {
+#ifdef Q_OS_UNIX
+        drainFd(m_standardOutputRead, &m_standardOutput, m_standardOutputLimit, &m_standardOutputOverflow);
+        drainFd(m_standardErrorRead, &m_diagnostic, kMaximumDiagnosticBytes, nullptr);
+#else
+        appendBounded(
+            m_process.readAllStandardOutput(),
+            &m_standardOutput,
+            m_standardOutputLimit,
+            &m_standardOutputOverflow);
+        appendBounded(
+            m_process.readAllStandardError(), &m_diagnostic, kMaximumDiagnosticBytes, nullptr);
+#endif
+    }
+
+    void terminateTree() {
+#ifdef Q_OS_UNIX
+        if (m_processGroup > 0 &&
+            m_processGroup <= static_cast<qint64>(std::numeric_limits<pid_t>::max())) {
+            (void)::kill(-static_cast<pid_t>(m_processGroup), SIGKILL);
+        }
+#endif
+        if (m_process.state() != QProcess::NotRunning) {
+            m_process.kill();
+            (void)m_process.waitForFinished(kStartTimeoutMs);
+        }
+        drain();
+        m_processGroup = 0;
+    }
+
+    [[nodiscard]] QProcess::ExitStatus exitStatus() const { return m_process.exitStatus(); }
+    [[nodiscard]] int exitCode() const { return m_process.exitCode(); }
+    [[nodiscard]] const QByteArray& diagnostic() const { return m_diagnostic; }
+    [[nodiscard]] const QByteArray& standardOutput() const { return m_standardOutput; }
+    [[nodiscard]] bool standardOutputOverflowed() const { return m_standardOutputOverflow; }
+
+private:
+    static void appendBounded(
+        const QByteArray& bytes, QByteArray* destination, qsizetype limit, bool* overflow) {
+        if (overflow != nullptr && bytes.size() > limit - destination->size()) {
+            *overflow = true;
+        }
+        const auto remaining = std::max<qsizetype>(0, limit - destination->size());
+        destination->append(bytes.left(remaining));
+    }
+
+#ifdef Q_OS_UNIX
+    static void closeFd(int& fd) {
+        if (fd >= 0) {
+            (void)::close(fd);
+            fd = -1;
+        }
+    }
+
+    static bool setNonBlocking(int fd) {
+        const int flags = ::fcntl(fd, F_GETFL);
+        return flags >= 0 && ::fcntl(fd, F_SETFL, flags | O_NONBLOCK) == 0;
+    }
+
+    static bool setCloseOnExec(int fd) {
+        const int flags = ::fcntl(fd, F_GETFD);
+        return flags >= 0 && ::fcntl(fd, F_SETFD, flags | FD_CLOEXEC) == 0;
+    }
+
+    static void drainFd(int fd, QByteArray* destination, qsizetype limit, bool* overflow) {
+        char buffer[4096];
+        while (fd >= 0) {
+            const auto count = ::read(fd, buffer, sizeof(buffer));
+            if (count > 0) {
+                appendBounded(QByteArray(buffer, count), destination, limit, overflow);
+                continue;
+            }
+            if (count == -1 && errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+    }
+
+    void closePipes() {
+        closeFd(m_standardOutputRead);
+        closeFd(m_standardOutputWrite);
+        closeFd(m_standardErrorRead);
+        closeFd(m_standardErrorWrite);
+    }
+
+    int m_standardOutputRead{-1};
+    int m_standardOutputWrite{-1};
+    int m_standardErrorRead{-1};
+    int m_standardErrorWrite{-1};
+#endif
+    QProcess m_process;
+    qsizetype m_standardOutputLimit{0};
+    qint64 m_processGroup{0};
+    QByteArray m_standardOutput;
+    QByteArray m_diagnostic;
+    bool m_standardOutputOverflow{false};
+    bool m_ready{false};
+};
+
+bool flushDirectory(const QString& path) {
+#ifdef Q_OS_UNIX
+    const auto encoded = QFile::encodeName(path);
+    const int descriptor = ::open(encoded.constData(), O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    if (descriptor < 0) {
+        return false;
+    }
+    const bool succeeded = ::fsync(descriptor) == 0;
+    (void)::close(descriptor);
+    return succeeded;
+#else
+    Q_UNUSED(path);
+    return false;
+#endif
+}
 
 QpdfResult validateInput(const QString& path) {
     const QFileInfo info(path);
@@ -486,37 +679,38 @@ QpdfResult QpdfOperations::run(
     }
 
     for (const auto& snapshotPath : snapshotPaths) {
-        QProcess encryptionCheck;
-        encryptionCheck.setProcessChannelMode(QProcess::SeparateChannels);
+        BoundedProcess encryptionCheck;
+        if (!encryptionCheck.isReady()) {
+            return {false, QStringLiteral("Could not create bounded qpdf output channels.")};
+        }
         encryptionCheck.start(
             QStringLiteral("qpdf"),
-            {QStringLiteral("--is-encrypted"), snapshotPath},
-            QIODevice::ReadOnly);
+            {QStringLiteral("--is-encrypted"), snapshotPath});
         const int remaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
         if (remaining < 1 || !encryptionCheck.waitForStarted(std::min(kStartTimeoutMs, remaining))) {
+            encryptionCheck.terminateTree();
             return {false, remaining < 1
                                ? QStringLiteral("The operation exceeded its time safety limit.")
                                : QStringLiteral("qpdf is not installed or could not be started.")};
         }
         while (!encryptionCheck.waitForFinished(kProcessPollMs)) {
             if (cancelled != nullptr && cancelled->load()) {
-                encryptionCheck.kill();
-                encryptionCheck.waitForFinished(kStartTimeoutMs);
+                encryptionCheck.terminateTree();
                 return {false, QStringLiteral("The operation was cancelled.")};
             }
             if (elapsed.elapsed() >= limits.operationTimeoutMs) {
-                encryptionCheck.kill();
-                encryptionCheck.waitForFinished(kStartTimeoutMs);
+                encryptionCheck.terminateTree();
                 return {false, QStringLiteral("The operation exceeded its time safety limit.")};
             }
         }
+        encryptionCheck.terminateTree();
         if (encryptionCheck.exitStatus() != QProcess::NormalExit) {
             return {false, QStringLiteral("qpdf could not inspect an input PDF safely.")};
         }
         if (encryptionCheck.exitCode() == 0) {
             return {false, QStringLiteral("Encrypted or permission-restricted PDFs are not supported by organizer commands.")};
         }
-        if (encryptionCheck.exitCode() != 2 || !encryptionCheck.readAllStandardError().trimmed().isEmpty()) {
+        if (encryptionCheck.exitCode() != 2 || !encryptionCheck.diagnostic().trimmed().isEmpty()) {
             return {false, QStringLiteral("An input is malformed or unsupported; no output was published.")};
         }
     }
@@ -529,37 +723,29 @@ QpdfResult QpdfOperations::run(
         }
     }
     processArguments << temporaryPath;
-    QProcess process;
-    process.setProcessChannelMode(QProcess::SeparateChannels);
-    process.start(QStringLiteral("qpdf"), processArguments, QIODevice::ReadOnly);
+    BoundedProcess process;
+    if (!process.isReady()) {
+        return {false, QStringLiteral("Could not create bounded qpdf output channels.")};
+    }
+    process.start(QStringLiteral("qpdf"), processArguments);
     const int processStartRemaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
     if (processStartRemaining < 1 ||
         !process.waitForStarted(std::min(kStartTimeoutMs, processStartRemaining))) {
+        process.terminateTree();
         return {false, processStartRemaining < 1
                            ? QStringLiteral("The operation exceeded its time safety limit.")
                            : QStringLiteral("qpdf is not installed or could not be started.")};
     }
 
-    QByteArray diagnostic;
-    const auto collectDiagnostic = [&process, &diagnostic] {
-        const auto available = process.readAllStandardError();
-        process.readAllStandardOutput();
-        const auto remaining = kMaximumDiagnosticBytes - diagnostic.size();
-        if (remaining > 0) {
-            diagnostic.append(available.left(remaining));
-        }
-    };
     const auto exceedsOutputLimit = [&temporaryPath, limits] {
         const QFileInfo temporaryInfo(temporaryPath);
         return temporaryInfo.exists() && temporaryInfo.size() > limits.maximumOutputBytes;
     };
     while (!process.waitForFinished(kProcessPollMs)) {
-        collectDiagnostic();
         const bool outputLimitExceeded = exceedsOutputLimit();
         if (outputLimitExceeded || (cancelled != nullptr && cancelled->load()) ||
             elapsed.elapsed() >= limits.operationTimeoutMs) {
-            process.kill();
-            process.waitForFinished(kStartTimeoutMs);
+            process.terminateTree();
             if (outputLimitExceeded) {
                 return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
             }
@@ -568,7 +754,7 @@ QpdfResult QpdfOperations::run(
                                : QStringLiteral("The operation was cancelled.")};
         }
     }
-    collectDiagnostic();
+    process.terminateTree();
     if (cancelled != nullptr && cancelled->load()) {
         return {false, QStringLiteral("The operation was cancelled.")};
     }
@@ -576,7 +762,11 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        auto detail = QString::fromLocal8Bit(diagnostic).trimmed();
+        auto detail = QString::fromLocal8Bit(process.diagnostic()).trimmed();
+        detail.replace(stagingDirectory.path(), QStringLiteral("<private temporary directory>"));
+        detail.replace(
+            QDir::toNativeSeparators(stagingDirectory.path()),
+            QStringLiteral("<private temporary directory>"));
         return {false, detail.isEmpty() ? QStringLiteral("qpdf could not complete the operation.") : detail};
     }
 
@@ -595,52 +785,62 @@ QpdfResult QpdfOperations::run(
 #endif
     result.close();
 
-    const auto runValidation = [&](const QStringList& validationArguments, QByteArray* standardOutput)
+    QByteArray validationOutput;
+    const auto runValidation = [&](const QStringList& validationArguments, bool captureStandardOutput)
         -> std::optional<QpdfResult> {
-        QProcess validation;
-        validation.setProcessChannelMode(QProcess::SeparateChannels);
-        validation.start(QStringLiteral("qpdf"), validationArguments, QIODevice::ReadOnly);
+        BoundedProcess validation(captureStandardOutput ? kMaximumPageCountOutputBytes : 0);
+        if (!validation.isReady()) {
+            return QpdfResult{false, QStringLiteral("Could not create bounded qpdf validation channels.")};
+        }
+        validation.start(QStringLiteral("qpdf"), validationArguments);
         const int remaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
         if (remaining < 1 || !validation.waitForStarted(std::min(kStartTimeoutMs, remaining))) {
+            validation.terminateTree();
             return QpdfResult{false, remaining < 1
                                         ? QStringLiteral("The operation exceeded its time safety limit.")
                                         : QStringLiteral("The completed PDF could not be reopened for validation.")};
         }
         while (!validation.waitForFinished(kProcessPollMs)) {
             if (cancelled != nullptr && cancelled->load()) {
-                validation.kill();
-                validation.waitForFinished(kStartTimeoutMs);
+                validation.terminateTree();
                 return QpdfResult{false, QStringLiteral("The operation was cancelled.")};
             }
             if (elapsed.elapsed() >= limits.operationTimeoutMs) {
-                validation.kill();
-                validation.waitForFinished(kStartTimeoutMs);
+                validation.terminateTree();
                 return QpdfResult{false, QStringLiteral("The operation exceeded its time safety limit.")};
             }
         }
+        validation.terminateTree();
         if (validation.exitStatus() != QProcess::NormalExit || validation.exitCode() != 0) {
             return QpdfResult{false, QStringLiteral("The completed PDF did not pass structural reopen validation.")};
         }
-        if (standardOutput != nullptr) {
-            *standardOutput = validation.readAllStandardOutput();
+        if (captureStandardOutput) {
+            if (validation.standardOutputOverflowed()) {
+                return QpdfResult{false, QStringLiteral("The completed PDF returned an oversized page-count response.")};
+            }
+            validationOutput = validation.standardOutput();
         }
         return std::nullopt;
     };
 
     if (const auto error = runValidation(
-            {QStringLiteral("--check"), temporaryPath}, nullptr);
+            {QStringLiteral("--check"), temporaryPath}, false);
         error.has_value()) {
         return *error;
     }
     if (expectedPageCount.has_value()) {
-        QByteArray pageCountOutput;
+        validationOutput.clear();
         if (const auto error = runValidation(
-                {QStringLiteral("--show-npages"), temporaryPath}, &pageCountOutput);
+                {QStringLiteral("--show-npages"), temporaryPath}, true);
             error.has_value()) {
             return *error;
         }
         bool pageCountOk = false;
-        const int actualPageCount = QString::fromLatin1(pageCountOutput).trimmed().toInt(&pageCountOk);
+        const auto pageCountText = QString::fromLatin1(validationOutput).trimmed();
+        static const QRegularExpression pageCountSyntax(QStringLiteral("^[1-9][0-9]{0,5}$"));
+        const int actualPageCount = pageCountText.toInt(&pageCountOk);
+        pageCountOk = pageCountOk && pageCountSyntax.match(pageCountText).hasMatch() &&
+                      actualPageCount <= maximumPageCount;
         if (!pageCountOk || actualPageCount != *expectedPageCount) {
             return {false, QStringLiteral("The completed PDF did not preserve the expected page structure.")};
         }
@@ -676,6 +876,9 @@ QpdfResult QpdfOperations::run(
     }
     if (publication != QpdfPublication::Result::Succeeded) {
         return {false, QStringLiteral("Could not atomically place the completed output file.")};
+    }
+    if (!flushDirectory(outputDirectory.absolutePath())) {
+        return {false, QStringLiteral("The output was published, but its directory could not be flushed; verify the saved file before continuing.")};
     }
     return {true, QStringLiteral("Saved %1").arg(QDir::toNativeSeparators(cleanOutput))};
 }

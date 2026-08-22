@@ -27,6 +27,8 @@ private slots:
     void validatesPageRanges_data();
     void validatesPageRanges();
     void rejectsPageCountsAboveSafetyLimit();
+    void rejectsOversizedSparseInput();
+    void preservesExtractOrderAndUsesDeleteSetSemantics();
     void refusesSourceOverwrite();
     void refusesCanonicalSymlinkSourceOverwrite();
     void refusesHardlinkSourceOverwrite();
@@ -37,6 +39,8 @@ private slots:
     void cancellationLeavesNoOutputOrStaging();
     void cancellationDuringToolLeavesNoOutputOrStaging();
     void timeoutLeavesNoOutputOrStaging();
+    void noisyHelperDiagnosticsAreBoundedAndPrivate();
+    void oversizedPageCountOutputIsRejected();
     void outputCapLeavesNoOutputOrStaging();
     void refusesInvalidSafetyLimits();
     void refusesExistingDestination();
@@ -169,6 +173,14 @@ void QpdfOperationsTest::validatesPageRanges_data() {
     QTest::newRow("open-range") << QStringLiteral("1-z") << 5 << false;
     QTest::newRow("whitespace") << QStringLiteral("1, 2") << 5 << false;
     QTest::newRow("empty-document") << QStringLiteral("1") << 0 << false;
+    QTest::newRow("maximum-page-count")
+        << QStringLiteral("100000") << QpdfOperations::maximumPageCount << true;
+    QTest::newRow("above-maximum-page-count")
+        << QStringLiteral("1") << QpdfOperations::maximumPageCount + 1 << false;
+    QTest::newRow("maximum-range-length")
+        << QStringLiteral("10") + QStringLiteral(",1").repeated(499) << 10 << true;
+    QTest::newRow("above-maximum-range-length")
+        << QStringLiteral("10") + QStringLiteral(",1").repeated(500) << 10 << false;
 }
 
 void QpdfOperationsTest::validatesPageRanges() {
@@ -181,6 +193,66 @@ void QpdfOperationsTest::validatesPageRanges() {
 void QpdfOperationsTest::rejectsPageCountsAboveSafetyLimit() {
     QVERIFY(!QpdfOperations::isValidPageRange(
         QStringLiteral("1"), QpdfOperations::maximumPageCount + 1));
+}
+
+void QpdfOperationsTest::rejectsOversizedSparseInput() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("oversized.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.resize(QpdfOperations::maximumInputBytes + 1));
+    file.close();
+
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("2 GiB safety limit")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::preservesExtractOrderAndUsesDeleteSetSemantics() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto extracted = directory.filePath(QStringLiteral("extracted.pdf"));
+    const auto deleted = directory.filePath(QStringLiteral("deleted.pdf"));
+    createPdf(source, {QStringLiteral("One"), QStringLiteral("Two"),
+                       QStringLiteral("Three"), QStringLiteral("Four")});
+
+    const auto extractResult = QpdfOperations::extract(
+        source, QStringLiteral("3,1-2,2"), 4, extracted);
+    QVERIFY2(extractResult.succeeded, qPrintable(extractResult.message));
+    QCOMPARE(pageCount(extracted), 4);
+    QPdfDocument sourceDocument;
+    QPdfDocument extractedDocument;
+    QCOMPARE(sourceDocument.load(source), QPdfDocument::Error::None);
+    QCOMPARE(extractedDocument.load(extracted), QPdfDocument::Error::None);
+    for (int outputPage = 0; outputPage < 4; ++outputPage) {
+        const int expectedSourcePage[] = {2, 0, 1, 1};
+        QCOMPARE(renderPage(extractedDocument, outputPage),
+                 renderPage(sourceDocument, expectedSourcePage[outputPage]));
+    }
+
+    const auto deleteResult = QpdfOperations::deletePages(
+        source, QStringLiteral("3,1-2,2"), 4, deleted);
+    QVERIFY2(deleteResult.succeeded, qPrintable(deleteResult.message));
+    QCOMPARE(pageCount(deleted), 1);
+    QPdfDocument deletedDocument;
+    QCOMPARE(deletedDocument.load(deleted), QPdfDocument::Error::None);
+    QCOMPARE(renderPage(deletedDocument, 0), renderPage(sourceDocument, 3));
+
+    const auto allPages = QpdfOperations::deletePages(
+        source,
+        QStringLiteral("2-4,1-2,3"),
+        4,
+        directory.filePath(QStringLiteral("all-pages.pdf")));
+    QVERIFY(!allPages.succeeded);
+    QVERIFY(allPages.message.contains(QStringLiteral("At least one page")));
 }
 
 void QpdfOperationsTest::refusesSourceOverwrite() {
@@ -423,6 +495,7 @@ void QpdfOperationsTest::cancellationDuringToolLeavesNoOutputOrStaging() {
     QVERIFY(directory.isValid());
     const auto source = directory.filePath(QStringLiteral("source.pdf"));
     const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto marker = directory.filePath(QStringLiteral("descendant-marker"));
     const auto binDirectory = directory.filePath(QStringLiteral("bin"));
     QVERIFY(QDir().mkdir(binDirectory));
     const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
@@ -431,7 +504,8 @@ void QpdfOperationsTest::cancellationDuringToolLeavesNoOutputOrStaging() {
     const QByteArray body =
         "#!/bin/sh\n"
         "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
-        "exec sleep 5\n";
+        "(sleep 0.4; touch \"$ZENPDF_TEST_MARKER\") &\n"
+        "sleep 5\n";
     QCOMPARE(script.write(body), body.size());
     script.close();
     QVERIFY(QFile::setPermissions(
@@ -442,7 +516,9 @@ void QpdfOperationsTest::cancellationDuringToolLeavesNoOutputOrStaging() {
     file.close();
 
     const auto originalPath = qgetenv("PATH");
+    const auto originalMarker = qgetenv("ZENPDF_TEST_MARKER");
     qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    qputenv("ZENPDF_TEST_MARKER", QFile::encodeName(marker));
     std::atomic_bool cancelled{false};
     std::thread cancelThread([&cancelled] {
         QThread::msleep(150);
@@ -452,10 +528,17 @@ void QpdfOperationsTest::cancellationDuringToolLeavesNoOutputOrStaging() {
         source, QStringLiteral("1"), 1, output, &cancelled);
     cancelThread.join();
     qputenv("PATH", originalPath);
+    if (originalMarker.isNull()) {
+        qunsetenv("ZENPDF_TEST_MARKER");
+    } else {
+        qputenv("ZENPDF_TEST_MARKER", originalMarker);
+    }
+    QThread::msleep(600);
 
     QVERIFY(!result.succeeded);
     QVERIFY(result.message.contains(QStringLiteral("cancelled")));
     QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(!QFileInfo::exists(marker));
     QVERIFY(stagingDirectories(directory).isEmpty());
 #endif
 }
@@ -494,6 +577,97 @@ void QpdfOperationsTest::timeoutLeavesNoOutputOrStaging() {
 
     QVERIFY(!result.succeeded);
     QVERIFY(result.message.contains(QStringLiteral("time safety limit")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
+}
+
+void QpdfOperationsTest::noisyHelperDiagnosticsAreBoundedAndPrivate() {
+#ifndef Q_OS_UNIX
+    QSKIP("Noisy helper fixture requires Unix bounded pipes");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
+        "i=0\n"
+        "while [ $i -lt 2000 ]; do\n"
+        "  printf '%s noisy diagnostic\\n' \"$1\" >&2\n"
+        "  printf 'untrusted stdout\\n'\n"
+        "  i=$((i + 1))\n"
+        "done\n"
+        "exit 1\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output, nullptr, QpdfLimits{1024, 5'000});
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.toUtf8().size() <= 8 * 1024);
+    QVERIFY(!result.message.contains(QStringLiteral(".zenpdf-")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
+}
+
+void QpdfOperationsTest::oversizedPageCountOutputIsRejected() {
+#ifndef Q_OS_UNIX
+    QSKIP("Noisy helper fixture requires Unix bounded pipes");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --is-encrypted) exit 2 ;;\n"
+        "  --check) printf 'ignored warning\\n' >&2; exit 0 ;;\n"
+        "  --show-npages)\n"
+        "    i=0; while [ $i -lt 100 ]; do printf '1234567890'; printf 'noise\\n' >&2; i=$((i + 1)); done\n"
+        "    exit 0 ;;\n"
+        "esac\n"
+        "for last do :; done\n"
+        "cp \"$1\" \"$last\"\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    const auto result = QpdfOperations::extract(source, QStringLiteral("1"), 1, output);
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("oversized page-count response")));
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(stagingDirectories(directory).isEmpty());
 #endif
