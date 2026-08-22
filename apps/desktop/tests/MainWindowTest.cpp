@@ -95,7 +95,7 @@ void MainWindowTest::routesUndoForFirstDocumentImmediately() {
     int value = 0;
 
     QVERIFY(window.currentDocument()->session().push(
-        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change"))));
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change")), 1));
     QCOMPARE(value, 1);
     QVERIFY(undoAction->isEnabled());
     QVERIFY(undoAction->text().contains(QStringLiteral("First change")));
@@ -129,7 +129,7 @@ void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
     QVERIFY(first != nullptr);
     int value = 0;
     QVERIFY(first->session().push(
-        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change"))));
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("First change")), 1));
     QCOMPARE(value, 1);
     QVERIFY(window.tabs_->tabText(0).endsWith('*'));
     QVERIFY(!window.tabs_->tabText(1).endsWith('*'));
@@ -161,7 +161,7 @@ void MainWindowTest::dirtyTabRequiresExplicitDiscard() {
     QVERIFY(document != nullptr);
     int value = 0;
     QVERIFY(document->session().push(
-        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change"))));
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change")), 1));
 
     answerMessageBox(QMessageBox::Cancel);
     window.closeTab(0);
@@ -186,7 +186,7 @@ void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
     window.openFiles({path});
     int value = 0;
     QVERIFY(window.currentDocument()->session().push(
-        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change"))));
+        std::make_unique<AddCommand>(&value, 1, QStringLiteral("Unsaved change")), 1));
 
     QCloseEvent cancelEvent;
     answerMessageBox(QMessageBox::Cancel);

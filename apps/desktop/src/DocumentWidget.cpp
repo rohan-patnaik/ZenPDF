@@ -134,7 +134,9 @@ QString pdfErrorMessage(QPdfDocument::Error error) {
 
 DocumentWidget::DocumentWidget(QString filePath, QWidget* parent)
     : QWidget(parent),
-      session_(new DocumentSession(std::move(filePath), this)),
+      session_(new DocumentSession(std::move(filePath),
+                                   DocumentSession::defaultRetainedByteLimit,
+                                   this)),
       document_(new QPdfDocument(this)),
       view_(new QPdfView(this)),
       searchModel_(new QPdfSearchModel(this)),

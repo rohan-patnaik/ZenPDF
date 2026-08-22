@@ -3,6 +3,8 @@
 #include <QObject>
 #include <QString>
 #include <QUndoStack>
+#include <QVector>
+#include <QtGlobal>
 
 #include <memory>
 
@@ -14,8 +16,20 @@ class DocumentSession final : public QObject {
 
 public:
     static constexpr int maximumUndoCommands = 512;
+    static constexpr quint64 defaultRetainedByteLimit = 64ULL * 1024ULL * 1024ULL;
 
-    explicit DocumentSession(QString filePath, QObject* parent = nullptr);
+    enum class PushRejection {
+        None,
+        NullCommand,
+        CommandExceedsRetainedByteLimit,
+        RetainedByteAdditionOverflow,
+        RetainedByteLimitExceeded,
+    };
+    Q_ENUM(PushRejection)
+
+    explicit DocumentSession(QString filePath,
+                             quint64 retainedByteLimit = defaultRetainedByteLimit,
+                             QObject* parent = nullptr);
     ~DocumentSession() override;
 
     [[nodiscard]] QString filePath() const;
@@ -26,14 +40,22 @@ public:
     [[nodiscard]] int undoCommandCount() const;
     [[nodiscard]] QString undoText() const;
     [[nodiscard]] QString redoText() const;
+    [[nodiscard]] quint64 retainedBytes() const;
+    [[nodiscard]] quint64 retainedByteLimit() const;
+    [[nodiscard]] quint64 remainingRetainedBytes() const;
+    [[nodiscard]] PushRejection lastPushRejection() const;
+    [[nodiscard]] QString lastPushRejectionMessage() const;
 
-    [[nodiscard]] bool push(std::unique_ptr<QUndoCommand> command);
+    [[nodiscard]] bool push(std::unique_ptr<QUndoCommand> command,
+                            quint64 retainedBytes);
     void undo();
     void redo();
     void markSaved();
 
 signals:
     void stateChanged();
+    void retainedBytesChanged(quint64 retainedBytes);
+    void commandRejected(DocumentSession::PushRejection reason, const QString& message);
 
 private:
     friend class MainWindow;
@@ -42,4 +64,9 @@ private:
 
     QString filePath_;
     QUndoStack undoStack_;
+    QVector<quint64> retainedCosts_;
+    quint64 retainedBytes_ = 0;
+    quint64 retainedByteLimit_;
+    PushRejection lastPushRejection_ = PushRejection::None;
+    QString lastPushRejectionMessage_;
 };
