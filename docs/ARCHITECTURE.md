@@ -39,8 +39,8 @@
 2. Convex validates tier limits and capacity.
 3. Job is created with status `queued`.
 4. Worker claims job via safe-claim mutation and updates progress.
-5. Worker downloads inputs via Convex-generated URLs. Output upload URLs are issued only to the current lease owner and each upload is tracked as a short-lived pending record before bytes are sent.
-6. Job completion atomically promotes registered pending uploads to artifacts. Lease loss, completion rejection, and TTL cleanup delete abandoned registered objects.
+5. Worker downloads inputs via Convex-generated URLs. Output upload URLs are issued only to the current lease owner and each upload is tracked as a pending record before bytes are sent. The output POST runs in a killable process under a hard deadline shorter than the pending-record recovery lifetime.
+6. A returned storage ID is atomically fsynced to the worker recovery volume before registration. Registration and deletion are idempotent, retryable transitions; job completion atomically promotes registered pending uploads to artifacts, after which the worker removes the journal entry.
 7. Downloads stream through a Next.js route that validates access.
 
 ## Storage

@@ -21,3 +21,8 @@ services:
       - ./apps/worker/.env
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - worker-upload-recovery:/var/lib/zenpdf-worker
+
+volumes:
+  worker-upload-recovery:

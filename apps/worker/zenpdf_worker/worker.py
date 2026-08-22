@@ -19,6 +19,7 @@ except ImportError:  # pragma: no cover - worker production target is Linux
 import requests
 
 from .client import ConvexClient, ConvexError
+from .upload_journal import UploadJournal
 from .tools import (
     compare_pdfs,
     compress_pdf,
@@ -244,6 +245,37 @@ def _tool_process_entry(
         connection.close()
 
 
+def _upload_process_entry(
+    output: Path,
+    upload_url: str,
+    request_timeout_seconds: int,
+    connection: Any,
+) -> None:
+    """POST one output in a killable process and return only its storage ID."""
+    session = requests.Session()
+    try:
+        with output.open("rb") as handle:
+            response = session.post(
+                upload_url,
+                data=handle,
+                headers={"Content-Type": "application/octet-stream"},
+                timeout=(10, request_timeout_seconds),
+            )
+        response.raise_for_status()
+        storage_id = response.json().get("storageId")
+        if not isinstance(storage_id, str) or not storage_id:
+            raise RuntimeError("Upload response did not include a storage ID")
+        connection.send(("ok", storage_id))
+    except BaseException as error:  # noqa: BLE001 - serialize child failures
+        try:
+            connection.send(("error", type(error).__name__, str(error)))
+        except (BrokenPipeError, EOFError, OSError):
+            pass
+    finally:
+        session.close()
+        connection.close()
+
+
 class ZenPdfWorker:
     """Poll Convex for jobs and execute PDF tools."""
 
@@ -253,19 +285,35 @@ class ZenPdfWorker:
         self.worker_id = worker_id
         self.worker_token = worker_token
         self._client_lock = threading.Lock()
+        journal_root = Path(
+            os.environ.get(
+                "ZENPDF_UPLOAD_JOURNAL_DIR", "/var/lib/zenpdf-worker/upload-recovery"
+            )
+        )
+        self.upload_journal = UploadJournal(journal_root)
+        self._shutdown_requested = threading.Event()
 
     def run(self) -> None:
         """Run the worker polling loop."""
         poll_interval = float(os.environ.get("ZENPDF_POLL_INTERVAL", "5"))
-        while True:
-            job = self._mutation(
-                "jobs:claimNextJob",
-                {"workerId": self.worker_id, "workerToken": self.worker_token},
-            )
-            if not job:
-                time.sleep(poll_interval)
-                continue
-            self._process_job(job)
+        self.upload_journal.ensure_ready()
+        try:
+            while not self._shutdown_requested.is_set():
+                self._recover_pending_uploads()
+                job = self._mutation(
+                    "jobs:claimNextJob",
+                    {"workerId": self.worker_id, "workerToken": self.worker_token},
+                )
+                if not job:
+                    self._shutdown_requested.wait(max(poll_interval, 0.0))
+                    continue
+                self._process_job(job)
+        finally:
+            self._drain_upload_recovery()
+
+    def request_shutdown(self) -> None:
+        """Stop claiming work; durable upload recovery is drained before return."""
+        self._shutdown_requested.set()
 
     def _process_job(self, job: Dict[str, Any]) -> None:
         """Process a single job from Convex."""
@@ -322,6 +370,7 @@ class ZenPdfWorker:
                 ownership_lost.set()
                 raise JobOwnershipLost("Job lease was lost before completion")
             uploads_committed = True
+            self._confirm_uploaded_outputs(output_payload)
         except JobOwnershipLost as error:
             print(f"Job {job_id} ownership lost: {error}")
         except ValueError as error:
@@ -826,6 +875,7 @@ class ZenPdfWorker:
         ownership_lost: threading.Event | None = None,
     ) -> List[Dict[str, Any]]:
         """Upload outputs through TTL-tracked, lease-aware pending records."""
+        self.upload_journal.ensure_ready()
         payload: List[Dict[str, Any]] = []
         try:
             for output in outputs:
@@ -854,7 +904,12 @@ class ZenPdfWorker:
                 ):
                     raise RuntimeError("Upload URL mutation returned an invalid result")
                 storage_id = self._upload_one_pending(
-                    output, upload_url, pending_id, ownership_lost
+                    job_id,
+                    output,
+                    upload_url,
+                    pending_id,
+                    pending.get("uploadDeadlineAt"),
+                    ownership_lost,
                 )
                 payload.append(
                     {
@@ -871,74 +926,105 @@ class ZenPdfWorker:
 
     def _upload_one_pending(
         self,
+        job_id: str,
         output: Path,
         upload_url: str,
         pending_id: str,
+        upload_deadline_at: Any,
         ownership_lost: threading.Event | None,
     ) -> str:
-        """Run a single POST in a cancellable thread and bind its storage ID."""
-        session = requests.Session()
-        finished = threading.Event()
-        outcome: Dict[str, Any] = {}
-
-        def upload() -> None:
-            storage_id: str | None = None
-            try:
-                with output.open("rb") as handle:
-                    response = session.post(
-                        upload_url,
-                        data=handle,
-                        headers={"Content-Type": "application/octet-stream"},
-                        timeout=(10, 120),
-                    )
-                response.raise_for_status()
-                storage_id = response.json().get("storageId")
-                if not isinstance(storage_id, str) or not storage_id:
-                    raise RuntimeError("Upload response did not include a storage ID")
-                registered = self._mutation(
-                    "files:registerWorkerUpload",
-                    {
-                        "pendingUploadId": pending_id,
-                        "workerId": self.worker_id,
-                        "storageId": storage_id,
-                        "workerToken": self.worker_token,
-                    },
-                )
-                if registered is not True:
-                    raise RuntimeError("Uploaded object could not be registered")
+        """Run one POST under a hard deadline, then durably bind its storage ID."""
+        configured_seconds = _positive_env_int("ZENPDF_UPLOAD_DEADLINE_SECONDS", 60)
+        remaining_seconds = configured_seconds
+        if isinstance(upload_deadline_at, (int, float)):
+            remaining_seconds = min(
+                configured_seconds,
+                max(int((upload_deadline_at - time.time() * 1000) / 1000), 1),
+            )
+        start_method = os.environ.get("ZENPDF_UPLOAD_PROCESS_START_METHOD", "spawn")
+        context = multiprocessing.get_context(start_method)
+        receiver, sender = context.Pipe(duplex=False)
+        process = context.Process(
+            target=_upload_process_entry,
+            args=(output, upload_url, remaining_seconds, sender),
+            daemon=False,
+        )
+        process.start()
+        sender.close()
+        deadline = time.monotonic() + remaining_seconds
+        outcome: tuple[Any, ...] | None = None
+        try:
+            while time.monotonic() < deadline:
                 if ownership_lost is not None and ownership_lost.is_set():
-                    self._discard_pending_upload(pending_id, storage_id)
-                    outcome["ownershipLost"] = True
-                else:
-                    outcome["storageId"] = storage_id
-            except BaseException as error:  # noqa: BLE001 - passed to owner thread
-                self._discard_pending_upload(pending_id, storage_id)
-                outcome["error"] = error
-            finally:
-                session.close()
-                finished.set()
-
-        upload_thread = threading.Thread(target=upload, daemon=True)
-        upload_thread.start()
-        while not finished.wait(0.1):
-            if ownership_lost is not None and ownership_lost.is_set():
-                session.close()
-                finished.wait(2)
-                raise JobOwnershipLost("Job ownership changed during output upload")
-        if outcome.get("ownershipLost"):
-            raise JobOwnershipLost("Job ownership changed during output upload")
-        error = outcome.get("error")
-        if isinstance(error, BaseException):
-            raise error
-        storage_id = outcome.get("storageId")
+                    self._stop_upload_process(process)
+                    raise JobOwnershipLost("Job ownership changed during output upload")
+                if receiver.poll(0.1):
+                    outcome = receiver.recv()
+                    break
+            if outcome is None:
+                self._stop_upload_process(process)
+                raise RuntimeError("Output upload exceeded its hard total deadline")
+        finally:
+            receiver.close()
+            if process.is_alive():
+                self._stop_upload_process(process)
+            else:
+                process.join()
+            process.close()
+        if outcome[0] != "ok":
+            raise RuntimeError(f"Output upload failed: {outcome[-1]}")
+        storage_id = outcome[1]
         if not isinstance(storage_id, str) or not storage_id:
-            raise RuntimeError("Upload ended without a registered storage ID")
+            raise RuntimeError("Upload ended without a storage ID")
+        entry = {
+            "jobId": job_id,
+            "pendingUploadId": pending_id,
+            "storageId": storage_id,
+            "action": "register",
+        }
+        self.upload_journal.save(entry)
+        self._reconcile_upload_entry(entry)
+        if entry.get("action") != "uploaded":
+            raise RuntimeError("Uploaded object could not be registered")
+        if ownership_lost is not None and ownership_lost.is_set():
+            self._discard_pending_upload(pending_id, storage_id)
+            raise JobOwnershipLost("Job ownership changed during output upload")
         return storage_id
+
+    @staticmethod
+    def _stop_upload_process(process: multiprocessing.Process) -> None:
+        """Stop a blocked POST without leaving a daemon behind."""
+        if not process.is_alive():
+            process.join()
+            return
+        process.terminate()
+        process.join(timeout=1)
+        if process.is_alive():
+            process.kill()
+            process.join()
 
     def _discard_pending_upload(
         self, pending_id: str, storage_id: str | None = None
     ) -> None:
-        """Best-effort deletion; the server-side TTL remains the fallback."""
+        """Persist deletion intent and reconcile it without losing retry state."""
+        entry = next(
+            (
+                item
+                for item in self.upload_journal.entries()
+                if item.get("pendingUploadId") == pending_id
+            ),
+            None,
+        )
+        if entry is None and storage_id is not None:
+            entry = {
+                "jobId": "unknown",
+                "pendingUploadId": pending_id,
+                "storageId": storage_id,
+                "action": "discard",
+            }
+        if entry is not None:
+            entry["action"] = "discard"
+            self.upload_journal.save(entry)
         try:
             args = {
                 "pendingUploadId": pending_id,
@@ -947,18 +1033,102 @@ class ZenPdfWorker:
             }
             if storage_id is not None:
                 args["storageId"] = storage_id
-            self._mutation(
+            discarded = self._mutation(
                 "files:discardWorkerUpload",
                 args,
             )
+            if discarded is True:
+                self.upload_journal.remove(pending_id)
         except Exception as error:  # noqa: BLE001 - cleanup must not mask owner error
-            print(f"Pending upload cleanup deferred to TTL: {error}")
+            print(f"Pending upload cleanup retained for retry: {error}")
 
     def _discard_uploaded_outputs(self, outputs: List[Dict[str, Any]]) -> None:
         for output in outputs:
             pending_id = output.get("pendingUploadId")
             if isinstance(pending_id, str) and pending_id:
                 self._discard_pending_upload(pending_id)
+
+    def _confirm_uploaded_outputs(self, outputs: List[Dict[str, Any]]) -> None:
+        """Remove recovery entries only after completion is confirmed."""
+        for output in outputs:
+            pending_id = output.get("pendingUploadId")
+            if isinstance(pending_id, str) and pending_id:
+                self.upload_journal.remove(pending_id)
+
+    def _reconcile_upload_entry(self, entry: Dict[str, Any]) -> None:
+        """Advance one journal entry through idempotent server operations."""
+        pending_id = entry.get("pendingUploadId")
+        storage_id = entry.get("storageId")
+        job_id = entry.get("jobId")
+        if not all(isinstance(value, str) and value for value in (pending_id, storage_id)):
+            return
+        action = entry.get("action")
+        if action == "register":
+            registered = self._mutation(
+                "files:registerWorkerUpload",
+                {
+                    "pendingUploadId": pending_id,
+                    "workerId": self.worker_id,
+                    "storageId": storage_id,
+                    "workerToken": self.worker_token,
+                },
+            )
+            if registered is True:
+                entry["action"] = "uploaded"
+                self.upload_journal.save(entry)
+                return
+            entry["action"] = "discard"
+            self.upload_journal.save(entry)
+            action = "discard"
+        if action == "uploaded" and isinstance(job_id, str) and job_id != "unknown":
+            state = self._query(
+                "files:getWorkerUploadState",
+                {
+                    "jobId": job_id,
+                    "pendingUploadId": pending_id,
+                    "workerId": self.worker_id,
+                    "storageId": storage_id,
+                    "workerToken": self.worker_token,
+                },
+            )
+            if state in {"committed", "deleted"}:
+                self.upload_journal.remove(pending_id)
+                return
+            if state == "registered":
+                entry["action"] = "discard"
+                self.upload_journal.save(entry)
+                action = "discard"
+            else:
+                return
+        if action == "discard":
+            discarded = self._mutation(
+                "files:discardWorkerUpload",
+                {
+                    "pendingUploadId": pending_id,
+                    "workerId": self.worker_id,
+                    "storageId": storage_id,
+                    "workerToken": self.worker_token,
+                },
+            )
+            if discarded is True:
+                self.upload_journal.remove(pending_id)
+
+    def _recover_pending_uploads(self) -> None:
+        """Retry every durable upload operation once."""
+        for entry in self.upload_journal.entries():
+            try:
+                self._reconcile_upload_entry(entry)
+            except Exception as error:  # noqa: BLE001 - retry on next poll
+                print(f"Upload recovery retained for retry: {error}")
+
+    def _drain_upload_recovery(self) -> None:
+        """Retry during graceful shutdown; unresolved state remains on durable disk."""
+        grace_seconds = _positive_env_int("ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS", 30)
+        deadline = time.monotonic() + grace_seconds
+        while self.upload_journal.entries() and time.monotonic() < deadline:
+            self._recover_pending_uploads()
+            if self.upload_journal.entries():
+                time.sleep(0.25)
 
     def _mutation(self, path: str, args: Dict[str, Any]) -> Any:
         """Execute a mutation with thread-safe access."""
@@ -980,7 +1150,14 @@ def main() -> None:
     worker_token = os.environ.get("ZENPDF_WORKER_TOKEN")
     if not worker_token:
         raise RuntimeError("ZENPDF_WORKER_TOKEN is required")
-    ZenPdfWorker(convex_url, worker_id, worker_token).run()
+    worker = ZenPdfWorker(convex_url, worker_id, worker_token)
+
+    def request_shutdown(_signum: int, _frame: Any) -> None:
+        worker.request_shutdown()
+
+    signal.signal(signal.SIGTERM, request_shutdown)
+    signal.signal(signal.SIGINT, request_shutdown)
+    worker.run()
 
 
 if __name__ == "__main__":

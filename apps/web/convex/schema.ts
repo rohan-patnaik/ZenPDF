@@ -100,6 +100,7 @@ export default defineSchema({
     filename: v.string(),
     sizeBytes: v.number(),
     storageId: v.optional(v.id("_storage")),
+    uploadDeadlineAt: v.optional(v.number()),
     createdAt: v.number(),
     expiresAt: v.number(),
   })

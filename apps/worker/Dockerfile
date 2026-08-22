@@ -34,7 +34,8 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 COPY zenpdf_worker ./zenpdf_worker
 COPY main.py ./main.py
 
-RUN chown -R zenpdf:zenpdf /app
+RUN mkdir -p /var/lib/zenpdf-worker/upload-recovery \
+    && chown -R zenpdf:zenpdf /app /var/lib/zenpdf-worker
 
 USER zenpdf
 

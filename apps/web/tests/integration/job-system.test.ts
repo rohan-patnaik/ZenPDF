@@ -3,6 +3,7 @@ import { makeFunctionReference } from "convex/server";
 import { describe, expect, it } from "vitest";
 
 import schema from "../../convex/schema";
+import type { Id } from "../../convex/_generated/dataModel";
 import { monthKey } from "../../convex/lib/time";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
@@ -39,7 +40,7 @@ const beginWorkerUpload = makeFunctionReference<
     sizeBytes: number;
     workerToken?: string;
   },
-  { pendingUploadId: string; uploadUrl: string } | null
+  { pendingUploadId: string; uploadUrl: string; uploadDeadlineAt: number } | null
 >("files:beginWorkerUpload");
 
 const registerWorkerUpload = makeFunctionReference<
@@ -69,6 +70,18 @@ const generateUploadUrl = makeFunctionReference<
   { anonId?: string },
   string
 >("files:generateUploadUrl");
+
+const getWorkerUploadState = makeFunctionReference<
+  "query",
+  {
+    jobId: string;
+    pendingUploadId: string;
+    workerId: string;
+    storageId: string;
+    workerToken?: string;
+  },
+  "registered" | "unregistered" | "committed" | "orphaned" | "deleted" | "mismatch"
+>("files:getWorkerUploadState");
 
 const failJob = makeFunctionReference<
   "mutation",
@@ -301,6 +314,13 @@ describe("job system", () => {
         workerToken: "test-worker-token",
       });
       expect(pending?.uploadUrl).toMatch(/^https?:\/\//);
+      expect(pending!.uploadDeadlineAt).toBeGreaterThan(Date.now());
+      const pendingRecord = await t.run(async (ctx) =>
+        ctx.db.get(pending!.pendingUploadId as Id<"pendingUploads">),
+      );
+      expect(pendingRecord!.expiresAt - pending!.uploadDeadlineAt).toBeGreaterThan(
+        23 * 60 * 60 * 1000,
+      );
 
       const outputStorageId = await t.run(async (ctx) =>
         ctx.storage.store(new Blob(["output"])),
@@ -314,6 +334,15 @@ describe("job system", () => {
         }),
       ).toBe(true);
       expect(
+        await t.query(getWorkerUploadState, {
+          jobId,
+          pendingUploadId: pending!.pendingUploadId,
+          workerId: "worker-1",
+          storageId: outputStorageId,
+          workerToken: "test-worker-token",
+        }),
+      ).toBe("registered");
+      expect(
         await t.mutation(discardWorkerUpload, {
           pendingUploadId: pending!.pendingUploadId,
           workerId: "worker-1",
@@ -323,6 +352,15 @@ describe("job system", () => {
       expect(
         await t.run(async (ctx) => ctx.db.system.get(outputStorageId)),
       ).toBeNull();
+      expect(
+        await t.query(getWorkerUploadState, {
+          jobId,
+          pendingUploadId: pending!.pendingUploadId,
+          workerId: "worker-1",
+          storageId: outputStorageId,
+          workerToken: "test-worker-token",
+        }),
+      ).toBe("deleted");
     } finally {
       if (previousWorkerToken === undefined) {
         delete process.env.ZENPDF_WORKER_TOKEN;

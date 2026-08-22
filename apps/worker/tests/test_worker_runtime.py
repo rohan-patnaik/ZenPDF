@@ -68,6 +68,38 @@ class _UploadWorker(ZenPdfWorker):
         return True
 
 
+class _RecoveryUploadWorker(_UploadWorker):
+    def __init__(self) -> None:
+        super().__init__()
+        self.registration_failures = 0
+        self.discard_failures = 0
+        self.upload_state = "registered"
+
+    def _mutation(self, path: str, args: dict) -> object:
+        self.mutations.append((path, args))
+        if path == "files:beginWorkerUpload":
+            return {
+                "pendingUploadId": "pending-1",
+                "uploadUrl": "https://upload.invalid/pending-1",
+                "uploadDeadlineAt": time.time() * 1000 + 120_000,
+            }
+        if path == "files:registerWorkerUpload":
+            if self.registration_failures:
+                self.registration_failures -= 1
+                raise RuntimeError("registration transport unavailable")
+            return True
+        if path == "files:discardWorkerUpload":
+            if self.discard_failures:
+                self.discard_failures -= 1
+                raise RuntimeError("cleanup transport unavailable")
+            return True
+        return True
+
+    def _query(self, path: str, _args: dict) -> object:
+        assert path == "files:getWorkerUploadState"
+        return self.upload_state
+
+
 class _CompletionRejectWorker(ZenPdfWorker):
     def __init__(self) -> None:
         super().__init__("https://example.invalid", "worker-a", "token")
@@ -132,30 +164,19 @@ def test_mutation_result_detects_reclaimed_job() -> None:
     assert not worker._is_owned_job(None)
 
 
-def test_blocked_upload_is_cancelled_and_registered_object_is_discarded(
+def test_close_ignoring_blocked_upload_process_is_killed_on_lease_loss(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     started = threading.Event()
-    closed = threading.Event()
-
-    class FakeResponse:
-        @staticmethod
-        def raise_for_status() -> None:
-            return None
-
-        @staticmethod
-        def json() -> dict:
-            return {"storageId": "stored-1"}
-
     class FakeSession:
-        def post(self, *_args, **_kwargs) -> FakeResponse:
+        def post(self, *_args, **_kwargs) -> None:
             started.set()
-            assert closed.wait(5)
-            return FakeResponse()
+            while True:
+                time.sleep(1)
 
         @staticmethod
         def close() -> None:
-            closed.set()
+            return None
 
     monkeypatch.setattr("zenpdf_worker.worker.requests.Session", FakeSession)
     output = tmp_path / "output.pdf"
@@ -175,11 +196,52 @@ def test_blocked_upload_is_cancelled_and_registered_object_is_discarded(
     lease_thread.join(timeout=5)
 
     assert time.monotonic() - started_at < 3
-    assert [path for path, _args in worker.mutations] == [
-        "files:beginWorkerUpload",
-        "files:registerWorkerUpload",
-        "files:discardWorkerUpload",
-    ]
+    assert [path for path, _args in worker.mutations] == ["files:beginWorkerUpload"]
+
+
+def test_registration_and_cleanup_transport_failures_recover_from_journal(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class FakeResponse:
+        @staticmethod
+        def raise_for_status() -> None:
+            return None
+
+        @staticmethod
+        def json() -> dict:
+            return {"storageId": "stored-recovery"}
+
+    class FakeSession:
+        @staticmethod
+        def post(*_args, **_kwargs) -> FakeResponse:
+            return FakeResponse()
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr("zenpdf_worker.worker.requests.Session", FakeSession)
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"%PDF-output")
+    worker = _RecoveryUploadWorker()
+    worker.registration_failures = 1
+
+    with pytest.raises(RuntimeError, match="registration transport unavailable"):
+        worker._upload_outputs("job-1", [output], threading.Event())
+    entries = worker.upload_journal.entries()
+    assert len(entries) == 1
+    assert entries[0]["action"] == "register"
+    assert entries[0]["storageId"] == "stored-recovery"
+
+    recovered_worker = _RecoveryUploadWorker()
+    recovered_worker._recover_pending_uploads()
+    assert recovered_worker.upload_journal.entries()[0]["action"] == "uploaded"
+
+    recovered_worker.discard_failures = 1
+    recovered_worker._recover_pending_uploads()
+    assert recovered_worker.upload_journal.entries()[0]["action"] == "discard"
+    recovered_worker._recover_pending_uploads()
+    assert recovered_worker.upload_journal.entries() == []
 
 
 def test_completion_rejection_discards_registered_uploads(

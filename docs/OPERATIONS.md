@@ -32,6 +32,9 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_JOB_MEMORY_BYTES` (tool-process address-space limit; default 4 GiB)
   - `ZENPDF_JOB_OUTPUT_BYTES` (tool-process file-size limit; default 2 GiB)
   - `ZENPDF_HEARTBEAT_RETRIES` and `ZENPDF_HEARTBEAT_RETRY_SECONDS`
+  - `ZENPDF_UPLOAD_DEADLINE_SECONDS` (hard total output POST deadline; default 60)
+  - `ZENPDF_UPLOAD_JOURNAL_DIR` (durable recovery volume; default `/var/lib/zenpdf-worker/upload-recovery`)
+  - `ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS` (graceful retry window; default 30)
 
 ## Local run
 1. `cd apps/web && npx convex dev`
@@ -57,6 +60,7 @@ App URL: `http://localhost:3000`
 - Web: Vercel
 - Worker: Cloud Run container
 - Backend: Convex deployment with matching env values
+- Mount `ZENPDF_UPLOAD_JOURNAL_DIR` on storage that survives worker instance replacement. The Compose stack provides the `worker-upload-recovery` named volume; a production deployment must provide an equivalent durable mount.
 
 ### Post-release
 - Run smoke tests: upload -> process -> download across core tools.
@@ -69,7 +73,7 @@ App URL: `http://localhost:3000`
 - Worker runs as non-root.
 - Do not log file contents or PII.
 - Enforce SSRF guardrails in HTML-to-PDF (public-network only, redirect restrictions).
-- Each tool executes in its own process group with CPU, memory, output, core-dump, and wall-clock limits. Lease loss terminates that group and cancels an in-flight output request. Upload URLs require current lease ownership; pending uploads have a bounded TTL and registered objects are deleted after lease loss or rejected completion.
+- Each tool executes in its own process group with CPU, memory, output, core-dump, and wall-clock limits. Lease loss terminates that group and kills an in-flight output process even if the HTTP client ignores close. Upload URLs require current lease ownership. Returned storage IDs are fsynced before registration, and registration/deletion intent is retried from the durable journal until the server confirms the transition.
 - OCR calls must support a per-call timeout; legacy pytesseract APIs are rejected instead of falling back to an unbounded invocation.
 
 ## Observability baseline

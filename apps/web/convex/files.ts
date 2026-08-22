@@ -8,6 +8,9 @@ import { throwFriendlyError } from "./lib/errors";
 import { assertWorkerToken } from "./lib/worker_auth";
 import { resolveGlobalLimits } from "./lib/limits";
 
+const WORKER_UPLOAD_DEADLINE_MS = 2 * 60 * 1000;
+const WORKER_UPLOAD_RECOVERY_MS = 24 * 60 * 60 * 1000;
+
 export const generateUploadUrl = mutation({
   args: { anonId: v.optional(v.string()) },
   handler: async (ctx, args) => {
@@ -44,18 +47,55 @@ export const beginWorkerUpload = mutation({
     }
     const limits = await resolveGlobalLimits(ctx);
     const ttlMs = Math.min(limits.artifactTtlHours, 1) * 60 * 60 * 1000;
+    const uploadDeadlineAt = now + WORKER_UPLOAD_DEADLINE_MS;
     const pendingUploadId = await ctx.db.insert("pendingUploads", {
       jobId: args.jobId,
       workerId: args.workerId,
       filename: args.filename,
       sizeBytes: args.sizeBytes,
+      uploadDeadlineAt,
       createdAt: now,
-      expiresAt: now + Math.max(ttlMs, 5 * 60 * 1000),
+      expiresAt: now + Math.max(ttlMs, WORKER_UPLOAD_RECOVERY_MS),
     });
     return {
       pendingUploadId,
       uploadUrl: await ctx.storage.generateUploadUrl(),
+      uploadDeadlineAt,
     };
+  },
+});
+
+export const getWorkerUploadState = query({
+  args: {
+    jobId: v.id("jobs"),
+    pendingUploadId: v.id("pendingUploads"),
+    workerId: v.string(),
+    storageId: v.id("_storage"),
+    workerToken: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    assertWorkerToken(args.workerToken);
+    const pending = await ctx.db.get(args.pendingUploadId);
+    if (pending) {
+      if (
+        pending.jobId !== args.jobId ||
+        pending.workerId !== args.workerId ||
+        (pending.storageId && pending.storageId !== args.storageId)
+      ) {
+        return "mismatch";
+      }
+      return pending.storageId === args.storageId ? "registered" : "unregistered";
+    }
+    const artifact = await ctx.db
+      .query("artifacts")
+      .withIndex("by_job", (q) => q.eq("jobId", args.jobId))
+      .filter((q) => q.eq(q.field("storageId"), args.storageId))
+      .first();
+    if (artifact) {
+      return "committed";
+    }
+    const stored = await ctx.db.system.get(args.storageId);
+    return stored ? "orphaned" : "deleted";
   },
 });
 
