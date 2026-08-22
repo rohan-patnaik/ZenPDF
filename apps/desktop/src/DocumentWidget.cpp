@@ -10,6 +10,7 @@
 #include <QDialogButtonBox>
 #include <QFormLayout>
 #include <QIdentityProxyModel>
+#include <QKeyEvent>
 #include <QKeySequence>
 #include <QLabel>
 #include <QLineEdit>
@@ -39,6 +40,22 @@
 #include <utility>
 
 namespace {
+class ActivatingListView final : public QListView {
+public:
+    using QListView::QListView;
+
+protected:
+    void keyPressEvent(QKeyEvent* event) override {
+        if (event->key() == Qt::Key_Space && event->modifiers() == Qt::NoModifier
+            && hasFocus() && currentIndex().isValid()) {
+            emit activated(currentIndex());
+            event->accept();
+            return;
+        }
+        QListView::keyPressEvent(event);
+    }
+};
+
 class BookmarkDisplayModel final : public QIdentityProxyModel {
 public:
     using QIdentityProxyModel::QIdentityProxyModel;
@@ -174,7 +191,7 @@ void DocumentWidget::buildInterface() {
     auto* sideTabs = new QTabWidget(this);
     sideTabs->setMinimumWidth(220);
     sideTabs->setMaximumWidth(360);
-    auto* thumbnails = new QListView(sideTabs);
+    auto* thumbnails = new ActivatingListView(sideTabs);
     thumbnails->setModel(new ThumbnailModel(document_, thumbnails));
     thumbnails->setIconSize({ThumbnailModel::thumbnailWidth, 180});
     thumbnails->setViewMode(QListView::ListMode);
