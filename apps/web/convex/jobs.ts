@@ -426,11 +426,15 @@ export const failJob = mutation({
       return null;
     }
 
-    if (job.status !== "running" || job.claimedBy !== args.workerId) {
+    const now = Date.now();
+    if (
+      job.status !== "running" ||
+      job.claimedBy !== args.workerId ||
+      (job.claimExpiresAt ?? 0) <= now
+    ) {
       return job;
     }
 
-    const now = Date.now();
     assertTransition(job.status, "failed");
 
     await ctx.db.patch(args.jobId, {

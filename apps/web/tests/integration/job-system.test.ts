@@ -70,6 +70,18 @@ const generateUploadUrl = makeFunctionReference<
   string
 >("files:generateUploadUrl");
 
+const failJob = makeFunctionReference<
+  "mutation",
+  {
+    jobId: string;
+    workerId: string;
+    errorCode: string;
+    errorMessage?: string;
+    workerToken?: string;
+  },
+  { _id: string; status: string; claimedBy?: string } | null
+>("jobs:failJob");
+
 type CapacitySnapshot = {
   budget: { monthlyBudgetUsage: number; status: string };
 };
@@ -191,6 +203,56 @@ describe("job system", () => {
       expect(claimed?._id).toBe(jobId);
       expect(claimed?.status).toBe("running");
       expect(claimed?.attempts).toBe(1);
+    } finally {
+      if (previousWorkerToken === undefined) {
+        delete process.env.ZENPDF_WORKER_TOKEN;
+      } else {
+        process.env.ZENPDF_WORKER_TOKEN = previousWorkerToken;
+      }
+    }
+  });
+
+  it("rejects failure after lease expiry and lets another worker reclaim", async () => {
+    const t = convexTest(schema, modules).withIdentity({
+      subject: "lease_failure_user",
+      email: "lease-failure@example.com",
+    });
+    const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
+    process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
+    try {
+      const storageId = await t.run(async (ctx) =>
+        ctx.storage.store(new Blob(["input"])),
+      );
+      const { jobId } = await t.mutation(createJob, {
+        tool: "merge",
+        inputs: [{ storageId, filename: "sample.pdf", sizeBytes: 5 }],
+      });
+      await t.mutation(claimNextJob, {
+        workerId: "worker-stale",
+        workerToken: "test-worker-token",
+      });
+      await t.run(async (ctx) => {
+        await ctx.db.patch(jobId as never, { claimExpiresAt: Date.now() - 1 });
+      });
+
+      const rejected = await t.mutation(failJob, {
+        jobId,
+        workerId: "worker-stale",
+        errorCode: "SERVICE_CAPACITY_TEMPORARY",
+        workerToken: "test-worker-token",
+      });
+      expect(rejected?.status).toBe("running");
+      expect(rejected?.claimedBy).toBe("worker-stale");
+
+      const reclaimed = await t.mutation(claimNextJob, {
+        workerId: "worker-recovery",
+        workerToken: "test-worker-token",
+      });
+      expect(reclaimed?._id).toBe(jobId);
+      expect(reclaimed?.status).toBe("running");
+      expect((reclaimed as ClaimedJob & { claimedBy?: string })?.claimedBy).toBe(
+        "worker-recovery",
+      );
     } finally {
       if (previousWorkerToken === undefined) {
         delete process.env.ZENPDF_WORKER_TOKEN;
