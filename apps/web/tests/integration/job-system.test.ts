@@ -456,6 +456,16 @@ describe("job system", () => {
           anonId,
         }),
       ).rejects.toThrow();
+      await root.run(async (ctx) => {
+        await ctx.db.patch(
+          intents[index].reservationId as Id<"browserUploadReservations">,
+          {
+            status: "bound",
+            storageId: storageIds[index],
+            boundAt: Date.now(),
+          },
+        );
+      });
       await expect(
         root.mutation(createJob, {
           tool: "merge",
@@ -470,6 +480,12 @@ describe("job system", () => {
           ],
         }),
       ).rejects.toThrow();
+      await root.run(async (ctx) => {
+        await ctx.db.patch(
+          intents[index].reservationId as Id<"browserUploadReservations">,
+          { status: "issued", storageId: undefined, boundAt: undefined },
+        );
+      });
     }
     await expect(
       root.mutation(bindBrowserUpload, {

@@ -18,6 +18,7 @@ import {
   resolveUsageCounter,
 } from "./lib/usage";
 import { assertWorkerToken } from "./lib/worker_auth";
+import { storageIdHasConflictingOwner } from "./lib/storage_ownership";
 
 const jobInput = v.object({
   reservationId: v.id("browserUploadReservations"),
@@ -154,13 +155,14 @@ export const createJob = mutation({
         throwFriendlyError("USER_INPUT_INVALID");
       }
       const metadata = await ctx.db.system.get(input.storageId);
-      const cleanupRecord = await ctx.db
-        .query("storageCleanupRecords")
-        .withIndex("by_storage", (q) => q.eq("storageId", input.storageId))
-        .first();
+      const hasConflictingOwner = await storageIdHasConflictingOwner(
+        ctx,
+        input.storageId,
+        reservation._id,
+      );
       if (
         !metadata ||
-        cleanupRecord ||
+        hasConflictingOwner ||
         metadata.size !== reservation.sizeBytes ||
         metadata.contentType?.toLowerCase() !== reservation.contentType ||
         metadata._creationTime <= reservation._creationTime ||
