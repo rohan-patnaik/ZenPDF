@@ -40,6 +40,8 @@ add_executable(zenpdf
     src/main.cpp
     src/MainWindow.cpp
     src/MainWindow.h
+    src/ThumbnailModel.cpp
+    src/ThumbnailModel.h
 )
 target_link_libraries(zenpdf PRIVATE
     zenpdf_core
@@ -87,6 +89,8 @@ if(BUILD_TESTING)
     add_executable(zenpdf_document_widget_tests
         src/DocumentWidget.cpp
         src/DocumentWidget.h
+        src/ThumbnailModel.cpp
+        src/ThumbnailModel.h
         tests/DocumentWidgetTest.cpp
     )
     target_link_libraries(zenpdf_document_widget_tests PRIVATE
@@ -98,11 +102,25 @@ if(BUILD_TESTING)
         Qt6::Widgets
     )
     add_test(NAME zenpdf_document_widget_tests COMMAND zenpdf_document_widget_tests)
+    add_executable(zenpdf_thumbnail_model_tests
+        src/ThumbnailModel.cpp
+        src/ThumbnailModel.h
+        tests/ThumbnailModelTest.cpp
+    )
+    target_link_libraries(zenpdf_thumbnail_model_tests PRIVATE
+        Qt6::Gui
+        Qt6::Pdf
+        Qt6::Test
+    )
+    target_include_directories(zenpdf_thumbnail_model_tests PRIVATE src)
+    add_test(NAME zenpdf_thumbnail_model_tests COMMAND zenpdf_thumbnail_model_tests)
     add_executable(zenpdf_main_window_tests
         src/DocumentWidget.cpp
         src/DocumentWidget.h
         src/MainWindow.cpp
         src/MainWindow.h
+        src/ThumbnailModel.cpp
+        src/ThumbnailModel.h
         tests/MainWindowTest.cpp
     )
     target_link_libraries(zenpdf_main_window_tests PRIVATE
@@ -130,6 +148,9 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_document_widget_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+    set_tests_properties(zenpdf_thumbnail_model_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_main_window_tests PROPERTIES

@@ -2,11 +2,10 @@
 
 #include "DocumentSession.h"
 #include "PrintPolicy.h"
+#include "ThumbnailModel.h"
 
 #include <QAction>
-#include <QAbstractListModel>
 #include <QApplication>
-#include <QCache>
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QFormLayout>
@@ -26,7 +25,6 @@
 #include <QPrinter>
 #include <QProgressDialog>
 #include <QPainter>
-#include <QPixmap>
 #include <QPushButton>
 #include <QSignalBlocker>
 #include <QSpinBox>
@@ -41,49 +39,6 @@
 #include <utility>
 
 namespace {
-constexpr int kThumbnailWidth = 128;
-constexpr int kMaximumThumbnailHeight = 512;
-constexpr int kThumbnailCacheBytes = 32 * 1024 * 1024;
-
-class ThumbnailModel final : public QAbstractListModel {
-public:
-    explicit ThumbnailModel(QPdfDocument* document, QObject* parent = nullptr)
-        : QAbstractListModel(parent), document_(document), cache_(kThumbnailCacheBytes) {}
-
-    int rowCount(const QModelIndex& parent = {}) const override {
-        return parent.isValid() ? 0 : document_->pageCount();
-    }
-
-    QVariant data(const QModelIndex& index, int role) const override {
-        if (!index.isValid() || index.row() < 0 || index.row() >= document_->pageCount()) {
-            return {};
-        }
-        if (role == Qt::DisplayRole || role == Qt::AccessibleTextRole) {
-            return QStringLiteral("Page %1").arg(document_->pageLabel(index.row()));
-        }
-        if (role != Qt::DecorationRole) {
-            return {};
-        }
-        if (const auto* cached = cache_.object(index.row())) {
-            return *cached;
-        }
-        const auto pointSize = document_->pagePointSize(index.row());
-        if (pointSize.isEmpty()) {
-            return {};
-        }
-        const int height = std::clamp(
-            qRound(kThumbnailWidth * pointSize.height() / pointSize.width()), 1, kMaximumThumbnailHeight);
-        auto pixmap = QPixmap::fromImage(document_->render(index.row(), {kThumbnailWidth, height}));
-        const int cost = std::max(1, pixmap.width() * pixmap.height() * 4);
-        cache_.insert(index.row(), new QPixmap(pixmap), cost);
-        return pixmap;
-    }
-
-private:
-    QPdfDocument* document_;
-    mutable QCache<int, QPixmap> cache_;
-};
-
 class BookmarkDisplayModel final : public QIdentityProxyModel {
 public:
     using QIdentityProxyModel::QIdentityProxyModel;
@@ -221,7 +176,7 @@ void DocumentWidget::buildInterface() {
     sideTabs->setMaximumWidth(360);
     auto* thumbnails = new QListView(sideTabs);
     thumbnails->setModel(new ThumbnailModel(document_, thumbnails));
-    thumbnails->setIconSize({kThumbnailWidth, 180});
+    thumbnails->setIconSize({ThumbnailModel::thumbnailWidth, 180});
     thumbnails->setViewMode(QListView::ListMode);
     thumbnails->setAccessibleName(tr("Page thumbnails"));
     sideTabs->addTab(thumbnails, tr("Pages"));

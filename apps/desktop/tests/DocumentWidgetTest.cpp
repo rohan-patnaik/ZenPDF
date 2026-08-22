@@ -2,6 +2,7 @@
 
 #include <QPainter>
 #include <QPdfWriter>
+#include <QListView>
 #include <QProcess>
 #include <QStandardPaths>
 #include <QTemporaryDir>
@@ -12,6 +13,7 @@ class DocumentWidgetTest final : public QObject {
 
 private slots:
     void clearsPasswordAfterUnlock();
+    void exposesAccessibleThumbnailNames();
 };
 
 namespace {
@@ -46,6 +48,27 @@ void DocumentWidgetTest::clearsPasswordAfterUnlock() {
     QVERIFY(widget.needsPassword());
     QVERIFY(widget.unlock(QStringLiteral("reader")));
     QCOMPARE(widget.document_->password(), QString{});
+}
+
+void DocumentWidgetTest::exposesAccessibleThumbnailNames() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("accessible.pdf"));
+    createPdf(source);
+
+    DocumentWidget widget(source);
+    QVERIFY(widget.isReady());
+    QListView* thumbnails = nullptr;
+    for (auto* candidate : widget.findChildren<QListView*>()) {
+        if (candidate->accessibleName() == QStringLiteral("Page thumbnails")) {
+            thumbnails = candidate;
+            break;
+        }
+    }
+    QVERIFY(thumbnails != nullptr);
+    QCOMPARE(thumbnails->model()->rowCount(), 1);
+    QCOMPARE(thumbnails->model()->index(0, 0).data(Qt::AccessibleTextRole).toString(),
+             QStringLiteral("Page 1"));
 }
 
 QTEST_MAIN(DocumentWidgetTest)
