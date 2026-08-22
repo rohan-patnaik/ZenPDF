@@ -165,53 +165,58 @@ describe("bounded storage orphan cleanup", () => {
     ).toMatchObject({ storageId, kind: "jobInput" });
   });
 
-  it("serializes binding against candidate marking and rejects post-delete binding", async () => {
+  it("proves both serialized bind/delete orderings and rejects post-delete binding", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);
-    const storageId = await makeOldStorage(t, "input");
+    const boundFirstId = await makeOldStorage(t, "bound");
+    const deleteFirstId = await makeOldStorage(t, "delete");
     await t.mutation(backfill, { maxJobs: 25 });
-    const reservation = await t.mutation(beginBrowserUpload, {
+    const boundFirstReservation = await t.mutation(beginBrowserUpload, {
       anonId: "cleanup-race-anon",
-      filename: "input.pdf",
+      filename: "bound.pdf",
       sizeBytes: 5,
       contentType: "application/octet-stream",
     });
-
-    const [markResult, bindResult] = await Promise.allSettled([
-      t.mutation(markCandidates, { mode: "delete", ...bounds }),
+    await t.mutation(bindBrowserUpload, {
+      reservationId: boundFirstReservation.reservationId,
+      storageId: boundFirstId,
+      anonId: "cleanup-race-anon",
+    });
+    const deleteFirstReservation = await t.mutation(beginBrowserUpload, {
+      anonId: "cleanup-race-anon",
+      filename: "delete.pdf",
+      sizeBytes: 6,
+      contentType: "application/octet-stream",
+    });
+    const marked = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+    });
+    expect(marked.candidateIds).toHaveLength(1);
+    expect(await t.run(async (ctx) => ctx.db.system.get(boundFirstId))).not.toBeNull();
+    await expect(
       t.mutation(bindBrowserUpload, {
-        reservationId: reservation.reservationId,
-        storageId,
+        reservationId: deleteFirstReservation.reservationId,
+        storageId: deleteFirstId,
         anonId: "cleanup-race-anon",
       }),
-    ]);
-    expect(markResult.status).toBe("fulfilled");
-    const marked = (markResult as PromiseFulfilledResult<{
-      runId: string;
-      candidateIds: string[];
-    }>).value;
-    if (marked.candidateIds.length > 0) {
-      expect(bindResult.status).toBe("rejected");
-      expect(
-        await t.mutation(finalizeCandidates, {
-          runId: marked.runId,
-          maxDeleted: 5,
-          maxBytesDeleted: 1024 * 1024,
-          maxWallMs: 1000,
-        }),
-      ).toMatchObject({ deleted: 1 });
-      expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).toBeNull();
-      await expect(
-        t.mutation(bindBrowserUpload, {
-          reservationId: reservation.reservationId,
-          storageId,
-          anonId: "cleanup-race-anon",
-        }),
-      ).rejects.toThrow();
-    } else {
-      expect(bindResult.status).toBe("fulfilled");
-      expect(await t.run(async (ctx) => ctx.db.system.get(storageId))).not.toBeNull();
-    }
+    ).rejects.toThrow();
+    expect(
+      await t.mutation(finalizeCandidates, {
+        runId: marked.runId,
+        maxDeleted: 5,
+        maxBytesDeleted: 1024 * 1024,
+        maxWallMs: 1000,
+      }),
+    ).toMatchObject({ deleted: 1 });
+    expect(await t.run(async (ctx) => ctx.db.system.get(deleteFirstId))).toBeNull();
+    await expect(
+      t.mutation(bindBrowserUpload, {
+        reservationId: deleteFirstReservation.reservationId,
+        storageId: deleteFirstId,
+        anonId: "cleanup-race-anon",
+      }),
+    ).rejects.toThrow();
   });
 
   it("keeps a registered worker output through completion/finalization races", async () => {
