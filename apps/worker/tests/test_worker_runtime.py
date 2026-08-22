@@ -30,6 +30,202 @@ def _hung_tool(_job: dict, _inputs: list[Path], temp: Path) -> ToolRunResult:
     return ToolRunResult([])
 
 
+class _FakeSender:
+    @staticmethod
+    def close() -> None:
+        return None
+
+
+class _FakeReceiver:
+    def __init__(self, message: tuple[object, ...] | None = None) -> None:
+        self.message = message
+
+    def poll(self, timeout: float) -> bool:
+        if self.message is None:
+            time.sleep(min(max(timeout, 0.0), 0.001))
+            return False
+        return True
+
+    def recv(self) -> tuple[object, ...]:
+        assert self.message is not None
+        message = self.message
+        self.message = None
+        return message
+
+    @staticmethod
+    def close() -> None:
+        return None
+
+
+class _StubbornChild:
+    pid = 424246
+
+    def __init__(self, on_start) -> None:  # type: ignore[no-untyped-def]
+        self.on_start = on_start
+        self.joins: list[int | float | None] = []
+        self.terminated = False
+        self.killed = False
+        self.closed = False
+        self.exitcode = None
+
+    def start(self) -> None:
+        self.on_start()
+
+    @staticmethod
+    def is_alive() -> bool:
+        return True
+
+    def join(self, timeout: int | float | None = None) -> None:
+        self.joins.append(timeout)
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakeChildContext:
+    def __init__(
+        self,
+        child: _StubbornChild,
+        message: tuple[object, ...] | None = None,
+    ) -> None:
+        self.child = child
+        self.receiver = _FakeReceiver(message)
+
+    def Pipe(self, duplex: bool = False) -> tuple[_FakeReceiver, _FakeSender]:
+        assert not duplex
+        return self.receiver, _FakeSender()
+
+    def Process(self, *_args: object, **_kwargs: object) -> _StubbornChild:
+        return self.child
+
+
+class _IntegratedRestartWorker(ZenPdfWorker):
+    def __init__(self, mode: str, trigger: str) -> None:
+        super().__init__("https://example.invalid", "worker-a", "token")
+        self.mode = mode
+        self.trigger = trigger
+        self.mutations: list[str] = []
+        self.claims = 0
+        self.child_started = threading.Event()
+        self.journal_entry_scans = 0
+
+    def _mutation(self, path: str, _args: dict) -> object:
+        self.mutations.append(path)
+        if path == "jobs:claimNextJob":
+            self.claims += 1
+            if self.claims == 1:
+                return {"_id": "job-1", "inputs": [], "tool": "merge"}
+            self.request_shutdown()
+            return None
+        if path == "files:beginWorkerUpload":
+            return {
+                "pendingUploadId": "pending-1",
+                "uploadUrl": "https://upload.invalid/pending-1",
+            }
+        if path == "jobs:completeJob":
+            return {"status": "succeeded", "claimedBy": self.worker_id}
+        if path == "jobs:failJob":
+            return {"status": "failed", "claimedBy": self.worker_id}
+        if path == "files:registerWorkerUpload":
+            return True
+        raise AssertionError(path)
+
+    def _report(self, _job_id: str, _progress: int) -> bool:
+        return not (
+            self.trigger == "lease" and self.child_started.is_set()
+        )
+
+    def _download_inputs(self, _inputs: list[dict], _temp: Path) -> list[Path]:
+        return []
+
+    def _run_tool_bounded(
+        self,
+        job: dict,
+        inputs: list[Path],
+        temp: Path,
+        ownership_lost: threading.Event,
+        runner=None,  # type: ignore[no-untyped-def]
+    ) -> ToolRunResult:
+        if self.mode == "upload":
+            output = temp / "output.pdf"
+            output.write_bytes(b"%PDF-output")
+            return ToolRunResult([output])
+        return super()._run_tool_bounded(
+            job, inputs, temp, ownership_lost, runner=runner
+        )
+
+
+def _run_integrated_stubborn_case(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+    trigger: str,
+    message: tuple[object, ...] | None = None,
+    create_unreadable_journal: bool = False,
+    break_stdout: bool = False,
+    seed_existing_journal: bool = False,
+) -> tuple[_IntegratedRestartWorker, _StubbornChild, list[int], float]:
+    worker = _IntegratedRestartWorker(mode, trigger)
+    original_entries = worker.upload_journal.entries
+
+    def counted_entries(*args, **kwargs):  # type: ignore[no-untyped-def]
+        worker.journal_entry_scans += 1
+        return original_entries(*args, **kwargs)
+
+    monkeypatch.setattr(worker.upload_journal, "entries", counted_entries)
+
+    def child_started() -> None:
+        worker.child_started.set()
+        if seed_existing_journal:
+            worker.upload_journal.save(
+                {
+                    "jobId": "existing-job",
+                    "pendingUploadId": "existing-pending",
+                    "storageId": "existing-storage",
+                    "action": "discard",
+                }
+            )
+        if create_unreadable_journal:
+            path = worker.upload_journal.root / f"{'0' * 64}.json"
+            path.write_text("UPLOAD_SECRET_MARKER", encoding="utf-8")
+            path.chmod(0o600)
+        if trigger == "shutdown":
+            worker.request_shutdown()
+
+    child = _StubbornChild(child_started)
+    context = _FakeChildContext(child, message)
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.multiprocessing.get_context", lambda *_args: context
+    )
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.os.killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    monkeypatch.setenv("ZENPDF_JOB_WALL_SECONDS", "1")
+    monkeypatch.setenv("ZENPDF_TOOL_PROCESS_JOIN_SECONDS", "1")
+    monkeypatch.setenv("ZENPDF_UPLOAD_DEADLINE_SECONDS", "1")
+    monkeypatch.setenv("ZENPDF_UPLOAD_PROCESS_JOIN_SECONDS", "1")
+    monkeypatch.setenv("ZENPDF_WORKER_HEARTBEAT_SECONDS", "0.01")
+    monkeypatch.setenv("ZENPDF_POLL_INTERVAL", "0")
+    if break_stdout:
+        monkeypatch.setattr(
+            "builtins.print",
+            lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("UPLOAD_SECRET_MARKER")
+            ),
+        )
+    exits: list[int] = []
+    started_at = time.monotonic()
+    _run_supervised(worker, exits.append)
+    elapsed = time.monotonic() - started_at
+    return worker, child, exits, elapsed
+
+
 class _LeaseWorker(ZenPdfWorker):
     def __init__(self, reports: list[object]) -> None:
         super().__init__("https://example.invalid", "worker-a", "token")
@@ -615,6 +811,154 @@ def test_stubborn_tool_process_sets_shared_forced_exit_without_close(
     _run_supervised(worker, exits.append)
     assert exits == [70]
     assert not process.closed
+
+
+@pytest.mark.parametrize("trigger", ["timeout", "lease", "shutdown"])
+def test_real_run_loop_stubborn_tool_unwinds_to_supervisor_restart(
+    trigger: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch, "tool", trigger
+    )
+
+    assert exits == [70]
+    assert elapsed < 3
+    assert worker.claims == 1
+    assert worker.mutations.count("jobs:claimNextJob") == 1
+    assert "jobs:completeJob" not in worker.mutations
+    assert "jobs:failJob" not in worker.mutations
+    assert "files:registerWorkerUpload" not in worker.mutations
+    assert child.terminated and child.killed
+    assert child.joins == [1, 1]
+    assert not child.closed
+    assert worker._stubborn_tool_processes == [child]
+    assert worker.journal_entry_scans == 2
+
+
+@pytest.mark.parametrize("trigger", ["timeout", "lease", "shutdown"])
+def test_real_run_loop_stubborn_upload_unwinds_to_supervisor_restart(
+    trigger: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch, "upload", trigger
+    )
+
+    assert exits == [70]
+    assert elapsed < 3
+    assert worker.claims == 1
+    assert worker.mutations.count("jobs:claimNextJob") == 1
+    assert worker.mutations.count("files:beginWorkerUpload") == 1
+    assert "jobs:completeJob" not in worker.mutations
+    assert "jobs:failJob" not in worker.mutations
+    assert "files:registerWorkerUpload" not in worker.mutations
+    assert child.terminated and child.killed
+    assert child.joins == [1, 1]
+    assert not child.closed
+    assert worker._stubborn_upload_processes == [child]
+    assert worker.upload_journal.entries() == []
+    assert worker.journal_entry_scans == 3
+
+
+def test_real_run_loop_fsyncs_known_upload_before_supervisor_restart(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch,
+        "upload",
+        "successful-ipc",
+        message=("ok", "stored-known"),
+    )
+
+    assert exits == [70]
+    assert elapsed < 2
+    assert worker.claims == 1
+    assert worker.mutations == [
+        "jobs:claimNextJob",
+        "files:beginWorkerUpload",
+    ]
+    assert child.terminated and child.killed
+    assert child.joins == [1, 1]
+    assert not child.closed
+    retained = worker.upload_journal.load("pending-1")
+    assert retained == {
+        "jobId": "job-1",
+        "pendingUploadId": "pending-1",
+        "storageId": "stored-known",
+        "action": "register",
+    }
+    restarted_journal = type(worker.upload_journal)(worker.upload_journal.root)
+    assert restarted_journal.load("pending-1") == retained
+    assert worker.journal_entry_scans == 2
+
+
+def test_real_run_loop_discards_successful_tool_ipc_after_stuck_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch,
+        "tool",
+        "successful-ipc",
+        message=("ok", ToolRunResult([])),
+    )
+
+    assert exits == [70]
+    assert elapsed < 2
+    assert worker.claims == 1
+    assert worker.mutations == ["jobs:claimNextJob"]
+    assert "jobs:completeJob" not in worker.mutations
+    assert child.terminated and child.killed
+    assert child.joins == [1, 0, 1, 1]
+    assert not child.closed
+    assert worker._stubborn_tool_processes == [child]
+    assert worker.journal_entry_scans == 2
+
+
+def test_real_run_loop_retains_existing_journal_when_upload_id_is_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch,
+        "upload",
+        "timeout",
+        seed_existing_journal=True,
+    )
+
+    assert exits == [70]
+    assert elapsed < 3
+    assert worker.mutations == [
+        "jobs:claimNextJob",
+        "files:beginWorkerUpload",
+    ]
+    assert child.terminated and child.killed
+    assert not child.closed
+    assert worker.upload_journal.load("existing-pending") == {
+        "jobId": "existing-job",
+        "pendingUploadId": "existing-pending",
+        "storageId": "existing-storage",
+        "action": "discard",
+    }
+
+
+def test_real_run_loop_exit70_survives_unreadable_journal_and_broken_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    worker, child, exits, elapsed = _run_integrated_stubborn_case(
+        monkeypatch,
+        "tool",
+        "timeout",
+        create_unreadable_journal=True,
+        break_stdout=True,
+    )
+
+    assert exits == [70]
+    assert elapsed < 3
+    assert worker.claims == 1
+    assert worker.mutations == ["jobs:claimNextJob"]
+    assert child.terminated and child.killed
+    assert child.joins == [1, 1]
+    assert not child.closed
+    assert worker.journal_entry_scans == 2
+    assert (worker.upload_journal.root / f"{'0' * 64}.json").exists()
 
 
 def test_supervisor_sanitizes_uncaught_run_and_drain_then_forces_exit(

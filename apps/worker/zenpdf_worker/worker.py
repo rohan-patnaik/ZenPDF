@@ -211,6 +211,10 @@ class WorkerShutdown(RuntimeError):
     """Raised when shutdown cancels active worker processing."""
 
 
+class SupervisorRestart(RuntimeError):
+    """Raised after child termination becomes uncertain and claims must stop."""
+
+
 TOOL_IPC_ERROR_CODES = {
     "USER_INPUT_INVALID",
     "TOOL_EXECUTION_FAILED",
@@ -390,16 +394,23 @@ class ZenPdfWorker:
         )
         self.upload_journal = UploadJournal(journal_root)
         self._shutdown_requested = threading.Event()
+        self._supervisor_restart_requested = threading.Event()
         self._stubborn_upload_processes: List[multiprocessing.Process] = []
         self._stubborn_tool_processes: List[multiprocessing.Process] = []
-        self._supervisor_force_exit_required = False
+
+    @property
+    def _supervisor_force_exit_required(self) -> bool:
+        """Compatibility view of the dedicated supervisor-restart state."""
+        return self._supervisor_restart_requested.is_set()
 
     def run(self) -> None:
         """Run the worker polling loop."""
         poll_interval = float(os.environ.get("ZENPDF_POLL_INTERVAL", "5"))
         self.upload_journal.ensure_ready()
         while not self._shutdown_requested.is_set():
+            self._require_supervisor_ready()
             self._recover_pending_uploads()
+            self._require_supervisor_ready()
             job = self._mutation(
                 "jobs:claimNextJob",
                 {"workerId": self.worker_id, "workerToken": self.worker_token},
@@ -408,14 +419,20 @@ class ZenPdfWorker:
                 self._shutdown_requested.wait(max(poll_interval, 0.0))
                 continue
             self._process_job(job)
+            self._require_supervisor_ready()
 
     def request_shutdown(self) -> None:
         """Stop claiming work; durable upload recovery is drained before return."""
         self._shutdown_requested.set()
 
     def _require_running(self) -> None:
+        self._require_supervisor_ready()
         if self._shutdown_requested.is_set():
             raise WorkerShutdown("Worker shutdown requested")
+
+    def _require_supervisor_ready(self) -> None:
+        if self._supervisor_restart_requested.is_set():
+            raise SupervisorRestart("Worker supervisor restart required")
 
     def _process_job(self, job: Dict[str, Any]) -> None:
         """Process a single job from Convex."""
@@ -473,6 +490,8 @@ class ZenPdfWorker:
                 raise JobOwnershipLost("Job lease was lost before completion")
             uploads_committed = True
             self._confirm_uploaded_outputs(output_payload)
+        except SupervisorRestart:
+            raise
         except WorkerShutdown:
             print(f"Job {job_id} stopped for worker shutdown")
         except JobOwnershipLost:
@@ -505,7 +524,11 @@ class ZenPdfWorker:
             stop_event.set()
             if heartbeat is not None:
                 heartbeat.join(timeout=1)
-            if output_payload and not uploads_committed:
+            if (
+                output_payload
+                and not uploads_committed
+                and not self._supervisor_restart_requested.is_set()
+            ):
                 self._discard_uploaded_outputs(output_payload)
 
     def _is_owned_job(self, result: Any, expected_status: str = "running") -> bool:
@@ -695,6 +718,10 @@ class ZenPdfWorker:
                 )
                 if stopped:
                     process.close()
+                else:
+                    raise SupervisorRestart(
+                        "Tool child termination requires supervisor restart"
+                    ) from None
 
     def _terminate_tool_process(self, process: multiprocessing.Process) -> bool:
         """Bound tool TERM/KILL joins and retain a stubborn live handle."""
@@ -716,7 +743,7 @@ class ZenPdfWorker:
         def retain_for_supervisor() -> bool:
             if process not in stubborn_processes:
                 stubborn_processes.append(process)
-            self._supervisor_force_exit_required = True
+            self._supervisor_restart_requested.set()
             return False
 
         try:
@@ -1094,6 +1121,8 @@ class ZenPdfWorker:
                     }
                 )
             return payload
+        except SupervisorRestart:
+            raise
         except BaseException:
             self._discard_uploaded_outputs(payload)
             raise
@@ -1153,6 +1182,15 @@ class ZenPdfWorker:
                 )
                 if stopped:
                     process.close()
+                else:
+                    try:
+                        self._retain_known_upload_for_restart(
+                            job_id, pending_id, outcome
+                        )
+                    finally:
+                        raise SupervisorRestart(
+                            "Upload child termination requires supervisor restart"
+                        ) from None
         if outcome[0] != "ok":
             error_code = _stable_upload_ipc_code(
                 outcome[1] if len(outcome) > 1 else None
@@ -1175,6 +1213,30 @@ class ZenPdfWorker:
             self._discard_pending_upload(pending_id, storage_id)
             raise JobOwnershipLost("Job ownership changed during output upload")
         return storage_id
+
+    def _retain_known_upload_for_restart(
+        self,
+        job_id: str,
+        pending_id: str,
+        outcome: tuple[Any, ...] | None,
+    ) -> None:
+        """Fsync a returned storage ID without making another backend call."""
+        if (
+            not isinstance(outcome, tuple)
+            or len(outcome) < 2
+            or outcome[0] != "ok"
+            or not isinstance(outcome[1], str)
+            or not outcome[1]
+        ):
+            return
+        self.upload_journal.save(
+            {
+                "jobId": job_id,
+                "pendingUploadId": pending_id,
+                "storageId": outcome[1],
+                "action": "register",
+            }
+        )
 
     def _stop_upload_process(self, process: multiprocessing.Process) -> bool:
         """Bound both joins; ask the supervisor to kill an uninterruptible group."""
@@ -1346,6 +1408,9 @@ class ZenPdfWorker:
 
     def _drain_upload_recovery(self) -> None:
         """Run a strictly bounded shutdown batch; durable state survives timeout."""
+        if self._supervisor_restart_requested.is_set():
+            self.upload_journal.entries(limit=1)
+            return
         grace_seconds = _positive_env_int("ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS", 30)
         max_operations = _positive_env_int("ZENPDF_UPLOAD_SHUTDOWN_MAX_OPERATIONS", 64)
         deadline = time.monotonic() + grace_seconds
