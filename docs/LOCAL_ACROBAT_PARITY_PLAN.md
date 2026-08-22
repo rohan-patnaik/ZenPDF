@@ -12,6 +12,10 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 - Adobe accounts, cloud storage/sharing, hosted review/collaboration, cloud e-sign request/tracking, third-party cloud integrations, AI Assistant, PDF Spaces, Express assets/templates, proprietary services, and proprietary UI/assets/wording are excluded rather than local capability rows.
 - Interoperability means standards-based round trips with legally redistributable fixtures and independent readers. It does not mean copying another product's implementation or presentation.
 
+## Published implementation baseline
+
+This M1 work starts from published branch commit `8e5b33693f0703681b13977d3b8ab110bb5422e2`, tree `923f1a754ccb01aa1e24494ccd6c1ee93038ab2c`. Exact-tip [CI run 32570385928](https://github.com/rohan-patnaik/ZenPDF/actions/runs/32570385928) passed governance, web, worker, desktop Arch package, and product-container jobs. That run validates the Option 1 publication baseline only; it is not evidence for later commits or a desktop capability status change.
+
 ## Counts
 
 | Status | Count |
@@ -51,13 +55,13 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L021 | Full-screen presentation reading | M1 / Reader | Wayland shell | Partial | Escape/screen/compositor tests missing | Real compositor evidence missing |
 | L022 | Bounded local printing | M1 / Print | Qt PrintSupport | Partial | `PrintPolicyTest.cpp`; real backend missing | CUPS/printer output comparison missing |
 | L023 | Merge documents into a new file | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; forms/outlines corpus remains | Independent-reader reopen remains |
-| L024 | Extract page ranges into a new file | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; permission fixtures remain | Independent-reader reopen remains |
+| L024 | Extract page ranges into a new file | M1 / Organizer | Structure adapter | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence`; broad permission fixtures remain | Generated outline/annotation fixture reopens in Qt PDF; independent producer corpus missing |
 | L025 | Persistently rotate page ranges | M1 / Organizer | Structure adapter | Partial | `QpdfOperationsTest.cpp`; UI/reopen matrix remains | Independent-reader reopen remains |
-| L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | Output-cap/cancel/cleanup tests exist; process isolation remains | N/A |
-| L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | Only extraction/rotation slices exist; undo/reopen and split missing | Mixed-box/annotation corpus missing |
+| L026 | Atomic, cancellable, bounded organizer jobs | M1 / Organizer | Helper isolation | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::cancellationDuringToolLeavesNoOutputOrStaging` plus timeout/output/no-clobber tests; process isolation remains | N/A |
+| L027 | Insert, delete, reorder, replace, crop, and split pages | M1 / Organizer | Structure/write adapter decision | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence` and `apps/desktop/tests/MainWindowTest.cpp::successfulOrganizerOutputOpensAsCleanTab`; insert/reorder/replace/crop/split/undo remain | Generated outline/annotation fixture only; mixed-box and independent-reader corpus missing |
 | L028 | View and safely extract embedded attachments | M1 / Reader | Attachment parser/isolation decision | Not started | Hostile-name/type/size/explicit-destination fixtures | Standard embedded-file corpus required |
 | L029 | View and fill basic AcroForms | M1 / Forms | Forms engine decision | Not started | Field/appearance/save/reopen fixtures | Multiple-reader form round trip |
-| L030 | Preserve existing annotations/forms on save | M1 / Organizer | Write adapter decision | Partial | Current new-file operations need preservation corpus | Multiple-reader comparison missing |
+| L030 | Preserve existing annotations/forms on save | M1 / Organizer | Write adapter decision | Partial | Generated retained text-annotation/outline fixture passes `apps/desktop/tests/QpdfOperationsTest.cpp::extractsAndDeletesWithReopenEquivalence`; forms/tagged/signed corpus missing | Multiple-reader comparison missing |
 | L031 | Text markup annotations | M2 / Review | Annotation adapter decision | Not started | Selection/appearance/undo/reopen fixtures | ISO annotation round trip |
 | L032 | Notes and free-text annotations | M2 / Review | Annotation adapter decision | Not started | Fonts/appearance/undo/reopen fixtures | ISO annotation round trip |
 | L033 | Ink, shapes, and custom stamps | M2 / Review | Annotation adapter decision | Not started | Pointer/stylus/keyboard/reopen fixtures | ISO annotation round trip |
@@ -101,7 +105,7 @@ Exactly 76 local capability rows are tracked below. Allowed statuses are `Not st
 | L071 | Encrypted, damaged, signed, tagged compatibility corpus | M6 / Quality | Redistributable fixtures | Partial | Small generated fixtures exist; broad legal corpus missing | Multiple independent producers/readers |
 | L072 | Large-document budgets and decompression-bomb defenses | M6 / Security | Resource telemetry | Partial | `apps/desktop/tests/QpdfOperationsTest.cpp::outputCapLeavesNoOutputOrStaging` and `apps/worker/tests/test_worker_runtime.py::test_hung_tool_hits_wall_limit_and_kills_descendant`; input-size, decompression, memory, and render corpus remains | N/A |
 | L073 | Parser/converter fuzzing and risky-helper isolation | M6 / Security | Sandbox architecture decision | Partial | Bounded qpdf child exists; fuzz/sandbox CI missing | N/A |
-| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Pinned Ubuntu CI build is green; artifact comparison missing | Clean Arch rebuild missing |
+| L074 | Reproducible Arch/package artifacts | M6 / Release | Packaging decision | Partial | Published baseline exact-tip Arch package CI run 32570385928 is green; this slice requires its own exact-tip run | Independent artifact comparison missing |
 | L075 | Dependency lock, SBOM, notices, and license policy | M6 / Release | Artifact-derived transitive inventory | Partial | CI validates direct package pins/hashes, SPDX expressions, notices, and policy; transitive artifact inventory is absent | Direct package provenance is reviewable; release-grade transitive evidence missing |
 | L076 | Real Omarchy Quattro/Wayland release smoke | M6 / Release | Compatible device/session | Blocked | No compatible session available in current CI/Windows host | Required before release claim |
 

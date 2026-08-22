@@ -149,6 +149,11 @@ void MainWindow::buildMenus() {
     connect(mergeAction, &QAction::triggered, this, &MainWindow::mergeDocuments);
     auto* extractAction = organizeMenu->addAction(tr("&Extract pages to a new file…"));
     connect(extractAction, &QAction::triggered, this, &MainWindow::extractPages);
+    auto* deleteAction = organizeMenu->addAction(tr("&Delete selected pages into a new file…"));
+    deleteAction->setObjectName(QStringLiteral("deletePagesAction"));
+    deleteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+    deleteAction->setStatusTip(tr("Create a new PDF without the selected pages; the open document is unchanged"));
+    connect(deleteAction, &QAction::triggered, this, &MainWindow::deletePages);
     auto* rotateAction = organizeMenu->addAction(tr("&Rotate pages into a new file…"));
     connect(rotateAction, &QAction::triggered, this, &MainWindow::rotatePages);
 
@@ -280,12 +285,7 @@ void MainWindow::mergeDocuments() {
     const auto result = runOrganizerTask(this, tr("Merging PDFs"), [inputs, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::merge(inputs, output, cancelled);
     });
-    if (result.succeeded) {
-        openPdf(output);
-        statusBar()->showMessage(result.message, 5'000);
-    } else if (!result.message.contains(tr("cancelled"), Qt::CaseInsensitive)) {
-        QMessageBox::warning(this, tr("Merge did not complete"), result.message);
-    }
+    finishOrganizerTask(output, result, tr("Merge did not complete"));
 }
 
 void MainWindow::extractPages() {
@@ -313,12 +313,47 @@ void MainWindow::extractPages() {
     const auto result = runOrganizerTask(this, tr("Extracting pages"), [input, range, pageCount, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::extract(input, range, pageCount, output, cancelled);
     });
-    if (result.succeeded) {
-        openPdf(output);
-        statusBar()->showMessage(result.message, 5'000);
-    } else if (!result.message.contains(tr("cancelled"), Qt::CaseInsensitive)) {
-        QMessageBox::warning(this, tr("Extraction did not complete"), result.message);
+    finishOrganizerTask(output, result, tr("Extraction did not complete"));
+}
+
+void MainWindow::deletePages() {
+    auto* document = currentDocument();
+    if (document == nullptr) {
+        QMessageBox::information(this, tr("Open a PDF first"), tr("Page deletion works on the active document."));
+        return;
     }
+    bool accepted = false;
+    const auto range = QInputDialog::getText(
+        this,
+        tr("Delete selected pages into a new file"),
+        tr("Pages to remove (for example 1-3,5):"),
+        QLineEdit::Normal,
+        {},
+        &accepted);
+    if (!accepted) {
+        return;
+    }
+    if (!QpdfOperations::isValidPageRange(range, document->pageCount())) {
+        QMessageBox::warning(
+            this,
+            tr("Invalid page range"),
+            tr("Enter pages within 1–%1, such as 1-3,5.").arg(document->pageCount()));
+        return;
+    }
+    const auto output = chooseOutputPath(
+        QFileInfo(document->filePath()).completeBaseName() + QStringLiteral("-pages-removed.pdf"));
+    if (output.isEmpty()) {
+        return;
+    }
+    const auto input = document->filePath();
+    const int pageCount = document->pageCount();
+    const auto result = runOrganizerTask(
+        this,
+        tr("Creating PDF without selected pages"),
+        [input, range, pageCount, output](const std::atomic_bool* cancelled) {
+            return QpdfOperations::deletePages(input, range, pageCount, output, cancelled);
+        });
+    finishOrganizerTask(output, result, tr("Page deletion did not complete"));
 }
 
 void MainWindow::rotatePages() {
@@ -352,11 +387,18 @@ void MainWindow::rotatePages() {
     const auto result = runOrganizerTask(this, tr("Rotating pages"), [input, range, pageCount, clockwise, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::rotate(input, range, pageCount, clockwise, output, cancelled);
     });
+    finishOrganizerTask(output, result, tr("Rotation did not complete"));
+}
+
+void MainWindow::finishOrganizerTask(
+    const QString& outputPath,
+    const QpdfResult& result,
+    const QString& failureTitle) {
     if (result.succeeded) {
-        openPdf(output);
+        openPdf(outputPath);
         statusBar()->showMessage(result.message, 5'000);
     } else if (!result.message.contains(tr("cancelled"), Qt::CaseInsensitive)) {
-        QMessageBox::warning(this, tr("Rotation did not complete"), result.message);
+        QMessageBox::warning(this, failureTitle, result.message);
     }
 }
 

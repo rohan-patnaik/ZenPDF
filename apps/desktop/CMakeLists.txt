@@ -89,6 +89,23 @@ if(BUILD_TESTING)
         Qt6::Widgets
     )
     add_test(NAME zenpdf_document_widget_tests COMMAND zenpdf_document_widget_tests)
+    add_executable(zenpdf_main_window_tests
+        src/DocumentWidget.cpp
+        src/DocumentWidget.h
+        src/MainWindow.cpp
+        src/MainWindow.h
+        tests/MainWindowTest.cpp
+    )
+    target_link_libraries(zenpdf_main_window_tests PRIVATE
+        zenpdf_core
+        Qt6::Concurrent
+        Qt6::Pdf
+        Qt6::PdfWidgets
+        Qt6::PrintSupport
+        Qt6::Test
+        Qt6::Widgets
+    )
+    add_test(NAME zenpdf_main_window_tests COMMAND zenpdf_main_window_tests)
     set_tests_properties(zenpdf_core_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
@@ -99,6 +116,9 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_document_widget_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+    set_tests_properties(zenpdf_main_window_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 endif()

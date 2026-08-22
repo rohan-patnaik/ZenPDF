@@ -9,6 +9,8 @@ class QDragEnterEvent;
 class QDropEvent;
 class QMenu;
 class QTabWidget;
+struct QpdfResult;
+class MainWindowTest;
 
 class MainWindow final : public QMainWindow {
     Q_OBJECT
@@ -23,6 +25,8 @@ protected:
     void dropEvent(QDropEvent* event) override;
 
 private:
+    friend class MainWindowTest;
+
     void buildMenus();
     void ensureWelcomeTab();
     void openFileDialog();
@@ -30,7 +34,12 @@ private:
     void rebuildRecentMenu();
     void mergeDocuments();
     void extractPages();
+    void deletePages();
     void rotatePages();
+    void finishOrganizerTask(
+        const QString& outputPath,
+        const QpdfResult& result,
+        const QString& failureTitle);
     void togglePresentationMode();
     [[nodiscard]] DocumentWidget* currentDocument() const;
     [[nodiscard]] QString chooseOutputPath(const QString& suggestedName) const;
