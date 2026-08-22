@@ -12,7 +12,7 @@ const modules = import.meta.glob("../../convex/**/*.ts");
 
 const backfill = makeFunctionReference<
   "mutation",
-  { maxJobs: number },
+  { maxJobs: number; phaseBudgetMs?: number },
   { status: "pending" | "complete" | "blocked"; processed: number }
 >("storage_cleanup:backfillStorageReferences");
 
@@ -25,6 +25,7 @@ const markCandidates = makeFunctionReference<
     maxDeleted: number;
     maxBytesDeleted: number;
     maxWallMs: number;
+    phaseBudgetMs?: number;
   },
   {
     runId: string;
@@ -40,6 +41,7 @@ const finalizeCandidates = makeFunctionReference<
     maxDeleted: number;
     maxBytesDeleted: number;
     maxWallMs: number;
+    phaseBudgetMs?: number;
   },
   { deleted: number; bytesDeleted: number; protected: number }
 >("storage_cleanup:finalizeStorageCandidates");
@@ -126,6 +128,69 @@ afterEach(() => {
 });
 
 describe("bounded storage orphan cleanup", () => {
+  it("does not start a phase when the monotonic action budget is exhausted", async () => {
+    vi.useFakeTimers();
+    vi.stubEnv("ZENPDF_STORAGE_SWEEP_MAX_WALL_MS", "50");
+    vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(100);
+    const t = convexTest(schema, modules);
+
+    expect(await t.action(runCleanup, {})).toEqual({
+      mode: "dryRun",
+      backfill: "pending",
+    });
+    expect(
+      await t.run(async (ctx) => ctx.db.query("storageCleanupState").collect()),
+    ).toEqual([]);
+  });
+
+  it("stops backfill, mark, and finalize work on monotonic phase expiry", async () => {
+    vi.useFakeTimers();
+    const t = convexTest(schema, modules);
+    const storageId = await makeOldStorage(t, "delayed");
+
+    vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2);
+    expect(
+      await t.mutation(backfill, { maxJobs: 25, phaseBudgetMs: 1 }),
+    ).toEqual({ status: "pending", processed: 0 });
+    expect(
+      await t.run(async (ctx) => ctx.db.query("storageCleanupState").collect()),
+    ).toEqual([]);
+
+    vi.mocked(performance.now).mockRestore();
+    await t.mutation(backfill, { maxJobs: 25 });
+    vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2);
+    const marked = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+      phaseBudgetMs: 1,
+    });
+    expect(marked).toMatchObject({ status: "failed", candidateIds: [] });
+    expect(
+      await t.run(async (ctx) =>
+        ctx.db.query("storageCleanupRecords").collect(),
+      ),
+    ).toEqual([]);
+
+    vi.mocked(performance.now).mockRestore();
+    const ready = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+    });
+    vi.spyOn(performance, "now").mockReturnValueOnce(0).mockReturnValue(2);
+    expect(
+      await t.mutation(finalizeCandidates, {
+        runId: ready.runId,
+        maxDeleted: 1,
+        maxBytesDeleted: 1024,
+        maxWallMs: 1000,
+        phaseBudgetMs: 1,
+      }),
+    ).toEqual({ deleted: 0, bytesDeleted: 0, protected: 0 });
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(storageId)),
+    ).not.toBeNull();
+  });
+
   it("serializes legacy expiry cleanup with a third live pending owner", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);

@@ -43,6 +43,14 @@ type MarkResult = {
   status: "completed" | "failed";
   candidateIds: Id<"storageCleanupRecords">[];
 };
+
+const monotonicNow = () => performance.now();
+
+export const hasRemainingPhaseBudget = (
+  startedAt: number,
+  budgetMs: number,
+  now = monotonicNow(),
+) => now - startedAt < budgetMs;
 type CleanupActionResult = {
   mode: CleanupMode;
   backfill: BackfillResult["status"];
@@ -132,8 +140,19 @@ const getState = async (ctx: MutationCtx) =>
     .unique();
 
 export const backfillStorageReferences = internalMutation({
-  args: { maxJobs: v.number() },
+  args: {
+    maxJobs: v.number(),
+    phaseBudgetMs: v.optional(v.number()),
+  },
   handler: async (ctx, args) => {
+    const phaseStartedAt = monotonicNow();
+    const phaseBudgetMs = Math.max(
+      0,
+      Math.min(Math.floor(args.phaseBudgetMs ?? MAX_WALL_MS), MAX_WALL_MS),
+    );
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      return { status: "pending" as const, processed: 0 };
+    }
     const now = Date.now();
     const maxJobs = Math.max(
       1,
@@ -141,6 +160,9 @@ export const backfillStorageReferences = internalMutation({
     );
     let state = await getState(ctx);
     if (!state) {
+      if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+        return { status: "pending" as const, processed: 0 };
+      }
       const stateId = await ctx.db.insert("storageCleanupState", {
         name: STORAGE_CLEANUP_STATE_NAME,
         sweepCycle: 0,
@@ -160,6 +182,9 @@ export const backfillStorageReferences = internalMutation({
       .query("jobs")
       .order("asc")
       .paginate({ cursor: state.backfillCursor ?? null, numItems: maxJobs });
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      return { status: "pending" as const, processed: 0 };
+    }
     if (page.pageStatus === "SplitRequired") {
       await ctx.db.patch(state._id, {
         backfillStatus: "blocked",
@@ -169,6 +194,9 @@ export const backfillStorageReferences = internalMutation({
     }
 
     for (const job of page.page) {
+      if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+        return { status: "pending" as const, processed: 0 };
+      }
       const references = [
         ...job.inputs.map((input) => ({
           storageId: input.storageId,
@@ -201,6 +229,9 @@ export const backfillStorageReferences = internalMutation({
         existing.map((reference) => `${reference.kind}:${reference.storageId}`),
       );
       for (const reference of references) {
+        if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+          return { status: "pending" as const, processed: 0 };
+        }
         const key = `${reference.kind}:${reference.storageId}`;
         if (!keys.has(key)) {
           await ctx.db.insert("storageReferences", {
@@ -211,6 +242,10 @@ export const backfillStorageReferences = internalMutation({
           keys.add(key);
         }
       }
+    }
+
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      return { status: "pending" as const, processed: 0 };
     }
 
     await ctx.db.patch(state._id, {
@@ -233,10 +268,11 @@ export const markStorageCandidates = internalMutation({
     maxDeleted: v.number(),
     maxBytesDeleted: v.number(),
     maxWallMs: v.number(),
-    deadlineAt: v.optional(v.number()),
+    phaseBudgetMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const startedAt = Date.now();
+    const phaseStartedAt = monotonicNow();
     const state = await getState(ctx);
     const graceMs = Math.max(
       MIN_GRACE_MS,
@@ -258,9 +294,9 @@ export const markStorageCandidates = internalMutation({
       50,
       Math.min(Math.floor(args.maxWallMs), MAX_WALL_MS),
     );
-    const deadlineAt = Math.min(
-      args.deadlineAt ?? startedAt + maxWallMs,
-      startedAt + maxWallMs,
+    const phaseBudgetMs = Math.max(
+      0,
+      Math.min(Math.floor(args.phaseBudgetMs ?? maxWallMs), maxWallMs),
     );
     const runId = await ctx.db.insert("storageCleanupRuns", {
       mode: args.mode,
@@ -288,7 +324,7 @@ export const markStorageCandidates = internalMutation({
       });
       return { runId, status: "failed" as const, candidateIds: [] };
     }
-    if (Date.now() >= deadlineAt) {
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
       await ctx.db.patch(runId, {
         status: "failed",
         errorCode: "WALL_TIME_BOUND",
@@ -301,6 +337,14 @@ export const markStorageCandidates = internalMutation({
       .query("_storage")
       .order("asc")
       .paginate({ cursor: state.sweepCursor ?? null, numItems: maxInspected });
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      await ctx.db.patch(runId, {
+        status: "failed",
+        errorCode: "WALL_TIME_BOUND",
+        completedAt: Date.now(),
+      });
+      return { runId, status: "failed" as const, candidateIds: [] };
+    }
     if (
       page.pageStatus === "SplitRequired" ||
       page.page.length > maxInspected
@@ -323,7 +367,7 @@ export const markStorageCandidates = internalMutation({
       size: number;
     }> = [];
     for (const storage of page.page) {
-      if (Date.now() >= deadlineAt) {
+      if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
         await ctx.db.patch(runId, {
           status: "failed",
           inspected: page.page.length,
@@ -368,8 +412,41 @@ export const markStorageCandidates = internalMutation({
     }
 
     const candidateIds: Id<"storageCleanupRecords">[] = [];
+    const completeWithoutAdvancingCursor = async () => {
+      await ctx.db.patch(runId, {
+        status: "completed",
+        inspected: page.page.length,
+        eligible,
+        eligibleBytes,
+        protected: protectedCount,
+        candidates: candidateIds.length,
+        candidateBytes: candidates
+          .slice(0, candidateIds.length)
+          .reduce((total, storage) => total + storage.size, 0),
+        oldestEligibleAt,
+        completedAt: Date.now(),
+      });
+      return { runId, status: "completed" as const, candidateIds };
+    };
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      await ctx.db.patch(runId, {
+        status: "failed",
+        inspected: page.page.length,
+        eligible,
+        eligibleBytes,
+        protected: protectedCount,
+        candidates: 0,
+        candidateBytes: 0,
+        errorCode: "WALL_TIME_BOUND",
+        completedAt: Date.now(),
+      });
+      return { runId, status: "failed" as const, candidateIds };
+    }
     if (args.mode === "delete") {
       for (const storage of candidates.slice(0, maxDeleted)) {
+        if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+          return completeWithoutAdvancingCursor();
+        }
         candidateIds.push(
           await ctx.db.insert("storageCleanupRecords", {
             storageId: storage._id,
@@ -385,6 +462,10 @@ export const markStorageCandidates = internalMutation({
           }),
         );
       }
+    }
+
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      return completeWithoutAdvancingCursor();
     }
 
     await ctx.db.patch(state._id, {
@@ -419,7 +500,7 @@ export const finalizeStorageCandidates = internalMutation({
     maxWallMs: v.number(),
     deletedAlready: v.optional(v.number()),
     bytesDeletedAlready: v.optional(v.number()),
-    deadlineAt: v.optional(v.number()),
+    phaseBudgetMs: v.optional(v.number()),
   },
   handler: async (ctx, args) => {
     const startedAt = Date.now();
@@ -459,12 +540,16 @@ export const finalizeStorageCandidates = internalMutation({
       0,
       Math.floor(args.bytesDeletedAlready ?? 0),
     );
-    const deadlineAt = Math.min(
-      args.deadlineAt ?? startedAt + maxWallMs,
-      startedAt + maxWallMs,
+    const phaseStartedAt = monotonicNow();
+    const phaseBudgetMs = Math.max(
+      0,
+      Math.min(Math.floor(args.phaseBudgetMs ?? maxWallMs), maxWallMs),
     );
     const remainingDeletes = Math.max(0, maxDeleted - deletedAlready);
-    if (remainingDeletes === 0 || Date.now() >= deadlineAt) {
+    if (
+      remainingDeletes === 0 ||
+      !hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)
+    ) {
       return { deleted: 0, bytesDeleted: 0, protected: 0 };
     }
     const records = await ctx.db
@@ -473,12 +558,15 @@ export const finalizeStorageCandidates = internalMutation({
         q.eq("runId", runId!).eq("state", "candidate"),
       )
       .take(remainingDeletes);
+    if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+      return { deleted: 0, bytesDeleted: 0, protected: 0 };
+    }
     let deleted = 0;
     let bytesDeleted = 0;
     let protectedCount = 0;
 
     for (const record of records) {
-      if (Date.now() >= deadlineAt) {
+      if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
         break;
       }
       const metadata = await ctx.db.system.get(record.storageId);
@@ -493,6 +581,9 @@ export const finalizeStorageCandidates = internalMutation({
         await ctx.db.delete(record._id);
         protectedCount += 1;
         continue;
+      }
+      if (!hasRemainingPhaseBudget(phaseStartedAt, phaseBudgetMs)) {
+        break;
       }
       const deletionBytes = metadata?.size ?? 0;
       if (
@@ -539,13 +630,22 @@ export const finalizeStorageCandidates = internalMutation({
 export const runStorageCleanup = internalAction({
   args: {},
   handler: async (ctx): Promise<CleanupActionResult> => {
-    const actionStartedAt = Date.now();
+    const actionStartedAt = monotonicNow();
     const bounds = getConfiguredBounds();
-    const deadlineAt = actionStartedAt + bounds.maxWallMs;
+    const remainingMs = () =>
+      Math.max(
+        0,
+        Math.floor(bounds.maxWallMs - (monotonicNow() - actionStartedAt)),
+      );
+    let phaseBudgetMs = remainingMs();
+    if (phaseBudgetMs === 0) {
+      return { mode: "dryRun" as const, backfill: "pending" as const };
+    }
     const backfill: BackfillResult = await ctx.runMutation(
       internal.storage_cleanup.backfillStorageReferences,
       {
         maxJobs: bounds.maxBackfillJobs,
+        phaseBudgetMs,
       },
     );
     if (backfill.status !== "complete") {
@@ -555,8 +655,9 @@ export const runStorageCleanup = internalAction({
       process.env.ZENPDF_STORAGE_SWEEP_DELETE_ENABLED === "1"
         ? "delete"
         : "dryRun";
+    phaseBudgetMs = remainingMs();
     const retried: FinalizeResult | undefined =
-      mode === "delete"
+      mode === "delete" && phaseBudgetMs > 0
         ? await ctx.runMutation(
             internal.storage_cleanup.finalizeStorageCandidates,
             {
@@ -565,10 +666,21 @@ export const runStorageCleanup = internalAction({
               maxWallMs: bounds.maxWallMs,
               deletedAlready: 0,
               bytesDeletedAlready: 0,
-              deadlineAt,
+              phaseBudgetMs,
             },
           )
         : undefined;
+    phaseBudgetMs = remainingMs();
+    if (phaseBudgetMs === 0) {
+      return {
+        mode,
+        backfill: backfill.status,
+        retried,
+        deleted: retried?.deleted,
+        bytesDeleted: retried?.bytesDeleted,
+        protected: retried?.protected,
+      };
+    }
     const marked: MarkResult = await ctx.runMutation(
       internal.storage_cleanup.markStorageCandidates,
       {
@@ -578,10 +690,15 @@ export const runStorageCleanup = internalAction({
         maxDeleted: Math.max(0, bounds.maxDeleted - (retried?.deleted ?? 0)),
         maxBytesDeleted: bounds.maxBytesDeleted,
         maxWallMs: bounds.maxWallMs,
-        deadlineAt,
+        phaseBudgetMs,
       },
     );
-    if (mode === "delete" && marked.status === "completed") {
+    phaseBudgetMs = remainingMs();
+    if (
+      mode === "delete" &&
+      marked.status === "completed" &&
+      phaseBudgetMs > 0
+    ) {
       const finalized: FinalizeResult = await ctx.runMutation(
         internal.storage_cleanup.finalizeStorageCandidates,
         {
@@ -591,7 +708,7 @@ export const runStorageCleanup = internalAction({
           maxWallMs: bounds.maxWallMs,
           deletedAlready: retried?.deleted ?? 0,
           bytesDeletedAlready: retried?.bytesDeleted ?? 0,
-          deadlineAt,
+          phaseBudgetMs,
         },
       );
       return {
