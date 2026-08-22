@@ -14,6 +14,10 @@ import {
 import { throwFriendlyError } from "./lib/errors";
 import { assertWorkerToken } from "./lib/worker_auth";
 import { resolveGlobalLimits, resolvePlanLimits } from "./lib/limits";
+import {
+  storageIdHasAuthoritativeOwner,
+  storageReferenceIndexIsComplete,
+} from "./lib/storage_ownership";
 
 const WORKER_UPLOAD_DEADLINE_MS = 2 * 60 * 1000;
 const WORKER_UPLOAD_RECOVERY_MS = 24 * 60 * 60 * 1000;
@@ -106,27 +110,20 @@ export const bindBrowserUpload = mutation({
     if (reservation.expiresAt <= now) {
       return throwFriendlyError("USER_INPUT_INVALID");
     }
-    const cleanupRecord = await ctx.db
-      .query("storageCleanupRecords")
-      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
-      .first();
-    if (cleanupRecord) {
+    if (!(await storageReferenceIndexIsComplete(ctx))) {
       return throwFriendlyError("USER_INPUT_INVALID");
     }
     const metadata = await ctx.db.system.get(args.storageId);
     if (
       !metadata ||
       metadata.size !== reservation.sizeBytes ||
-      (metadata.contentType !== undefined &&
-        metadata.contentType.toLowerCase() !== reservation.contentType)
+      metadata.contentType?.toLowerCase() !== reservation.contentType ||
+      metadata._creationTime <= reservation._creationTime ||
+      metadata._creationTime > reservation.expiresAt
     ) {
       throwFriendlyError("USER_INPUT_INVALID");
     }
-    const existingBinding = await ctx.db
-      .query("browserUploadReservations")
-      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
-      .first();
-    if (existingBinding) {
+    if (await storageIdHasAuthoritativeOwner(ctx, args.storageId)) {
       return throwFriendlyError("USER_INPUT_INVALID");
     }
     await ctx.db.patch(reservation._id, {

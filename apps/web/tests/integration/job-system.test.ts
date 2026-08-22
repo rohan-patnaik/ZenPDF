@@ -8,6 +8,26 @@ import { monthKey, startOfDayUtc } from "../../convex/lib/time";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
 
+const storeBrowserFile = async (
+  t: Pick<ReturnType<typeof convexTest>, "run">,
+  contents: string,
+  contentType = "application/octet-stream",
+) =>
+  t.run(async (ctx) => {
+    const storageId = await ctx.storage.store(
+      new Blob([contents], { type: contentType }),
+    );
+    // convex-test omits Blob.type from its fake `_storage` metadata.
+    await ctx.db.patch(storageId as never, { contentType });
+    return storageId;
+  });
+
+const backfillStorageReferences = makeFunctionReference<
+  "mutation",
+  { maxJobs: number },
+  { status: "pending" | "complete" | "blocked"; processed: number }
+>("storage_cleanup:backfillStorageReferences");
+
 const createJob = makeFunctionReference<
   "mutation",
   {
@@ -122,6 +142,7 @@ describe("job system", () => {
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
     try {
       const anonymous = convexTest(schema, modules);
+      await anonymous.mutation(backfillStorageReferences, { maxJobs: 25 });
       await expect(
         anonymous.mutation(
           beginBrowserUpload,
@@ -162,8 +183,10 @@ describe("job system", () => {
       });
       expect(issued.uploadUrl).toMatch(/^https?:\/\//);
       expect(issued.expiresAt).toBeGreaterThan(now);
-      const storageId = await signedIn.run(async (ctx) =>
-        ctx.storage.store(new Blob(["test"], { type: "application/pdf" })),
+      const storageId = await storeBrowserFile(
+        signedIn,
+        "test",
+        "application/pdf",
       );
       const otherUser = anonymous.withIdentity({
         subject: "other_upload",
@@ -205,6 +228,7 @@ describe("job system", () => {
 
   it("enforces browser intent, server expiry, and outstanding-ticket bounds", async () => {
     const t = convexTest(schema, modules);
+    await t.mutation(backfillStorageReferences, { maxJobs: 25 });
     const anonId = "anon-reservation-owner";
     await expect(
       t.mutation(beginBrowserUpload, {
@@ -221,8 +245,10 @@ describe("job system", () => {
       sizeBytes: 4,
       contentType: "application/pdf",
     });
-    const exactStorageId = await t.run(async (ctx) =>
-      ctx.storage.store(new Blob(["test"], { type: "application/pdf" })),
+    const exactStorageId = await storeBrowserFile(
+      t,
+      "test",
+      "application/pdf",
     );
     await t.run(async (ctx) => {
       await ctx.db.patch(
@@ -277,6 +303,7 @@ describe("job system", () => {
 
   it("atomically consumes owned live reservations and rejects bare IDs or replay", async () => {
     const root = convexTest(schema, modules);
+    await root.mutation(backfillStorageReferences, { maxJobs: 25 });
     const owner = root.withIdentity({ subject: "reservation_job_owner" });
     const other = root.withIdentity({ subject: "reservation_job_other" });
     const reservation = await owner.mutation(beginBrowserUpload, {
@@ -284,9 +311,7 @@ describe("job system", () => {
       sizeBytes: 5,
       contentType: "application/octet-stream",
     });
-    const storageId = await root.run(async (ctx) =>
-      ctx.storage.store(new Blob(["input"])),
-    );
+    const storageId = await storeBrowserFile(root, "input");
     await owner.mutation(bindBrowserUpload, {
       reservationId: reservation.reservationId,
       storageId,
@@ -329,9 +354,7 @@ describe("job system", () => {
       sizeBytes: 4,
       contentType: "application/octet-stream",
     });
-    const expiringStorageId = await root.run(async (ctx) =>
-      ctx.storage.store(new Blob(["late"])),
-    );
+    const expiringStorageId = await storeBrowserFile(root, "late");
     await owner.mutation(bindBrowserUpload, {
       reservationId: expiring.reservationId,
       storageId: expiringStorageId,
@@ -357,20 +380,203 @@ describe("job system", () => {
     ).rejects.toThrow();
   });
 
+  it("rejects binding storage already owned by jobs, artifacts, or pending uploads", async () => {
+    const root = convexTest(schema, modules);
+    await root.mutation(backfillStorageReferences, { maxJobs: 25 });
+    const anonId = "attacker-session";
+    const preexistingStorageId = await storeBrowserFile(
+      root,
+      "victim",
+      "application/pdf",
+    );
+    const preexistingIntent = await root.mutation(beginBrowserUpload, {
+      anonId,
+      filename: "preexisting.pdf",
+      sizeBytes: 6,
+      contentType: "application/pdf",
+    });
+    const intents = await Promise.all(
+      ["job-ref.pdf", "artifact.pdf", "pending.pdf"].map((filename) =>
+        root.mutation(beginBrowserUpload, {
+          anonId,
+          filename,
+          sizeBytes: 6,
+          contentType: "application/pdf",
+        }),
+      ),
+    );
+    const storageIds = await Promise.all(
+      intents.map(() => storeBrowserFile(root, "victim", "application/pdf")),
+    );
+    await root.run(async (ctx) => {
+      const now = Date.now();
+      const victimJobId = await ctx.db.insert("jobs", {
+        anonId: "victim-session",
+        tier: "ANON",
+        tool: "merge",
+        status: "running",
+        claimedBy: "victim-worker",
+        claimExpiresAt: now + 60_000,
+        attempts: 1,
+        maxAttempts: 3,
+        inputs: [{ storageId: storageIds[0], filename: "victim.pdf" }],
+        createdAt: now,
+        updatedAt: now,
+      });
+      await ctx.db.insert("storageReferences", {
+        storageId: storageIds[0],
+        jobId: victimJobId,
+        kind: "jobInput",
+        createdAt: now,
+      });
+      await ctx.db.insert("artifacts", {
+        jobId: victimJobId,
+        storageId: storageIds[1],
+        kind: "output",
+        filename: "victim-output.pdf",
+        createdAt: now,
+        expiresAt: now + 60_000,
+      });
+      await ctx.db.insert("pendingUploads", {
+        jobId: victimJobId,
+        workerId: "victim-worker",
+        filename: "victim-pending.pdf",
+        sizeBytes: 6,
+        storageId: storageIds[2],
+        createdAt: now,
+        expiresAt: now + 60_000,
+      });
+    });
+
+    for (let index = 0; index < storageIds.length; index += 1) {
+      await expect(
+        root.mutation(bindBrowserUpload, {
+          reservationId: intents[index].reservationId,
+          storageId: storageIds[index],
+          anonId,
+        }),
+      ).rejects.toThrow();
+      await expect(
+        root.mutation(createJob, {
+          tool: "merge",
+          anonId,
+          inputs: [
+            {
+              reservationId: intents[index].reservationId,
+              storageId: storageIds[index],
+              filename: ["job-ref.pdf", "artifact.pdf", "pending.pdf"][index],
+              sizeBytes: 6,
+            },
+          ],
+        }),
+      ).rejects.toThrow();
+    }
+    await expect(
+      root.mutation(bindBrowserUpload, {
+        reservationId: preexistingIntent.reservationId,
+        storageId: preexistingStorageId,
+        anonId,
+      }),
+    ).rejects.toThrow();
+  });
+
+  it("requires exact defined content type at bind and consume with atomic rejection", async () => {
+    const root = convexTest(schema, modules);
+    await root.mutation(backfillStorageReferences, { maxJobs: 25 });
+    const anonId = "content-type-owner";
+    const undefinedType = await root.mutation(beginBrowserUpload, {
+      anonId,
+      filename: "undefined.pdf",
+      sizeBytes: 4,
+      contentType: "application/pdf",
+    });
+    const mismatchedType = await root.mutation(beginBrowserUpload, {
+      anonId,
+      filename: "mismatch.pdf",
+      sizeBytes: 4,
+      contentType: "application/pdf",
+    });
+    const undefinedStorageId = await root.run(async (ctx) =>
+      ctx.storage.store(new Blob(["none"])),
+    );
+    const mismatchedStorageId = await storeBrowserFile(
+      root,
+      "nope",
+      "image/png",
+    );
+
+    await expect(
+      root.mutation(bindBrowserUpload, {
+        reservationId: undefinedType.reservationId,
+        storageId: undefinedStorageId,
+        anonId,
+      }),
+    ).rejects.toThrow();
+    await expect(
+      root.mutation(bindBrowserUpload, {
+        reservationId: mismatchedType.reservationId,
+        storageId: mismatchedStorageId,
+        anonId,
+      }),
+    ).rejects.toThrow();
+
+    await root.run(async (ctx) => {
+      await ctx.db.patch(
+        undefinedType.reservationId as Id<"browserUploadReservations">,
+        { status: "bound", storageId: undefinedStorageId, boundAt: Date.now() },
+      );
+      await ctx.db.patch(
+        mismatchedType.reservationId as Id<"browserUploadReservations">,
+        { status: "bound", storageId: mismatchedStorageId, boundAt: Date.now() },
+      );
+    });
+    await expect(
+      root.mutation(createJob, {
+        tool: "merge",
+        anonId,
+        inputs: [
+          {
+            reservationId: undefinedType.reservationId,
+            storageId: undefinedStorageId,
+            filename: "undefined.pdf",
+            sizeBytes: 4,
+          },
+          {
+            reservationId: mismatchedType.reservationId,
+            storageId: mismatchedStorageId,
+            filename: "mismatch.pdf",
+            sizeBytes: 4,
+          },
+        ],
+      }),
+    ).rejects.toThrow();
+    const state = await root.run(async (ctx) => ({
+      jobs: await ctx.db.query("jobs").collect(),
+      first: await ctx.db.get(
+        undefinedType.reservationId as Id<"browserUploadReservations">,
+      ),
+      second: await ctx.db.get(
+        mismatchedType.reservationId as Id<"browserUploadReservations">,
+      ),
+    }));
+    expect(state.jobs).toEqual([]);
+    expect(state.first?.status).toBe("bound");
+    expect(state.second?.status).toBe("bound");
+  });
+
   it("rolls back reservation consumption, job insertion, and usage together", async () => {
     vi.stubEnv("ZENPDF_DEV_MODE", "1");
     vi.stubEnv("NODE_ENV", "development");
     try {
       const root = convexTest(schema, modules);
+      await root.mutation(backfillStorageReferences, { maxJobs: 25 });
       const owner = root.withIdentity({ subject: "reservation_rollback_owner" });
       const reservation = await owner.mutation(beginBrowserUpload, {
         filename: "rollback.pdf",
         sizeBytes: 4,
         contentType: "application/octet-stream",
       });
-      const storageId = await root.run(async (ctx) =>
-        ctx.storage.store(new Blob(["test"])),
-      );
+      const storageId = await storeBrowserFile(root, "test");
       await owner.mutation(bindBrowserUpload, {
         reservationId: reservation.reservationId,
         storageId,
@@ -419,6 +625,7 @@ describe("job system", () => {
 
   it("rejects jobs when monthly budget is exceeded", async () => {
     const t = convexTest(schema, modules);
+    await t.mutation(backfillStorageReferences, { maxJobs: 25 });
     const now = Date.now();
     const month = monthKey(now);
 
@@ -438,9 +645,7 @@ describe("job system", () => {
       sizeBytes: 4,
       contentType: "application/octet-stream",
     });
-    const storageId = await t.run(async (ctx) =>
-      ctx.storage.store(new Blob(["test"])),
-    );
+    const storageId = await storeBrowserFile(t, "test");
     await t.mutation(bindBrowserUpload, {
       reservationId: reservation.reservationId,
       storageId,
@@ -483,6 +688,7 @@ describe("job system", () => {
       subject: "user_123",
       email: "user@example.com",
     });
+    await t.mutation(backfillStorageReferences, { maxJobs: 25 });
 
     const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
@@ -492,9 +698,7 @@ describe("job system", () => {
         sizeBytes: 4,
         contentType: "application/octet-stream",
       });
-      const storageId = await t.run(async (ctx) =>
-        ctx.storage.store(new Blob(["test"])),
-      );
+      const storageId = await storeBrowserFile(t, "test");
       await t.mutation(bindBrowserUpload, {
         reservationId: reservation.reservationId,
         storageId,
@@ -533,6 +737,7 @@ describe("job system", () => {
       subject: "lease_failure_user",
       email: "lease-failure@example.com",
     });
+    await t.mutation(backfillStorageReferences, { maxJobs: 25 });
     const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
     try {
@@ -541,9 +746,7 @@ describe("job system", () => {
         sizeBytes: 5,
         contentType: "application/octet-stream",
       });
-      const storageId = await t.run(async (ctx) =>
-        ctx.storage.store(new Blob(["input"])),
-      );
+      const storageId = await storeBrowserFile(t, "input");
       await t.mutation(bindBrowserUpload, {
         reservationId: reservation.reservationId,
         storageId,
@@ -599,6 +802,7 @@ describe("job system", () => {
       subject: "user_123",
       email: "user@example.com",
     });
+    await t.mutation(backfillStorageReferences, { maxJobs: 25 });
     const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
     try {
@@ -607,9 +811,7 @@ describe("job system", () => {
         sizeBytes: 5,
         contentType: "application/octet-stream",
       });
-      const inputStorageId = await t.run(async (ctx) =>
-        ctx.storage.store(new Blob(["input"])),
-      );
+      const inputStorageId = await storeBrowserFile(t, "input");
       await t.mutation(bindBrowserUpload, {
         reservationId: reservation.reservationId,
         storageId: inputStorageId,

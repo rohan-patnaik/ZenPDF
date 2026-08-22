@@ -21,6 +21,7 @@ import type * as lib_errors from "../lib/errors.js";
 import type * as lib_job_state from "../lib/job_state.js";
 import type * as lib_limit_checks from "../lib/limit_checks.js";
 import type * as lib_limits from "../lib/limits.js";
+import type * as lib_storage_ownership from "../lib/storage_ownership.js";
 import type * as lib_time from "../lib/time.js";
 import type * as lib_usage from "../lib/usage.js";
 import type * as lib_worker_auth from "../lib/worker_auth.js";
@@ -47,6 +48,7 @@ declare const fullApi: ApiFromModules<{
   "lib/job_state": typeof lib_job_state;
   "lib/limit_checks": typeof lib_limit_checks;
   "lib/limits": typeof lib_limits;
+  "lib/storage_ownership": typeof lib_storage_ownership;
   "lib/time": typeof lib_time;
   "lib/usage": typeof lib_usage;
   "lib/worker_auth": typeof lib_worker_auth;

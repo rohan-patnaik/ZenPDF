@@ -7,8 +7,8 @@ import {
   internalMutation,
   type MutationCtx,
 } from "./_generated/server";
+import { STORAGE_CLEANUP_STATE_NAME } from "./lib/storage_ownership";
 
-const STATE_NAME = "storage-orphan-sweep-v1";
 const MIN_GRACE_MS = 48 * 60 * 60 * 1000;
 const MAX_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
 const DEFAULT_GRACE_MS = 72 * 60 * 60 * 1000;
@@ -108,7 +108,7 @@ const getConfiguredBounds = () => ({
 const getState = async (ctx: MutationCtx) =>
   ctx.db
     .query("storageCleanupState")
-    .withIndex("by_name", (q) => q.eq("name", STATE_NAME))
+    .withIndex("by_name", (q) => q.eq("name", STORAGE_CLEANUP_STATE_NAME))
     .unique();
 
 const storageReferenceExists = async (
@@ -131,11 +131,14 @@ const livePendingUploadExists = async (
   storageId: Id<"_storage">,
   now: number,
 ) => {
-  const records = await ctx.db
+  return (
+    (await ctx.db
     .query("pendingUploads")
-    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-    .take(2);
-  return records.some((record) => record.expiresAt > now);
+      .withIndex("by_storage_expiry", (q) =>
+        q.eq("storageId", storageId).gt("expiresAt", now),
+      )
+      .first()) !== null
+  );
 };
 
 const liveReservationExists = async (
@@ -143,13 +146,13 @@ const liveReservationExists = async (
   storageId: Id<"_storage">,
   now: number,
 ) => {
-  const records = await ctx.db
+  return (
+    (await ctx.db
     .query("browserUploadReservations")
-    .withIndex("by_storage", (q) => q.eq("storageId", storageId))
-    .take(2);
-  return records.some(
-    (record) =>
-      record.status === "bound" && record.expiresAt > now,
+      .withIndex("by_storage_expiry", (q) =>
+        q.eq("storageId", storageId).gt("expiresAt", now),
+      )
+      .first()) !== null
   );
 };
 
@@ -179,7 +182,7 @@ export const backfillStorageReferences = internalMutation({
     let state = await getState(ctx);
     if (!state) {
       const stateId = await ctx.db.insert("storageCleanupState", {
-        name: STATE_NAME,
+        name: STORAGE_CLEANUP_STATE_NAME,
         sweepCycle: 0,
         backfillStatus: "pending",
         updatedAt: now,

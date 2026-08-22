@@ -142,6 +142,7 @@ export default defineSchema({
   })
     .index("by_job", ["jobId"])
     .index("by_storage", ["storageId"])
+    .index("by_storage_expiry", ["storageId", "expiresAt"])
     .index("by_expires", ["expiresAt"]),
 
   browserUploadReservations: defineTable({
@@ -162,6 +163,7 @@ export default defineSchema({
     .index("by_user_status_expiry", ["userId", "status", "expiresAt"])
     .index("by_anon_status_expiry", ["anonId", "status", "expiresAt"])
     .index("by_storage", ["storageId"])
+    .index("by_storage_expiry", ["storageId", "expiresAt"])
     .index("by_status_expiry", ["status", "expiresAt"])
     .index("by_job", ["jobId"]),
 

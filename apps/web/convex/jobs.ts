@@ -162,8 +162,9 @@ export const createJob = mutation({
         !metadata ||
         cleanupRecord ||
         metadata.size !== reservation.sizeBytes ||
-        (metadata.contentType !== undefined &&
-          metadata.contentType.toLowerCase() !== reservation.contentType)
+        metadata.contentType?.toLowerCase() !== reservation.contentType ||
+        metadata._creationTime <= reservation._creationTime ||
+        metadata._creationTime > reservation.expiresAt
       ) {
         throwFriendlyError("USER_INPUT_INVALID");
       }
