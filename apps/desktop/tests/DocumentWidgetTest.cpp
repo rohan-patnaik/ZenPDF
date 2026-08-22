@@ -136,6 +136,7 @@ void DocumentWidgetTest::findsGeneratedTextAndActivatesResult() {
     QVERIFY(searchInput != nullptr);
     QVERIFY(searchResults != nullptr);
     QVERIFY(sideTabs != nullptr);
+    QCOMPARE(searchInput->accessibleName(), QStringLiteral("Search document"));
 
     searchInput->setText(QStringLiteral("quokka"));
     QTRY_COMPARE(searchResults->model()->rowCount(), 1);
@@ -150,6 +151,16 @@ void DocumentWidgetTest::findsGeneratedTextAndActivatesResult() {
     QTRY_VERIFY(searchResults->hasFocus());
     QTest::keyClick(searchResults, Qt::Key_Return);
     QTRY_COMPARE(widget.view_->pageNavigator()->currentPage(), 1);
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    QCOMPARE(widget.view_->currentSearchResultIndex(), 0);
+#endif
+
+    searchInput->setText(QStringLiteral("no matching text"));
+    QVERIFY(!searchResults->currentIndex().isValid());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    QCOMPARE(widget.view_->currentSearchResultIndex(), -1);
+#endif
+    QTRY_COMPARE(searchResults->model()->rowCount(), 0);
 }
 
 void DocumentWidgetTest::spaceActivatesOnlyTheFocusedThumbnailList() {

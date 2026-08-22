@@ -25,7 +25,7 @@ Run this gate only after the search-evidence commit is independently reviewed, p
 - Open the generated fixture through the native chooser and select the Search tab without using the pointer.
 - Focus the search field, enter `quokka`, and confirm exactly one visible result identifies page 2 without exposing a private path.
 - Move focus to the result and press Enter. Confirm the document view and `Current page` control navigate to page 2 and the matching text is highlighted where supported by the packaged Qt version.
-- Clear the query and enter a non-matching term. Confirm stale results and highlights disappear.
+- Clear or replace the query and enter a non-matching term. Confirm the prior selection and visible match highlight clear immediately and stale results disappear.
 - Close the tab and application while a query is active. Confirm clean shutdown and no document content or full path in diagnostics.
 - Record search-field/result-list AT-SPI names, roles, focus, selection, and announcements. Toolkit or chooser gaps remain product gaps.
 

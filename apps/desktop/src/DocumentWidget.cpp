@@ -212,6 +212,7 @@ void DocumentWidget::buildInterface() {
     auto* searchLayout = new QVBoxLayout(searchPage);
     auto* searchInput = new QLineEdit(searchPage);
     searchInput->setPlaceholderText(tr("Search document"));
+    searchInput->setAccessibleName(tr("Search document"));
     searchInput->setClearButtonEnabled(true);
     auto* searchDisplay = new SearchDisplayModel(searchPage);
     searchModel_->setDocument(document_);
@@ -263,7 +264,14 @@ void DocumentWidget::buildInterface() {
         const auto zoom = source.data(static_cast<int>(QPdfBookmarkModel::Role::Zoom)).toReal();
         view_->pageNavigator()->jump(page, location, zoom);
     });
-    connect(searchInput, &QLineEdit::textChanged, searchModel_, &QPdfSearchModel::setSearchString);
+    connect(searchInput, &QLineEdit::textChanged, this, [this, searchResults](const QString& query) {
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+        view_->setCurrentSearchResultIndex(-1);
+#endif
+        searchResults->clearSelection();
+        searchResults->setCurrentIndex({});
+        searchModel_->setSearchString(query);
+    });
     connect(searchResults, &QListView::activated, this, [this, searchDisplay](const QModelIndex& index) {
         const auto source = searchDisplay->mapToSource(index);
         view_->pageNavigator()->jump(searchModel_->resultAtIndex(source.row()));
