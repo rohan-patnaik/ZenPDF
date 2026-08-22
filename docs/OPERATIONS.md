@@ -64,6 +64,7 @@ App URL: `http://localhost:3000`
 - Worker: Cloud Run container
 - Backend: Convex deployment with matching env values
 - Mount `ZENPDF_UPLOAD_JOURNAL_DIR` on storage that survives worker instance replacement. The Compose stack provides the `worker-upload-recovery` named volume; a production deployment must provide an equivalent durable mount.
+- Resolve the remaining unknown-storage-ID release decision in `docs/UPLOAD_ORPHAN_DECISION.md`; the worker journal cannot identify an object when the upload response never reaches the parent process.
 
 ### Post-release
 - Run smoke tests: upload -> process -> download across core tools.
