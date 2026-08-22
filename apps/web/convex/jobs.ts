@@ -68,6 +68,8 @@ const HEAVY_TOOLS = new Set([
   "pdfa",
 ]);
 
+const MAX_JOB_STORAGE_REFERENCES = 100;
+
 const countJobs = async (
   ctx: MutationCtx,
   filter: {
@@ -126,6 +128,9 @@ export const createJob = mutation({
         : undefined;
     if (!SUPPORTED_TOOLS.has(args.tool)) {
       throwFriendlyError("USER_INPUT_INVALID", { tool: args.tool });
+    }
+    if (args.inputs.length > MAX_JOB_STORAGE_REFERENCES) {
+      throwFriendlyError("USER_INPUT_INVALID");
     }
     const reservations = [];
     const seenReservations = new Set<string>();
@@ -255,6 +260,15 @@ export const createJob = mutation({
       updatedAt: now,
     });
 
+    for (const input of args.inputs) {
+      await ctx.db.insert("storageReferences", {
+        storageId: input.storageId,
+        jobId,
+        kind: "jobInput",
+        createdAt: now,
+      });
+    }
+
     for (const reservation of reservations) {
       await ctx.db.patch(reservation._id, {
         status: "consumed",
@@ -383,7 +397,8 @@ export const completeJob = mutation({
     if (
       job.status !== "running" ||
       job.claimedBy !== args.workerId ||
-      (job.claimExpiresAt ?? 0) <= now
+      (job.claimExpiresAt ?? 0) <= now ||
+      args.outputs.length > MAX_JOB_STORAGE_REFERENCES
     ) {
       return job;
     }
@@ -426,6 +441,12 @@ export const completeJob = mutation({
     const expiresAt = now + globalLimits.artifactTtlHours * 60 * 60 * 1000;
 
     for (const output of args.outputs) {
+      await ctx.db.insert("storageReferences", {
+        storageId: output.storageId,
+        jobId: job._id,
+        kind: "jobOutput",
+        createdAt: now,
+      });
       await ctx.db.insert("artifacts", {
         ownerId: job.userId,
         jobId: job._id,

@@ -27,6 +27,33 @@ const browserUploadReservationStatus = v.union(
   v.literal("deleted"),
 );
 
+const storageReferenceKind = v.union(
+  v.literal("jobInput"),
+  v.literal("jobOutput"),
+);
+
+const storageCleanupRecordState = v.union(
+  v.literal("candidate"),
+  v.literal("deleted"),
+);
+
+const storageCleanupRunMode = v.union(
+  v.literal("dryRun"),
+  v.literal("delete"),
+);
+
+const storageCleanupRunStatus = v.union(
+  v.literal("running"),
+  v.literal("completed"),
+  v.literal("failed"),
+);
+
+const storageReferenceBackfillStatus = v.union(
+  v.literal("pending"),
+  v.literal("complete"),
+  v.literal("blocked"),
+);
+
 export default defineSchema({
   users: defineTable({
     clerkUserId: v.string(),
@@ -100,6 +127,7 @@ export default defineSchema({
   })
     .index("by_owner", ["ownerId", "createdAt"])
     .index("by_job", ["jobId"])
+    .index("by_storage", ["storageId"])
     .index("by_expires", ["expiresAt"]),
 
   pendingUploads: defineTable({
@@ -113,6 +141,7 @@ export default defineSchema({
     expiresAt: v.number(),
   })
     .index("by_job", ["jobId"])
+    .index("by_storage", ["storageId"])
     .index("by_expires", ["expiresAt"]),
 
   browserUploadReservations: defineTable({
@@ -135,6 +164,61 @@ export default defineSchema({
     .index("by_storage", ["storageId"])
     .index("by_status_expiry", ["status", "expiresAt"])
     .index("by_job", ["jobId"]),
+
+  storageReferences: defineTable({
+    storageId: v.id("_storage"),
+    jobId: v.id("jobs"),
+    kind: storageReferenceKind,
+    createdAt: v.number(),
+  })
+    .index("by_storage", ["storageId"])
+    .index("by_job_kind", ["jobId", "kind"]),
+
+  storageCleanupRecords: defineTable({
+    storageId: v.id("_storage"),
+    state: storageCleanupRecordState,
+    runId: v.id("storageCleanupRuns"),
+    observedCreatedAt: v.number(),
+    observedSizeBytes: v.number(),
+    candidateAt: v.number(),
+    deletedAt: v.optional(v.number()),
+    checkedJobReferences: v.boolean(),
+    checkedArtifacts: v.boolean(),
+    checkedPendingUploads: v.boolean(),
+    checkedReservations: v.boolean(),
+  })
+    .index("by_storage", ["storageId"])
+    .index("by_state", ["state", "candidateAt"]),
+
+  storageCleanupRuns: defineTable({
+    mode: storageCleanupRunMode,
+    status: storageCleanupRunStatus,
+    cursorIn: v.optional(v.string()),
+    cursorOut: v.optional(v.string()),
+    inspected: v.number(),
+    eligible: v.number(),
+    protected: v.number(),
+    candidates: v.number(),
+    deleted: v.number(),
+    bytesDeleted: v.number(),
+    oldestEligibleAt: v.optional(v.number()),
+    maxInspected: v.number(),
+    maxDeleted: v.number(),
+    maxBytesDeleted: v.number(),
+    maxWallMs: v.number(),
+    errorCode: v.optional(v.string()),
+    startedAt: v.number(),
+    completedAt: v.optional(v.number()),
+  }).index("by_started", ["startedAt"]),
+
+  storageCleanupState: defineTable({
+    name: v.string(),
+    sweepCursor: v.optional(v.string()),
+    sweepCycle: v.number(),
+    backfillCursor: v.optional(v.string()),
+    backfillStatus: storageReferenceBackfillStatus,
+    updatedAt: v.number(),
+  }).index("by_name", ["name"]),
 
   usageCounters: defineTable({
     userId: v.optional(v.id("users")),
