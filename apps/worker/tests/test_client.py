@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import traceback
+
 import pytest
 
 from zenpdf_worker.client import ConvexClient, ConvexError
@@ -25,6 +27,13 @@ class _Session:
 
 class _HostileSession:
     def post(self, *_args: object, **_kwargs: object) -> _Response:
+        raise RuntimeError(
+            "signed-url token password /private/path filename.pdf content-marker"
+        )
+
+
+class _HostileDecodeResponse(_Response):
+    def json(self) -> object:
         raise RuntimeError(
             "signed-url token password /private/path filename.pdf content-marker"
         )
@@ -69,3 +78,31 @@ def test_request_exception_text_is_replaced_with_stable_code() -> None:
 
     assert str(captured.value) == "BACKEND_REQUEST_FAILED"
     assert "content-marker" not in str(captured.value)
+    assert captured.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(captured.value), captured.value, captured.value.__traceback__
+        )
+    )
+    assert "content-marker" not in formatted
+
+
+def test_decode_exception_has_no_hostile_cause_or_traceback() -> None:
+    hostile = "signed-url token password /private/path filename.pdf content-marker"
+    client = ConvexClient("https://convex.invalid")
+    client.session = _Session(  # type: ignore[assignment]
+        _HostileDecodeResponse(200, {}, hostile)
+    )
+
+    with pytest.raises(RuntimeError) as captured:
+        client.query("files:getDownloadUrl", {})
+
+    assert str(captured.value) == "BACKEND_INVALID_RESPONSE"
+    assert captured.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(captured.value), captured.value, captured.value.__traceback__
+        )
+    )
+    assert hostile not in formatted
+    assert "content-marker" not in formatted
