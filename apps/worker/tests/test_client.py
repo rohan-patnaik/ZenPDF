@@ -51,7 +51,7 @@ def test_non_success_body_is_never_retained_or_exposed(status: int) -> None:
     with pytest.raises(RuntimeError) as captured:
         client.mutation("jobs:claimNextJob", {})
 
-    assert str(captured.value) == f"BACKEND_HTTP_{status}"
+    assert str(captured.value) == "BACKEND_HTTP_ERROR"
     assert hostile not in str(captured.value)
 
 

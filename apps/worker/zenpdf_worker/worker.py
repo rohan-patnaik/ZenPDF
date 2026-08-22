@@ -218,11 +218,49 @@ TOOL_IPC_ERROR_CODES = {
     "TOOL_MEMORY_LIMIT",
 }
 
+STABLE_EXCEPTION_CODES = {
+    "BACKEND_APPLICATION_ERROR",
+    "BACKEND_TIMEOUT",
+    "BACKEND_REQUEST_FAILED",
+    "BACKEND_HTTP_ERROR",
+    "BACKEND_INVALID_RESPONSE",
+    "UPLOAD_FAILED",
+    "UPLOAD_TIMEOUT",
+    "UPLOAD_HTTP_ERROR",
+    "UPLOAD_IO_ERROR",
+    "UPLOAD_RECOVERY_UNRESOLVED",
+}
+
+UPLOAD_IPC_ERROR_CODES = {
+    "UPLOAD_FAILED",
+    "UPLOAD_TIMEOUT",
+    "UPLOAD_HTTP_ERROR",
+    "UPLOAD_IO_ERROR",
+}
+
+
+def _strict_upload_http_code(value: object) -> str | None:
+    """Accept only canonical UPLOAD_HTTP_100 through UPLOAD_HTTP_599."""
+    if not isinstance(value, str) or not value.startswith("UPLOAD_HTTP_"):
+        return None
+    suffix = value.removeprefix("UPLOAD_HTTP_")
+    if len(suffix) != 3 or not suffix.isascii() or not suffix.isdigit():
+        return None
+    status = int(suffix)
+    return value if 100 <= status <= 599 else None
+
+
+def _stable_upload_ipc_code(value: object) -> str:
+    """Constrain child upload errors to the upload transport vocabulary."""
+    if isinstance(value, str) and value in UPLOAD_IPC_ERROR_CODES:
+        return value
+    return _strict_upload_http_code(value) or "UPLOAD_FAILED"
+
 
 def _stable_exception_code(error: BaseException, default: str) -> str:
     """Classify an exception without retaining attacker-controlled text."""
     if isinstance(error, ConvexError):
-        return error.code
+        return "BACKEND_APPLICATION_ERROR"
     if isinstance(error, requests.Timeout):
         return "NETWORK_TIMEOUT"
     if isinstance(error, requests.RequestException):
@@ -230,13 +268,11 @@ def _stable_exception_code(error: BaseException, default: str) -> str:
     if isinstance(error, OSError):
         return "LOCAL_IO_ERROR"
     value = error.args[0] if error.args and isinstance(error.args[0], str) else ""
-    stable_prefixes = (
-        "BACKEND_HTTP_",
-        "BACKEND_INVALID_RESPONSE",
-        "UPLOAD_",
-    )
-    if value.startswith(stable_prefixes) and value.replace("_", "").isalnum():
-        return value[:64]
+    if value in STABLE_EXCEPTION_CODES:
+        return value
+    upload_http_code = _strict_upload_http_code(value)
+    if upload_http_code is not None:
+        return upload_http_code
     return default
 
 
@@ -1118,9 +1154,9 @@ class ZenPdfWorker:
                 if stopped:
                     process.close()
         if outcome[0] != "ok":
-            error_code = outcome[1] if len(outcome) > 1 else "UPLOAD_FAILED"
-            if not isinstance(error_code, str) or not error_code.startswith("UPLOAD_"):
-                error_code = "UPLOAD_FAILED"
+            error_code = _stable_upload_ipc_code(
+                outcome[1] if len(outcome) > 1 else None
+            )
             raise RuntimeError(f"Output upload failed ({error_code})")
         storage_id = outcome[1]
         if not isinstance(storage_id, str) or not storage_id:

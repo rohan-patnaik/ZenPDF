@@ -45,18 +45,16 @@ class ConvexClient:
                 headers=headers,
                 timeout=60,
             )
-        except requests.Timeout as error:
+        except requests.Timeout:
             raise RuntimeError("BACKEND_TIMEOUT") from None
-        except Exception as error:
+        except Exception:
             raise RuntimeError("BACKEND_REQUEST_FAILED") from None
         if response.status_code not in (200, 560):
-            status = response.status_code
-            stable_status = status if isinstance(status, int) and 100 <= status <= 599 else 0
-            raise RuntimeError(f"BACKEND_HTTP_{stable_status}")
+            raise RuntimeError("BACKEND_HTTP_ERROR")
 
         try:
             payload = response.json()
-        except Exception as error:
+        except Exception:
             raise RuntimeError("BACKEND_INVALID_RESPONSE") from None
         if not isinstance(payload, dict):
             raise RuntimeError("BACKEND_INVALID_RESPONSE")

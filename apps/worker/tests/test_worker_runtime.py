@@ -17,6 +17,7 @@ from zenpdf_worker.worker import (
     WorkerShutdown,
     ZenPdfWorker,
     _run_supervised,
+    _stable_exception_code,
     _tool_process_entry,
     main,
 )
@@ -270,6 +271,101 @@ def test_upload_child_error_is_sanitized_before_ipc_and_logging(
         assert secret not in observable
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("UPLOAD_FAILED", "UPLOAD_FAILED"),
+        ("UPLOAD_HTTP_100", "UPLOAD_HTTP_100"),
+        ("UPLOAD_HTTP_599", "UPLOAD_HTTP_599"),
+        ("UPLOAD_HTTP_099", "FIXED_DEFAULT"),
+        ("UPLOAD_HTTP_600", "FIXED_DEFAULT"),
+        ("UPLOAD_HTTP_200_EXTRA", "FIXED_DEFAULT"),
+        ("UPLOAD_SECRET_MARKER", "FIXED_DEFAULT"),
+        ("BACKEND_HTTP_500", "FIXED_DEFAULT"),
+    ],
+)
+def test_stable_error_classifier_has_exact_vocabulary(
+    value: str, expected: str
+) -> None:
+    assert _stable_exception_code(RuntimeError(value), "FIXED_DEFAULT") == expected
+
+
+def test_hostile_upload_prefix_from_ipc_maps_to_fixed_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hostile = "UPLOAD_SECRET_MARKER"
+
+    class Receiver:
+        @staticmethod
+        def poll(_timeout: float) -> bool:
+            return True
+
+        @staticmethod
+        def recv() -> tuple[str, str]:
+            return ("error", hostile)
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    class Sender:
+        @staticmethod
+        def close() -> None:
+            return None
+
+    class Process:
+        pid = 424245
+        closed = False
+
+        @staticmethod
+        def start() -> None:
+            return None
+
+        @staticmethod
+        def is_alive() -> bool:
+            return False
+
+        @staticmethod
+        def join(timeout: float | None = None) -> None:
+            return None
+
+        def close(self) -> None:
+            self.closed = True
+
+    process = Process()
+
+    class Context:
+        @staticmethod
+        def Pipe(duplex: bool = False) -> tuple[Receiver, Sender]:
+            assert not duplex
+            return Receiver(), Sender()
+
+        @staticmethod
+        def Process(*_args: object, **_kwargs: object) -> Process:
+            return process
+
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.multiprocessing.get_context", lambda *_args: Context()
+    )
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"%PDF-output")
+    worker = _UploadWorker()
+
+    with pytest.raises(RuntimeError) as captured_error:
+        worker._upload_one_pending(
+            "job-1",
+            output,
+            "https://upload.invalid",
+            "pending-1",
+            time.time() * 1000 + 60_000,
+            threading.Event(),
+        )
+
+    assert str(captured_error.value) == "Output upload failed (UPLOAD_FAILED)"
+    assert hostile not in str(captured_error.value)
+    assert process.closed
+
+
 def test_tool_exception_is_allowlisted_before_ipc(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -325,7 +421,7 @@ def test_backend_and_tool_failures_never_reach_logs_or_failure_payload(
 def test_cleanup_and_failure_reporting_logs_only_stable_classes(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    hostile = "signed-url token password /path filename.pdf content-marker"
+    hostile = "UPLOAD_SECRET_MARKER"
 
     class HostileCleanupWorker(_RecoveryUploadWorker):
         def _mutation(self, _path: str, _args: dict) -> object:
@@ -347,6 +443,32 @@ def test_cleanup_and_failure_reporting_logs_only_stable_classes(
     assert hostile not in captured.out
     assert "UPLOAD_CLEANUP_DEFERRED" in captured.out
     assert "FAILURE_REPORT_FAILED" in captured.out
+
+
+def test_recovery_rejects_hostile_upload_prefixed_exception_code(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    hostile = "UPLOAD_SECRET_MARKER"
+
+    class HostileRecoveryWorker(_RecoveryUploadWorker):
+        def _query(self, _path: str, _args: dict) -> object:
+            raise RuntimeError(hostile)
+
+    worker = HostileRecoveryWorker()
+    entry = {
+        "jobId": "job-1",
+        "pendingUploadId": "pending-1",
+        "storageId": "stored-1",
+        "action": "uploaded",
+    }
+    worker.upload_journal.save(entry)
+
+    assert worker._recover_pending_uploads() == 1
+
+    captured = capsys.readouterr()
+    assert hostile not in captured.out
+    assert "UPLOAD_RECOVERY_FAILED" in captured.out
+    assert worker.upload_journal.load("pending-1") is not None
 
 
 def test_shutdown_kills_active_upload_process_tree_promptly(
@@ -559,10 +681,7 @@ def test_supervisor_forces_exit_when_stable_log_sink_fails(
 def test_supervisor_failure_exit_has_no_hostile_cause_or_traceback(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    hostile = (
-        "poll decode report cleanup https://signed.invalid?token=secret "
-        "/private/path filename.pdf content-marker"
-    )
+    hostile = "UPLOAD_SECRET_MARKER"
 
     class HostileSupervisorWorker:
         _supervisor_force_exit_required = False
@@ -590,7 +709,6 @@ def test_supervisor_failure_exit_has_no_hostile_cause_or_traceback(
     captured = capsys.readouterr()
     observable = f"{formatted}\n{captured.out}\n{captured.err}"
     assert hostile not in observable
-    assert "content-marker" not in observable
     assert "WORKER_RUN_FAILED" in observable
     assert "UPLOAD_DRAIN_FAILED" in observable
 
