@@ -902,6 +902,11 @@ class ZenPdfWorker:
     ) -> List[Dict[str, Any]]:
         """Upload outputs through TTL-tracked, lease-aware pending records."""
         self.upload_journal.ensure_ready()
+        self.upload_journal.ensure_capacity(
+            required_entries=max(len(outputs), 1),
+            required_bytes=max(len(outputs), 1)
+            * self.upload_journal.max_entry_bytes,
+        )
         payload: List[Dict[str, Any]] = []
         try:
             for output in outputs:
@@ -1093,13 +1098,13 @@ class ZenPdfWorker:
             if isinstance(pending_id, str) and pending_id:
                 self.upload_journal.remove(pending_id)
 
-    def _reconcile_upload_entry(self, entry: Dict[str, Any]) -> None:
+    def _reconcile_upload_entry(self, entry: Dict[str, Any]) -> bool:
         """Advance one journal entry through idempotent server operations."""
         pending_id = entry.get("pendingUploadId")
         storage_id = entry.get("storageId")
         job_id = entry.get("jobId")
         if not all(isinstance(value, str) and value for value in (pending_id, storage_id)):
-            return
+            return False
         action = entry.get("action")
         registration_rejected = False
         if action == "register":
@@ -1115,7 +1120,7 @@ class ZenPdfWorker:
             if registered is True:
                 entry["action"] = "uploaded"
                 self.upload_journal.save(entry)
-                return
+                return True
             entry["action"] = "discard"
             self.upload_journal.save(entry)
             action = "discard"
@@ -1138,13 +1143,13 @@ class ZenPdfWorker:
             )
             if state in {"committed", "deleted"}:
                 self.upload_journal.remove(pending_id)
-                return
+                return True
             if state == "registered":
                 entry["action"] = "discard"
                 self.upload_journal.save(entry)
                 action = "discard"
             elif state in {"orphaned", "mismatch"}:
-                return
+                return False
         if action == "discard":
             discarded = self._mutation(
                 "files:discardWorkerUpload",
@@ -1157,23 +1162,86 @@ class ZenPdfWorker:
             )
             if discarded is True:
                 self.upload_journal.remove(pending_id)
+                return True
+            return False
+        return False
 
-    def _recover_pending_uploads(self) -> None:
-        """Retry every durable upload operation once."""
-        for entry in self.upload_journal.entries():
+    def _recover_pending_uploads(self, limit: int | None = None) -> int:
+        """Retry one bounded batch with persisted exponential backoff."""
+        attempted = 0
+        now_ms = int(time.time() * 1000)
+        batch_limit = min(
+            limit or self.upload_journal.batch_size,
+            self.upload_journal.batch_size,
+        )
+        retry_base_ms = _positive_env_int("ZENPDF_UPLOAD_RETRY_BASE_MS", 1000)
+        retry_max_ms = _positive_env_int("ZENPDF_UPLOAD_RETRY_MAX_MS", 300_000)
+        for entry in self.upload_journal.entries(
+            limit=batch_limit, ready_at=now_ms
+        ):
+            next_attempt_at = entry.get("nextAttemptAt")
+            if isinstance(next_attempt_at, (int, float)) and next_attempt_at > now_ms:
+                continue
+            attempted += 1
+            previous_attempts = entry.get("attempts", 0)
+            if not isinstance(previous_attempts, int) or previous_attempts < 0:
+                previous_attempts = 0
+            entry.pop("attempts", None)
+            entry.pop("nextAttemptAt", None)
             try:
-                self._reconcile_upload_entry(entry)
+                if not self._reconcile_upload_entry(entry):
+                    raise RuntimeError("UPLOAD_RECOVERY_UNRESOLVED")
             except Exception as error:  # noqa: BLE001 - retry on next poll
-                print(f"Upload recovery retained for retry: {error}")
+                attempts = min(previous_attempts + 1, 30)
+                delay_ms = min(retry_base_ms * (2 ** min(attempts - 1, 16)), retry_max_ms)
+                entry["attempts"] = attempts
+                entry["nextAttemptAt"] = now_ms + delay_ms
+                try:
+                    self.upload_journal.save(entry)
+                except Exception:
+                    pass
+                error_class = (
+                    "UPLOAD_RECOVERY_UNRESOLVED"
+                    if str(error) == "UPLOAD_RECOVERY_UNRESOLVED"
+                    else type(error).__name__
+                )
+                print(f"Upload recovery retained for retry ({error_class})")
+        return attempted
 
     def _drain_upload_recovery(self) -> None:
-        """Retry during graceful shutdown; unresolved state remains on durable disk."""
+        """Run a strictly bounded shutdown batch; durable state survives timeout."""
         grace_seconds = _positive_env_int("ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS", 30)
+        max_operations = _positive_env_int("ZENPDF_UPLOAD_SHUTDOWN_MAX_OPERATIONS", 64)
         deadline = time.monotonic() + grace_seconds
-        while self.upload_journal.entries() and time.monotonic() < deadline:
-            self._recover_pending_uploads()
-            if self.upload_journal.entries():
-                time.sleep(0.25)
+        operations = 0
+        while (
+            self.upload_journal.has_entries()
+            and operations < max_operations
+            and time.monotonic() < deadline
+        ):
+            outcome: Dict[str, int] = {}
+            finished = threading.Event()
+
+            def recover_batch() -> None:
+                try:
+                    outcome["attempted"] = self._recover_pending_uploads(
+                        min(
+                            max_operations - operations,
+                            self.upload_journal.batch_size,
+                        )
+                    )
+                finally:
+                    finished.set()
+
+            recovery_thread = threading.Thread(target=recover_batch, daemon=True)
+            recovery_thread.start()
+            finished.wait(max(deadline - time.monotonic(), 0.0))
+            if not finished.is_set():
+                return
+            attempted = outcome.get("attempted", 0)
+            operations += attempted
+            if attempted == 0:
+                return
 
     def _mutation(self, path: str, args: Dict[str, Any]) -> Any:
         """Execute a mutation with thread-safe access."""

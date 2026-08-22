@@ -34,7 +34,10 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_HEARTBEAT_RETRIES` and `ZENPDF_HEARTBEAT_RETRY_SECONDS`
   - `ZENPDF_UPLOAD_DEADLINE_SECONDS` (hard total output POST deadline; default 60)
   - `ZENPDF_UPLOAD_JOURNAL_DIR` (durable recovery volume; default `/var/lib/zenpdf-worker/upload-recovery`)
-  - `ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS` (graceful retry window; default 30)
+  - `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRIES`, `ZENPDF_UPLOAD_JOURNAL_MAX_BYTES`, and `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRY_BYTES` (hard recovery-spool limits; defaults 1024, 8 MiB, and 4 KiB)
+  - `ZENPDF_UPLOAD_RECOVERY_BATCH_SIZE` (maximum entries attempted per poll; default 32)
+  - `ZENPDF_UPLOAD_RETRY_BASE_MS` and `ZENPDF_UPLOAD_RETRY_MAX_MS` (persisted exponential retry bounds; defaults 1000 and 300000)
+  - `ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS` and `ZENPDF_UPLOAD_SHUTDOWN_MAX_OPERATIONS` (hard graceful-drain bounds; defaults 30 and 64)
 
 ## Local run
 1. `cd apps/web && npx convex dev`

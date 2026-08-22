@@ -324,6 +324,10 @@ def test_registration_and_cleanup_transport_failures_recover_from_journal(
     recovered_worker.discard_failures = 1
     recovered_worker._recover_pending_uploads()
     assert recovered_worker.upload_journal.entries()[0]["action"] == "discard"
+    retry = recovered_worker.upload_journal.load("pending-1")
+    assert retry is not None
+    retry["nextAttemptAt"] = 0
+    recovered_worker.upload_journal.save(retry)
     recovered_worker._recover_pending_uploads()
     assert recovered_worker.upload_journal.entries() == []
 
@@ -370,6 +374,10 @@ def test_lost_completion_and_cleanup_removed_row_reconcile_idempotently(
     discard_calls = sum(
         path == "files:discardWorkerUpload" for path, _args in worker.mutations
     )
+    retry = worker.upload_journal.load("pending-1")
+    assert retry is not None
+    retry["nextAttemptAt"] = 0
+    worker.upload_journal.save(retry)
     worker._recover_pending_uploads()
     assert worker.upload_journal.entries() == []
     assert (
@@ -395,6 +403,53 @@ def test_missing_pending_row_with_live_unknown_object_is_retained(
 
     assert worker.upload_journal.load("pending-1") == entry
     assert all(path != "files:discardWorkerUpload" for path, _args in worker.mutations)
+
+
+def test_recovery_backoff_prevents_hot_loop(monkeypatch: pytest.MonkeyPatch) -> None:
+    worker = _RecoveryUploadWorker()
+    worker.upload_journal.save(
+        {
+            "jobId": "job-1",
+            "pendingUploadId": "pending-1",
+            "storageId": "stored-unknown",
+            "action": "discard",
+        }
+    )
+    worker.upload_state = "orphaned"
+
+    assert worker._recover_pending_uploads() == 1
+    mutation_count = len(worker.mutations)
+    assert worker._recover_pending_uploads() == 0
+    assert len(worker.mutations) == mutation_count
+
+
+def test_shutdown_recovery_drain_has_hard_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    blocked = threading.Event()
+
+    class BlockedRecoveryWorker(_RecoveryUploadWorker):
+        def _query(self, _path: str, _args: dict) -> object:
+            blocked.wait(60)
+            return "registered"
+
+    monkeypatch.setenv("ZENPDF_UPLOAD_SHUTDOWN_GRACE_SECONDS", "1")
+    monkeypatch.setenv("ZENPDF_UPLOAD_SHUTDOWN_MAX_OPERATIONS", "2")
+    worker = BlockedRecoveryWorker()
+    worker.upload_journal.save(
+        {
+            "jobId": "job-1",
+            "pendingUploadId": "pending-1",
+            "storageId": "stored-1",
+            "action": "uploaded",
+        }
+    )
+
+    started_at = time.monotonic()
+    worker._drain_upload_recovery()
+
+    assert time.monotonic() - started_at < 2
+    assert worker.upload_journal.has_entries()
 
 
 def test_completion_rejection_discards_registered_uploads(
