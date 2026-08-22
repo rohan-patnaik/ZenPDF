@@ -8,15 +8,29 @@
 namespace {
 class NonMergingCommand final : public QUndoCommand {
 public:
-    explicit NonMergingCommand(std::unique_ptr<QUndoCommand> command)
-        : QUndoCommand(command->text()), command_(std::move(command)) {}
+    NonMergingCommand(std::unique_ptr<QUndoCommand> command,
+                      std::shared_ptr<bool> alive)
+        : QUndoCommand(command->text()), command_(std::move(command)), alive_(std::move(alive)) {}
+    ~NonMergingCommand() override { *alive_ = false; }
 
     int id() const override { return -1; }
-    void redo() override { command_->redo(); }
-    void undo() override { command_->undo(); }
+    void redo() override {
+        command_->redo();
+        synchronizeState();
+    }
+    void undo() override {
+        command_->undo();
+        synchronizeState();
+    }
 
 private:
+    void synchronizeState() {
+        setText(command_->text());
+        setObsolete(command_->isObsolete());
+    }
+
     std::unique_ptr<QUndoCommand> command_;
+    std::shared_ptr<bool> alive_;
 };
 }
 
@@ -48,7 +62,7 @@ QString DocumentSession::displayName() const {
 }
 
 bool DocumentSession::isDirty() const {
-    return !undoStack_.isClean();
+    return hasUntrackedExecutedChange_ || !undoStack_.isClean();
 }
 
 bool DocumentSession::canUndo() const {
@@ -108,6 +122,10 @@ bool DocumentSession::push(std::unique_ptr<QUndoCommand> command,
         return reject(PushRejection::NullCommand,
                       tr("The change could not be recorded because its undo command is missing."));
     }
+    if (command->isObsolete()) {
+        return reject(PushRejection::ObsoleteCommand,
+                      tr("The change was already obsolete and was not executed."));
+    }
     if (retainedBytes > retainedByteLimit_) {
         return reject(PushRejection::CommandExceedsRetainedByteLimit,
                       tr("The change needs %1 undo bytes, above this document's %2-byte limit.")
@@ -140,24 +158,68 @@ bool DocumentSession::push(std::unique_ptr<QUndoCommand> command,
     }
     projectedCosts.append(retainedBytes);
 
-    auto wrappedCommand = std::make_unique<NonMergingCommand>(std::move(command));
-    retainedCosts_ = std::move(projectedCosts);
-    retainedBytes_ = projectedBytes;
+    auto commandAlive = std::make_shared<bool>(true);
+    auto wrappedCommand =
+        std::make_unique<NonMergingCommand>(std::move(command), commandAlive);
+    const auto previousBytes = retainedBytes_;
     lastPushRejection_ = PushRejection::None;
     lastPushRejectionMessage_.clear();
     undoStack_.push(wrappedCommand.release());
-    emit retainedBytesChanged(retainedBytes_);
+
+    const auto commandWasRetained = *commandAlive;
+    if (commandWasRetained) {
+        retainedCosts_ = std::move(projectedCosts);
+        retainedBytes_ = projectedBytes;
+    } else {
+        retainedCosts_.resize(undoStack_.count());
+        retainedBytes_ = 0;
+        for (const auto cost : retainedCosts_) {
+            retainedBytes_ += cost;
+        }
+        hasUntrackedExecutedChange_ = true;
+        emit obsoleteCommandDiscarded(
+            tr("The change became obsolete while executing and was not retained for undo."));
+        emit stateChanged();
+    }
+    if (retainedBytes_ != previousBytes) {
+        emit retainedBytesChanged(retainedBytes_);
+    }
     return true;
 }
 
 void DocumentSession::undo() {
+    const auto commandIndex = undoStack_.index() - 1;
+    const auto previousCount = undoStack_.count();
     undoStack_.undo();
+    if (undoStack_.count() < previousCount) {
+        retainedBytes_ -= retainedCosts_.at(commandIndex);
+        retainedCosts_.removeAt(commandIndex);
+        emit retainedBytesChanged(retainedBytes_);
+        emit obsoleteCommandDiscarded(
+            tr("The change became obsolete while undoing and was removed from history."));
+    }
 }
 
 void DocumentSession::redo() {
+    const auto commandIndex = undoStack_.index();
+    const auto previousCount = undoStack_.count();
     undoStack_.redo();
+    if (undoStack_.count() < previousCount) {
+        retainedBytes_ -= retainedCosts_.at(commandIndex);
+        retainedCosts_.removeAt(commandIndex);
+        hasUntrackedExecutedChange_ = true;
+        emit retainedBytesChanged(retainedBytes_);
+        emit obsoleteCommandDiscarded(
+            tr("The change became obsolete while redoing and was removed from history."));
+        emit stateChanged();
+    }
 }
 
 void DocumentSession::markSaved() {
+    const auto hadUntrackedChange = hasUntrackedExecutedChange_;
+    hasUntrackedExecutedChange_ = false;
     undoStack_.setClean();
+    if (hadUntrackedChange) {
+        emit stateChanged();
+    }
 }

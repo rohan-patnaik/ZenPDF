@@ -20,6 +20,8 @@ private slots:
     void accountsForBranchingAndUndoRedo();
     void releasesOldestEvictedCost();
     void disablesCommandMerging();
+    void handlesObsoleteCommands();
+    void mirrorsActionTextTransitions();
     void ownsCommandsAndRejectsNull();
 };
 
@@ -69,6 +71,48 @@ public:
 
 private:
     int* mergeCalls_;
+};
+
+class ObsoleteCommand final : public QUndoCommand {
+public:
+    enum class Timing { BeforePush, DuringRedo, DuringUndo, DuringSecondRedo };
+
+    ObsoleteCommand(int* value, int* destructions, Timing timing)
+        : value_(value), destructions_(destructions), timing_(timing) {
+        if (timing_ == Timing::BeforePush) {
+            setObsolete(true);
+        }
+    }
+    ~ObsoleteCommand() override { ++*destructions_; }
+
+    void redo() override {
+        ++*value_;
+        ++redoCount_;
+        if (timing_ == Timing::DuringRedo
+            || (timing_ == Timing::DuringSecondRedo && redoCount_ == 2)) {
+            setObsolete(true);
+        }
+    }
+    void undo() override {
+        --*value_;
+        if (timing_ == Timing::DuringUndo) {
+            setObsolete(true);
+        }
+    }
+
+private:
+    int* value_;
+    int* destructions_;
+    Timing timing_;
+    int redoCount_ = 0;
+};
+
+class RelabelingCommand final : public QUndoCommand {
+public:
+    RelabelingCommand() : QUndoCommand(QStringLiteral("Initial")) {}
+
+    void redo() override { setText(QStringLiteral("Applied")); }
+    void undo() override { setText(QStringLiteral("Reverted")); }
 };
 }
 
@@ -239,6 +283,113 @@ void DocumentSessionTest::disablesCommandMerging() {
     QCOMPARE(mergeCalls, 0);
     QCOMPARE(session.undoCommandCount(), 2);
     QCOMPARE(session.retainedBytes(), quint64(5));
+}
+
+void DocumentSessionTest::handlesObsoleteCommands() {
+    int value = 0;
+    int destructions = 0;
+    DocumentSession session(QStringLiteral("document.pdf"), 10);
+    QSignalSpy rejections(&session, &DocumentSession::commandRejected);
+
+    QVERIFY(!session.push(std::make_unique<ObsoleteCommand>(
+                              &value, &destructions, ObsoleteCommand::Timing::BeforePush),
+                          4));
+    QCOMPARE(session.lastPushRejection(), DocumentSession::PushRejection::ObsoleteCommand);
+    QCOMPARE(value, 0);
+    QCOMPARE(destructions, 1);
+    QCOMPARE(session.undoCommandCount(), 0);
+    QCOMPARE(session.retainedBytes(), quint64(0));
+    QVERIFY(!session.isDirty());
+    QCOMPARE(rejections.count(), 1);
+
+    DocumentSession pushSession(QStringLiteral("push.pdf"), 10);
+    QSignalSpy pushDiscarded(&pushSession, &DocumentSession::obsoleteCommandDiscarded);
+    QVERIFY(pushSession.push(std::make_unique<ObsoleteCommand>(
+                                 &value, &destructions, ObsoleteCommand::Timing::DuringRedo),
+                             4));
+    QCOMPARE(value, 1);
+    QCOMPARE(destructions, 2);
+    QCOMPARE(pushSession.undoCommandCount(), 0);
+    QCOMPARE(pushSession.retainedBytes(), quint64(0));
+    QVERIFY(pushSession.isDirty());
+    QCOMPARE(pushDiscarded.count(), 1);
+    pushSession.markSaved();
+    QVERIFY(!pushSession.isDirty());
+
+    DocumentSession branchSession(QStringLiteral("branch.pdf"), 10);
+    int branchValue = 0;
+    int branchDestructions = 0;
+    QVERIFY(branchSession.push(std::make_unique<AddCommand>(&branchValue, 1), 3));
+    QVERIFY(branchSession.push(std::make_unique<AddCommand>(&branchValue, 1), 7));
+    branchSession.undo();
+    QVERIFY(branchSession.push(std::make_unique<ObsoleteCommand>(
+                                   &branchValue,
+                                   &branchDestructions,
+                                   ObsoleteCommand::Timing::DuringRedo),
+                               7));
+    QCOMPARE(branchDestructions, 1);
+    QCOMPARE(branchSession.retainedBytes(), quint64(3));
+    QCOMPARE(branchSession.undoCommandCount(), 1);
+    QVERIFY(!branchSession.canRedo());
+    QVERIFY(branchSession.isDirty());
+
+    DocumentSession undoSession(QStringLiteral("undo.pdf"), 10);
+    QSignalSpy undoDiscarded(&undoSession, &DocumentSession::obsoleteCommandDiscarded);
+    QVERIFY(undoSession.push(std::make_unique<ObsoleteCommand>(
+                                 &value, &destructions, ObsoleteCommand::Timing::DuringUndo),
+                             4));
+    QCOMPARE(undoSession.retainedBytes(), quint64(4));
+    QVERIFY(undoSession.isDirty());
+    undoSession.undo();
+    QCOMPARE(value, 1);
+    QCOMPARE(destructions, 3);
+    QCOMPARE(undoSession.undoCommandCount(), 0);
+    QCOMPARE(undoSession.retainedBytes(), quint64(0));
+    QVERIFY(!undoSession.isDirty());
+    QCOMPARE(undoDiscarded.count(), 1);
+
+    DocumentSession savedUndoSession(QStringLiteral("saved-undo.pdf"), 10);
+    int savedUndoValue = 0;
+    int savedUndoDestructions = 0;
+    QVERIFY(savedUndoSession.push(std::make_unique<ObsoleteCommand>(
+                                      &savedUndoValue,
+                                      &savedUndoDestructions,
+                                      ObsoleteCommand::Timing::DuringUndo),
+                                  4));
+    savedUndoSession.markSaved();
+    QVERIFY(!savedUndoSession.isDirty());
+    savedUndoSession.undo();
+    QCOMPARE(savedUndoValue, 0);
+    QCOMPARE(savedUndoDestructions, 1);
+    QCOMPARE(savedUndoSession.retainedBytes(), quint64(0));
+    QVERIFY(savedUndoSession.isDirty());
+
+    DocumentSession redoSession(QStringLiteral("redo.pdf"), 10);
+    QSignalSpy redoDiscarded(&redoSession, &DocumentSession::obsoleteCommandDiscarded);
+    QVERIFY(redoSession.push(std::make_unique<ObsoleteCommand>(
+                                &value,
+                                &destructions,
+                                ObsoleteCommand::Timing::DuringSecondRedo),
+                            6));
+    redoSession.undo();
+    QCOMPARE(redoSession.retainedBytes(), quint64(6));
+    QVERIFY(redoSession.canRedo());
+    redoSession.redo();
+    QCOMPARE(destructions, 4);
+    QCOMPARE(redoSession.undoCommandCount(), 0);
+    QCOMPARE(redoSession.retainedBytes(), quint64(0));
+    QVERIFY(redoSession.isDirty());
+    QCOMPARE(redoDiscarded.count(), 1);
+}
+
+void DocumentSessionTest::mirrorsActionTextTransitions() {
+    DocumentSession session(QStringLiteral("document.pdf"), 10);
+    QVERIFY(session.push(std::make_unique<RelabelingCommand>(), 1));
+    QCOMPARE(session.undoText(), QStringLiteral("Applied"));
+    session.undo();
+    QCOMPARE(session.redoText(), QStringLiteral("Reverted"));
+    session.redo();
+    QCOMPARE(session.undoText(), QStringLiteral("Applied"));
 }
 
 void DocumentSessionTest::ownsCommandsAndRejectsNull() {

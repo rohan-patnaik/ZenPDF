@@ -21,6 +21,7 @@ public:
     enum class PushRejection {
         None,
         NullCommand,
+        ObsoleteCommand,
         CommandExceedsRetainedByteLimit,
         RetainedByteAdditionOverflow,
         RetainedByteLimitExceeded,
@@ -56,6 +57,7 @@ signals:
     void stateChanged();
     void retainedBytesChanged(quint64 retainedBytes);
     void commandRejected(DocumentSession::PushRejection reason, const QString& message);
+    void obsoleteCommandDiscarded(const QString& message);
 
 private:
     friend class MainWindow;
@@ -67,6 +69,7 @@ private:
     QVector<quint64> retainedCosts_;
     quint64 retainedBytes_ = 0;
     quint64 retainedByteLimit_;
+    bool hasUntrackedExecutedChange_ = false;
     PushRejection lastPushRejection_ = PushRejection::None;
     QString lastPushRejectionMessage_;
 };
