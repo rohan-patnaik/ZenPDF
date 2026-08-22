@@ -19,6 +19,14 @@ const feedbackStatus = v.union(
   v.literal("resolved"),
 );
 
+const browserUploadReservationStatus = v.union(
+  v.literal("issued"),
+  v.literal("bound"),
+  v.literal("consumed"),
+  v.literal("expired"),
+  v.literal("deleted"),
+);
+
 export default defineSchema({
   users: defineTable({
     clerkUserId: v.string(),
@@ -106,6 +114,27 @@ export default defineSchema({
   })
     .index("by_job", ["jobId"])
     .index("by_expires", ["expiresAt"]),
+
+  browserUploadReservations: defineTable({
+    userId: v.optional(v.id("users")),
+    anonId: v.optional(v.string()),
+    status: browserUploadReservationStatus,
+    filename: v.string(),
+    sizeBytes: v.number(),
+    contentType: v.string(),
+    storageId: v.optional(v.id("_storage")),
+    jobId: v.optional(v.id("jobs")),
+    createdAt: v.number(),
+    expiresAt: v.number(),
+    boundAt: v.optional(v.number()),
+    consumedAt: v.optional(v.number()),
+    deletedAt: v.optional(v.number()),
+  })
+    .index("by_user_status_expiry", ["userId", "status", "expiresAt"])
+    .index("by_anon_status_expiry", ["anonId", "status", "expiresAt"])
+    .index("by_storage", ["storageId"])
+    .index("by_status_expiry", ["status", "expiresAt"])
+    .index("by_job", ["jobId"]),
 
   usageCounters: defineTable({
     userId: v.optional(v.id("users")),

@@ -65,11 +65,17 @@ const discardWorkerUpload = makeFunctionReference<
   boolean
 >("files:discardWorkerUpload");
 
-const generateUploadUrl = makeFunctionReference<
+const beginBrowserUpload = makeFunctionReference<
   "mutation",
-  { anonId?: string },
-  string
->("files:generateUploadUrl");
+  { anonId?: string; filename: string; sizeBytes: number; contentType: string },
+  { reservationId: string; uploadUrl: string; expiresAt: number }
+>("files:beginBrowserUpload");
+
+const bindBrowserUpload = makeFunctionReference<
+  "mutation",
+  { reservationId: string; storageId: string; anonId?: string },
+  { reservationId: string; storageId: string }
+>("files:bindBrowserUpload");
 
 const getWorkerUploadState = makeFunctionReference<
   "query",
@@ -106,20 +112,31 @@ const getCapacitySnapshot = makeFunctionReference<
 >("capacity:getCapacitySnapshot");
 
 describe("job system", () => {
-  it("keeps generic uploads browser-scoped even with a valid worker token", async () => {
+  it("issues owned one-shot browser reservations instead of generic URLs", async () => {
     const previousWorkerToken = process.env.ZENPDF_WORKER_TOKEN;
     process.env.ZENPDF_WORKER_TOKEN = "test-worker-token";
     try {
       const anonymous = convexTest(schema, modules);
       await expect(
         anonymous.mutation(
-          generateUploadUrl,
-          { workerToken: "test-worker-token" } as never,
+          beginBrowserUpload,
+          {
+            workerToken: "test-worker-token",
+            filename: "input.pdf",
+            sizeBytes: 4,
+            contentType: "application/pdf",
+          } as never,
         ),
       ).rejects.toThrow();
-      await expect(anonymous.mutation(generateUploadUrl, {})).rejects.toThrow();
+      await expect(
+        anonymous.mutation(beginBrowserUpload, {
+          filename: "input.pdf",
+          sizeBytes: 4,
+          contentType: "application/pdf",
+        }),
+      ).rejects.toThrow();
 
-      const signedIn = convexTest(schema, modules).withIdentity({
+      const signedIn = anonymous.withIdentity({
         subject: "user_upload",
         email: "upload@example.com",
       });
@@ -133,12 +150,45 @@ describe("job system", () => {
           updatedAt: now,
         });
       });
-      await expect(signedIn.mutation(generateUploadUrl, {})).resolves.toMatch(
-        /^https?:\/\//,
+      const issued = await signedIn.mutation(beginBrowserUpload, {
+        filename: "input.pdf",
+        sizeBytes: 4,
+        contentType: "application/pdf",
+      });
+      expect(issued.uploadUrl).toMatch(/^https?:\/\//);
+      expect(issued.expiresAt).toBeGreaterThan(now);
+      const storageId = await signedIn.run(async (ctx) =>
+        ctx.storage.store(new Blob(["test"], { type: "application/pdf" })),
       );
+      const otherUser = anonymous.withIdentity({
+        subject: "other_upload",
+      });
       await expect(
-        anonymous.mutation(generateUploadUrl, { anonId: "anon-browser" }),
-      ).resolves.toMatch(/^https?:\/\//);
+        otherUser.mutation(bindBrowserUpload, {
+          reservationId: issued.reservationId,
+          storageId,
+        }),
+      ).rejects.toThrow();
+      await expect(
+        signedIn.mutation(bindBrowserUpload, {
+          reservationId: issued.reservationId,
+          storageId,
+        }),
+      ).resolves.toEqual({ reservationId: issued.reservationId, storageId });
+      await expect(
+        signedIn.mutation(bindBrowserUpload, {
+          reservationId: issued.reservationId,
+          storageId,
+        }),
+      ).rejects.toThrow();
+
+      const anonIssued = await anonymous.mutation(beginBrowserUpload, {
+        anonId: "anon-browser",
+        filename: "anon.pdf",
+        sizeBytes: 4,
+        contentType: "application/pdf",
+      });
+      expect(anonIssued.uploadUrl).toMatch(/^https?:\/\//);
     } finally {
       if (previousWorkerToken === undefined) {
         delete process.env.ZENPDF_WORKER_TOKEN;
@@ -146,6 +196,78 @@ describe("job system", () => {
         process.env.ZENPDF_WORKER_TOKEN = previousWorkerToken;
       }
     }
+  });
+
+  it("enforces browser intent, server expiry, and outstanding-ticket bounds", async () => {
+    const t = convexTest(schema, modules);
+    const anonId = "anon-reservation-owner";
+    await expect(
+      t.mutation(beginBrowserUpload, {
+        anonId,
+        filename: "../private.pdf",
+        sizeBytes: 4,
+        contentType: "application/pdf",
+      }),
+    ).rejects.toThrow();
+
+    const expired = await t.mutation(beginBrowserUpload, {
+      anonId,
+      filename: "expired.pdf",
+      sizeBytes: 4,
+      contentType: "application/pdf",
+    });
+    const exactStorageId = await t.run(async (ctx) =>
+      ctx.storage.store(new Blob(["test"], { type: "application/pdf" })),
+    );
+    await t.run(async (ctx) => {
+      await ctx.db.patch(
+        expired.reservationId as Id<"browserUploadReservations">,
+        { expiresAt: Date.now() - 1 },
+      );
+    });
+    await expect(
+      t.mutation(bindBrowserUpload, {
+        reservationId: expired.reservationId,
+        storageId: exactStorageId,
+        anonId,
+      }),
+    ).rejects.toThrow();
+    const expiredRecord = await t.run(async (ctx) =>
+      ctx.db.get(expired.reservationId as Id<"browserUploadReservations">),
+    );
+    expect(expiredRecord?.status).toBe("issued");
+    expect(expiredRecord).not.toHaveProperty("storageId");
+
+    const mismatched = await t.mutation(beginBrowserUpload, {
+      anonId,
+      filename: "mismatch.pdf",
+      sizeBytes: 5,
+      contentType: "application/pdf",
+    });
+    await expect(
+      t.mutation(bindBrowserUpload, {
+        reservationId: mismatched.reservationId,
+        storageId: exactStorageId,
+        anonId,
+      }),
+    ).rejects.toThrow();
+
+    for (let index = 0; index < 11; index += 1) {
+      await t.mutation(beginBrowserUpload, {
+        anonId,
+        filename: `outstanding-${index}.pdf`,
+        sizeBytes: 4,
+        contentType: "application/pdf",
+      });
+    }
+    await expect(
+      t.mutation(beginBrowserUpload, {
+        anonId,
+        filename: "over-limit.pdf",
+        sizeBytes: 4,
+        contentType: "application/pdf",
+      }),
+    ).rejects.toThrow();
   });
 
   it("rejects jobs when monthly budget is exceeded", async () => {

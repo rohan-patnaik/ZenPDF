@@ -3,22 +3,127 @@ import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { mutation, query } from "./_generated/server";
 
-import { resolveUser } from "./lib/auth";
+import { resolveOrCreateUser, resolveUser } from "./lib/auth";
+import {
+  BROWSER_UPLOAD_RESERVATION_TTL_MS,
+  MAX_OUTSTANDING_BROWSER_UPLOADS,
+  normalizeAnonId,
+  normalizeUploadIntent,
+  reservationBelongsTo,
+} from "./lib/browser_uploads";
 import { throwFriendlyError } from "./lib/errors";
 import { assertWorkerToken } from "./lib/worker_auth";
-import { resolveGlobalLimits } from "./lib/limits";
+import { resolveGlobalLimits, resolvePlanLimits } from "./lib/limits";
 
 const WORKER_UPLOAD_DEADLINE_MS = 2 * 60 * 1000;
 const WORKER_UPLOAD_RECOVERY_MS = 24 * 60 * 60 * 1000;
 
-export const generateUploadUrl = mutation({
-  args: { anonId: v.optional(v.string()) },
+export const beginBrowserUpload = mutation({
+  args: {
+    anonId: v.optional(v.string()),
+    filename: v.string(),
+    sizeBytes: v.number(),
+    contentType: v.string(),
+  },
   handler: async (ctx, args) => {
-    const { userId } = await resolveUser(ctx);
-    if (!userId && !args.anonId) {
+    const now = Date.now();
+    const { userId, tier } = await resolveOrCreateUser(ctx);
+    const anonId = userId ? undefined : normalizeAnonId(args.anonId);
+    if (!userId && !anonId) {
       throwFriendlyError("USER_SESSION_REQUIRED");
     }
-    return ctx.storage.generateUploadUrl();
+    const limits = await resolvePlanLimits(ctx, tier);
+    const intent = normalizeUploadIntent(
+      args.filename,
+      args.sizeBytes,
+      args.contentType,
+      Math.floor(limits.maxMbPerFile * 1024 * 1024),
+    );
+    const activeStatuses = ["issued", "bound"] as const;
+    let outstanding = 0;
+    for (const status of activeStatuses) {
+      const reservations = userId
+        ? await ctx.db
+            .query("browserUploadReservations")
+            .withIndex("by_user_status_expiry", (q) =>
+              q
+                .eq("userId", userId)
+                .eq("status", status)
+                .gt("expiresAt", now),
+            )
+            .take(MAX_OUTSTANDING_BROWSER_UPLOADS + 1)
+        : await ctx.db
+            .query("browserUploadReservations")
+            .withIndex("by_anon_status_expiry", (q) =>
+              q
+                .eq("anonId", anonId)
+                .eq("status", status)
+                .gt("expiresAt", now),
+            )
+            .take(MAX_OUTSTANDING_BROWSER_UPLOADS + 1);
+      outstanding += reservations.length;
+      if (outstanding >= MAX_OUTSTANDING_BROWSER_UPLOADS) {
+        throwFriendlyError("USER_LIMIT_MAX_FILES");
+      }
+    }
+    const expiresAt = now + BROWSER_UPLOAD_RESERVATION_TTL_MS;
+    const reservationId = await ctx.db.insert("browserUploadReservations", {
+      userId,
+      anonId,
+      status: "issued",
+      ...intent,
+      createdAt: now,
+      expiresAt,
+    });
+    return {
+      reservationId,
+      uploadUrl: await ctx.storage.generateUploadUrl(),
+      expiresAt,
+    };
+  },
+});
+
+export const bindBrowserUpload = mutation({
+  args: {
+    reservationId: v.id("browserUploadReservations"),
+    storageId: v.id("_storage"),
+    anonId: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = Date.now();
+    const { userId } = await resolveUser(ctx);
+    const anonId = userId ? undefined : normalizeAnonId(args.anonId);
+    const reservation = await ctx.db.get(args.reservationId);
+    if (!reservation) {
+      return throwFriendlyError("USER_INPUT_INVALID");
+    }
+    if (
+      !reservationBelongsTo(reservation, userId, anonId) ||
+      reservation.status !== "issued"
+    ) {
+      throwFriendlyError("USER_INPUT_INVALID");
+    }
+    if (reservation.expiresAt <= now) {
+      return throwFriendlyError("USER_INPUT_INVALID");
+    }
+    const metadata = await ctx.db.system.get(args.storageId);
+    if (
+      !metadata ||
+      metadata.size !== reservation.sizeBytes ||
+      (metadata.contentType !== undefined &&
+        metadata.contentType.toLowerCase() !== reservation.contentType)
+    ) {
+      throwFriendlyError("USER_INPUT_INVALID");
+    }
+    await ctx.db.patch(reservation._id, {
+      status: "bound",
+      storageId: args.storageId,
+      boundAt: now,
+    });
+    return {
+      reservationId: reservation._id,
+      storageId: args.storageId,
+    };
   },
 });
 
