@@ -3,6 +3,7 @@ import { makeFunctionReference } from "convex/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import schema from "../../convex/schema";
+import { cleanupExpiredArtifactsBatch } from "../../convex/cleanup";
 import {
   canDeleteStorageObject,
   MAX_STORAGE_OBJECT_BYTES,
@@ -128,6 +129,39 @@ afterEach(() => {
 });
 
 describe("bounded storage orphan cleanup", () => {
+  it("debits failed artifact attempts from the normalized shared batch", async () => {
+    const artifacts = [
+      { _id: "artifact-1", storageId: "storage-1" },
+      { _id: "artifact-2", storageId: "storage-2" },
+    ];
+    const takeArtifacts = vi.fn().mockResolvedValue(artifacts);
+    const query = vi.fn(() => ({
+      withIndex: vi.fn(() => ({ take: takeArtifacts })),
+    }));
+    const getMetadata = vi.fn().mockResolvedValue({ size: 1 });
+    const hasOwner = vi.fn().mockRejectedValue(new Error("owner check failed"));
+    const ctx = {
+      db: {
+        query,
+        system: { get: getMetadata },
+        delete: vi.fn(),
+      },
+      storage: { delete: vi.fn() },
+    };
+
+    await expect(
+      cleanupExpiredArtifactsBatch(
+        ctx as never,
+        { batchSize: 2.9 },
+        hasOwner as never,
+      ),
+    ).resolves.toEqual({ deleted: 0, pendingDeleted: 0 });
+    expect(takeArtifacts).toHaveBeenCalledWith(2);
+    expect(getMetadata).toHaveBeenCalledTimes(2);
+    expect(hasOwner).toHaveBeenCalledTimes(2);
+    expect(query).toHaveBeenCalledTimes(1);
+  });
+
   it("does not start a phase when the monotonic action budget is exhausted", async () => {
     vi.useFakeTimers();
     vi.stubEnv("ZENPDF_STORAGE_SWEEP_MAX_WALL_MS", "50");
