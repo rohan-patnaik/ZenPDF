@@ -3,6 +3,7 @@
 
 #include <QDateTime>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QFileInfo>
 #include <QHash>
@@ -12,6 +13,7 @@
 
 #include <cstdio>
 #include <cerrno>
+#include <algorithm>
 #include <optional>
 
 #ifdef Q_OS_UNIX
@@ -27,6 +29,7 @@
 namespace {
 constexpr int kMaximumInputs = 100;
 constexpr int kStartTimeoutMs = 5'000;
+constexpr int kProcessPollMs = 100;
 constexpr qsizetype kMaximumDiagnosticBytes = 8 * 1024;
 constexpr auto kOwnerDirectoryPermissions =
     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
@@ -112,28 +115,41 @@ bool unchangedFile(const FileIdentity& expected) {
 #endif
 }
 
-bool snapshotInput(const FileIdentity& expected, const QString& snapshotPath) {
+enum class SnapshotResult { Succeeded, Cancelled, TimedOut, Failed };
+
+SnapshotResult snapshotInput(
+    const FileIdentity& expected,
+    const QString& snapshotPath,
+    const std::atomic_bool* cancelled,
+    const QElapsedTimer& elapsed,
+    int timeoutMs) {
     QFile source(expected.path);
     if (!source.open(QIODevice::ReadOnly)) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #ifdef Q_OS_UNIX
     struct stat before {};
     if (::fstat(source.handle(), &before) != 0 || !S_ISREG(before.st_mode) ||
         before.st_dev != expected.device || before.st_ino != expected.inode) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #endif
     QFile snapshot(snapshotPath);
     if (!snapshot.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
-        return false;
+        return SnapshotResult::Failed;
     }
     QByteArray buffer(1024 * 1024, Qt::Uninitialized);
     qint64 total = 0;
     while (true) {
+        if (cancelled != nullptr && cancelled->load()) {
+            return SnapshotResult::Cancelled;
+        }
+        if (elapsed.elapsed() >= timeoutMs) {
+            return SnapshotResult::TimedOut;
+        }
         const auto bytesRead = source.read(buffer.data(), buffer.size());
         if (bytesRead < 0) {
-            return false;
+            return SnapshotResult::Failed;
         }
         if (bytesRead == 0) {
             break;
@@ -141,20 +157,20 @@ bool snapshotInput(const FileIdentity& expected, const QString& snapshotPath) {
         total += bytesRead;
         if (total > QpdfOperations::maximumInputBytes ||
             snapshot.write(buffer.constData(), bytesRead) != bytesRead) {
-            return false;
+            return SnapshotResult::Failed;
         }
     }
     if (!snapshot.setPermissions(kOwnerFilePermissions) || !snapshot.flush()) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #ifdef Q_OS_UNIX
     if (::fsync(snapshot.handle()) != 0) {
-        return false;
+        return SnapshotResult::Failed;
     }
     struct stat after {};
     if (::fstat(source.handle(), &after) != 0 || before.st_dev != after.st_dev ||
         before.st_ino != after.st_ino || before.st_size != after.st_size) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #ifdef Q_OS_LINUX
     if (
@@ -162,15 +178,73 @@ bool snapshotInput(const FileIdentity& expected, const QString& snapshotPath) {
         before.st_mtim.tv_nsec != after.st_mtim.tv_nsec ||
         before.st_ctim.tv_sec != after.st_ctim.tv_sec ||
         before.st_ctim.tv_nsec != after.st_ctim.tv_nsec) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #else
     if (before.st_mtime != after.st_mtime || before.st_ctime != after.st_ctime) {
-        return false;
+        return SnapshotResult::Failed;
     }
 #endif
 #endif
-    return total == expected.size;
+    return total == expected.size ? SnapshotResult::Succeeded : SnapshotResult::Failed;
+}
+
+int selectedPageOccurrenceCount(const QString& range) {
+    int count = 0;
+    for (const auto& part : range.split(',')) {
+        const auto bounds = part.split('-');
+        const int first = bounds.at(0).toInt();
+        const int last = bounds.size() == 2 ? bounds.at(1).toInt() : first;
+        count += last - first + 1;
+    }
+    return count;
+}
+
+int uniqueSelectedPageCount(const QString& range, int pageCount) {
+    QList<bool> selected(pageCount + 1, false);
+    int count = 0;
+    for (const auto& part : range.split(',')) {
+        const auto bounds = part.split('-');
+        const int first = bounds.at(0).toInt();
+        const int last = bounds.size() == 2 ? bounds.at(1).toInt() : first;
+        for (int page = first; page <= last; ++page) {
+            if (!selected.at(page)) {
+                selected[page] = true;
+                ++count;
+            }
+        }
+    }
+    return count;
+}
+
+QString retainedPageRange(const QString& deletedRange, int pageCount) {
+    QList<bool> deleted(pageCount + 1, false);
+    for (const auto& part : deletedRange.split(',')) {
+        const auto bounds = part.split('-');
+        const int first = bounds.at(0).toInt();
+        const int last = bounds.size() == 2 ? bounds.at(1).toInt() : first;
+        for (int page = first; page <= last; ++page) {
+            deleted[page] = true;
+        }
+    }
+
+    QStringList retained;
+    for (int first = 1; first <= pageCount;) {
+        while (first <= pageCount && deleted.at(first)) {
+            ++first;
+        }
+        if (first > pageCount) {
+            break;
+        }
+        int last = first;
+        while (last + 1 <= pageCount && !deleted.at(last + 1)) {
+            ++last;
+        }
+        retained.append(first == last ? QString::number(first)
+                                      : QStringLiteral("%1-%2").arg(first).arg(last));
+        first = last + 1;
+    }
+    return retained.join(',');
 }
 
 }
@@ -210,7 +284,7 @@ QpdfPublication::Result QpdfPublication::publishNoReplace(
 }
 
 bool QpdfOperations::isValidPageRange(const QString& range, int pageCount) {
-    if (pageCount < 1 || range.isEmpty() || range.size() > 1'000) {
+    if (pageCount < 1 || pageCount > maximumPageCount || range.isEmpty() || range.size() > 1'000) {
         return false;
     }
     static const QRegularExpression syntax(QStringLiteral("^[1-9][0-9]*(?:-[1-9][0-9]*)?(?:,[1-9][0-9]*(?:-[1-9][0-9]*)?)*$"));
@@ -269,11 +343,39 @@ QpdfResult QpdfOperations::extract(
         return {false, QStringLiteral("Enter pages such as 1-3,5 within this document.")};
     }
     return run(
-        {QStringLiteral("--empty"), QStringLiteral("--pages"), inputPath, pageRange, QStringLiteral("--")},
+        {inputPath, QStringLiteral("--pages"), QStringLiteral("."), pageRange, QStringLiteral("--")},
         outputPath,
         {inputPath},
         cancelled,
-        limits);
+        limits,
+        selectedPageOccurrenceCount(pageRange));
+}
+
+QpdfResult QpdfOperations::deletePages(
+    const QString& inputPath,
+    const QString& pageRange,
+    int pageCount,
+    const QString& outputPath,
+    const std::atomic_bool* cancelled,
+    QpdfLimits limits) {
+    const auto validation = validateInput(inputPath);
+    if (!validation.succeeded) {
+        return validation;
+    }
+    if (!isValidPageRange(pageRange, pageCount)) {
+        return {false, QStringLiteral("Enter pages such as 1-3,5 within this document.")};
+    }
+    const auto retained = retainedPageRange(pageRange, pageCount);
+    if (retained.isEmpty()) {
+        return {false, QStringLiteral("At least one page must remain in the new PDF.")};
+    }
+    return run(
+        {inputPath, QStringLiteral("--pages"), QStringLiteral("."), retained, QStringLiteral("--")},
+        outputPath,
+        {inputPath},
+        cancelled,
+        limits,
+        pageCount - uniqueSelectedPageCount(pageRange, pageCount));
 }
 
 QpdfResult QpdfOperations::rotate(
@@ -293,7 +395,7 @@ QpdfResult QpdfOperations::rotate(
     }
     const auto rotation = QStringLiteral("--rotate=%1:%2")
                               .arg(clockwise ? QStringLiteral("+90") : QStringLiteral("-90"), pageRange);
-    return run({inputPath, rotation}, outputPath, {inputPath}, cancelled, limits);
+    return run({inputPath, rotation}, outputPath, {inputPath}, cancelled, limits, pageCount);
 }
 
 QpdfResult QpdfOperations::run(
@@ -301,16 +403,20 @@ QpdfResult QpdfOperations::run(
     const QString& outputPath,
     const QStringList& protectedInputPaths,
     const std::atomic_bool* cancelled,
-    QpdfLimits limits) {
+    QpdfLimits limits,
+    std::optional<int> expectedPageCount) {
     if (outputPath.trimmed().isEmpty()) {
         return {false, QStringLiteral("Choose an output path.")};
     }
-    if (limits.maximumOutputBytes < 8 || limits.operationTimeoutMs < 1) {
+    if (limits.maximumOutputBytes < 8 || limits.maximumOutputBytes > maximumInputBytes ||
+        limits.operationTimeoutMs < 1 || limits.operationTimeoutMs > maximumOperationTimeoutMs) {
         return {false, QStringLiteral("Invalid operation safety limits.")};
     }
     if (cancelled != nullptr && cancelled->load()) {
         return {false, QStringLiteral("The operation was cancelled.")};
     }
+    QElapsedTimer elapsed;
+    elapsed.start();
     const auto cleanOutput = normalizedPath(outputPath);
     QList<FileIdentity> protectedInputs;
     for (const auto& input : protectedInputPaths) {
@@ -365,10 +471,54 @@ QpdfResult QpdfOperations::run(
         const auto& input = protectedInputs.at(index);
         const auto snapshotPath = stagingDirectory.filePath(
             QStringLiteral("input-%1.pdf").arg(index));
-        if (!snapshotInput(input, snapshotPath)) {
+        const auto snapshotResult = snapshotInput(
+            input, snapshotPath, cancelled, elapsed, limits.operationTimeoutMs);
+        if (snapshotResult == SnapshotResult::Cancelled) {
+            return {false, QStringLiteral("The operation was cancelled.")};
+        }
+        if (snapshotResult == SnapshotResult::TimedOut) {
+            return {false, QStringLiteral("The operation exceeded its time safety limit.")};
+        }
+        if (snapshotResult != SnapshotResult::Succeeded) {
             return {false, QStringLiteral("An input PDF changed while it was being secured; no output was published.")};
         }
         snapshotPaths.insert(protectedInputPaths.at(index), snapshotPath);
+    }
+
+    for (const auto& snapshotPath : snapshotPaths) {
+        QProcess encryptionCheck;
+        encryptionCheck.setProcessChannelMode(QProcess::SeparateChannels);
+        encryptionCheck.start(
+            QStringLiteral("qpdf"),
+            {QStringLiteral("--is-encrypted"), snapshotPath},
+            QIODevice::ReadOnly);
+        const int remaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
+        if (remaining < 1 || !encryptionCheck.waitForStarted(std::min(kStartTimeoutMs, remaining))) {
+            return {false, remaining < 1
+                               ? QStringLiteral("The operation exceeded its time safety limit.")
+                               : QStringLiteral("qpdf is not installed or could not be started.")};
+        }
+        while (!encryptionCheck.waitForFinished(kProcessPollMs)) {
+            if (cancelled != nullptr && cancelled->load()) {
+                encryptionCheck.kill();
+                encryptionCheck.waitForFinished(kStartTimeoutMs);
+                return {false, QStringLiteral("The operation was cancelled.")};
+            }
+            if (elapsed.elapsed() >= limits.operationTimeoutMs) {
+                encryptionCheck.kill();
+                encryptionCheck.waitForFinished(kStartTimeoutMs);
+                return {false, QStringLiteral("The operation exceeded its time safety limit.")};
+            }
+        }
+        if (encryptionCheck.exitStatus() != QProcess::NormalExit) {
+            return {false, QStringLiteral("qpdf could not inspect an input PDF safely.")};
+        }
+        if (encryptionCheck.exitCode() == 0) {
+            return {false, QStringLiteral("Encrypted or permission-restricted PDFs are not supported by organizer commands.")};
+        }
+        if (encryptionCheck.exitCode() != 2 || !encryptionCheck.readAllStandardError().trimmed().isEmpty()) {
+            return {false, QStringLiteral("An input is malformed or unsupported; no output was published.")};
+        }
     }
 
     auto processArguments = arguments;
@@ -382,8 +532,12 @@ QpdfResult QpdfOperations::run(
     QProcess process;
     process.setProcessChannelMode(QProcess::SeparateChannels);
     process.start(QStringLiteral("qpdf"), processArguments, QIODevice::ReadOnly);
-    if (!process.waitForStarted(kStartTimeoutMs)) {
-        return {false, QStringLiteral("qpdf is not installed or could not be started.")};
+    const int processStartRemaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
+    if (processStartRemaining < 1 ||
+        !process.waitForStarted(std::min(kStartTimeoutMs, processStartRemaining))) {
+        return {false, processStartRemaining < 1
+                           ? QStringLiteral("The operation exceeded its time safety limit.")
+                           : QStringLiteral("qpdf is not installed or could not be started.")};
     }
 
     QByteArray diagnostic;
@@ -399,19 +553,17 @@ QpdfResult QpdfOperations::run(
         const QFileInfo temporaryInfo(temporaryPath);
         return temporaryInfo.exists() && temporaryInfo.size() > limits.maximumOutputBytes;
     };
-    int elapsedMs = 0;
-    while (!process.waitForFinished(100)) {
-        elapsedMs += 100;
+    while (!process.waitForFinished(kProcessPollMs)) {
         collectDiagnostic();
         const bool outputLimitExceeded = exceedsOutputLimit();
         if (outputLimitExceeded || (cancelled != nullptr && cancelled->load()) ||
-            elapsedMs >= limits.operationTimeoutMs) {
+            elapsed.elapsed() >= limits.operationTimeoutMs) {
             process.kill();
             process.waitForFinished(kStartTimeoutMs);
             if (outputLimitExceeded) {
                 return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
             }
-            return {false, elapsedMs >= limits.operationTimeoutMs
+            return {false, elapsed.elapsed() >= limits.operationTimeoutMs
                                ? QStringLiteral("The operation exceeded its time safety limit.")
                                : QStringLiteral("The operation was cancelled.")};
         }
@@ -442,6 +594,57 @@ QpdfResult QpdfOperations::run(
     }
 #endif
     result.close();
+
+    const auto runValidation = [&](const QStringList& validationArguments, QByteArray* standardOutput)
+        -> std::optional<QpdfResult> {
+        QProcess validation;
+        validation.setProcessChannelMode(QProcess::SeparateChannels);
+        validation.start(QStringLiteral("qpdf"), validationArguments, QIODevice::ReadOnly);
+        const int remaining = limits.operationTimeoutMs - static_cast<int>(elapsed.elapsed());
+        if (remaining < 1 || !validation.waitForStarted(std::min(kStartTimeoutMs, remaining))) {
+            return QpdfResult{false, remaining < 1
+                                        ? QStringLiteral("The operation exceeded its time safety limit.")
+                                        : QStringLiteral("The completed PDF could not be reopened for validation.")};
+        }
+        while (!validation.waitForFinished(kProcessPollMs)) {
+            if (cancelled != nullptr && cancelled->load()) {
+                validation.kill();
+                validation.waitForFinished(kStartTimeoutMs);
+                return QpdfResult{false, QStringLiteral("The operation was cancelled.")};
+            }
+            if (elapsed.elapsed() >= limits.operationTimeoutMs) {
+                validation.kill();
+                validation.waitForFinished(kStartTimeoutMs);
+                return QpdfResult{false, QStringLiteral("The operation exceeded its time safety limit.")};
+            }
+        }
+        if (validation.exitStatus() != QProcess::NormalExit || validation.exitCode() != 0) {
+            return QpdfResult{false, QStringLiteral("The completed PDF did not pass structural reopen validation.")};
+        }
+        if (standardOutput != nullptr) {
+            *standardOutput = validation.readAllStandardOutput();
+        }
+        return std::nullopt;
+    };
+
+    if (const auto error = runValidation(
+            {QStringLiteral("--check"), temporaryPath}, nullptr);
+        error.has_value()) {
+        return *error;
+    }
+    if (expectedPageCount.has_value()) {
+        QByteArray pageCountOutput;
+        if (const auto error = runValidation(
+                {QStringLiteral("--show-npages"), temporaryPath}, &pageCountOutput);
+            error.has_value()) {
+            return *error;
+        }
+        bool pageCountOk = false;
+        const int actualPageCount = QString::fromLatin1(pageCountOutput).trimmed().toInt(&pageCountOk);
+        if (!pageCountOk || actualPageCount != *expectedPageCount) {
+            return {false, QStringLiteral("The completed PDF did not preserve the expected page structure.")};
+        }
+    }
 
     for (const auto& input : protectedInputs) {
         if (!unchangedFile(input)) {

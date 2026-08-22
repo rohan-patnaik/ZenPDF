@@ -4,6 +4,7 @@
 #include <QStringList>
 
 #include <atomic>
+#include <optional>
 
 struct QpdfResult final {
     bool succeeded{false};
@@ -18,6 +19,8 @@ struct QpdfLimits final {
 class QpdfOperations final {
 public:
     static constexpr qint64 maximumInputBytes = 2LL * 1024 * 1024 * 1024;
+    static constexpr int maximumPageCount = 100'000;
+    static constexpr int maximumOperationTimeoutMs = 120'000;
 
     [[nodiscard]] static bool isValidPageRange(const QString& range, int pageCount);
     [[nodiscard]] static QpdfResult merge(
@@ -26,6 +29,13 @@ public:
         const std::atomic_bool* cancelled = nullptr,
         QpdfLimits limits = {});
     [[nodiscard]] static QpdfResult extract(
+        const QString& inputPath,
+        const QString& pageRange,
+        int pageCount,
+        const QString& outputPath,
+        const std::atomic_bool* cancelled = nullptr,
+        QpdfLimits limits = {});
+    [[nodiscard]] static QpdfResult deletePages(
         const QString& inputPath,
         const QString& pageRange,
         int pageCount,
@@ -49,5 +59,6 @@ private:
         const QString& outputPath,
         const QStringList& protectedInputPaths,
         const std::atomic_bool* cancelled,
-        QpdfLimits limits);
+        QpdfLimits limits,
+        std::optional<int> expectedPageCount = std::nullopt);
 };

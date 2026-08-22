@@ -5,6 +5,7 @@
 #include <QFile>
 #include <QFileInfo>
 #include <QPainter>
+#include <QPdfDocument>
 #include <QPdfWriter>
 #include <QProcess>
 #include <QStandardPaths>
@@ -25,6 +26,7 @@ class QpdfOperationsTest final : public QObject {
 private slots:
     void validatesPageRanges_data();
     void validatesPageRanges();
+    void rejectsPageCountsAboveSafetyLimit();
     void refusesSourceOverwrite();
     void refusesCanonicalSymlinkSourceOverwrite();
     void refusesHardlinkSourceOverwrite();
@@ -33,9 +35,16 @@ private slots:
     void publicationNeverReplacesAppearedDestination();
     void publicationNeverReplacesChangedDestination();
     void cancellationLeavesNoOutputOrStaging();
+    void cancellationDuringToolLeavesNoOutputOrStaging();
+    void timeoutLeavesNoOutputOrStaging();
     void outputCapLeavesNoOutputOrStaging();
+    void refusesInvalidSafetyLimits();
     void refusesExistingDestination();
+    void refusesMalformedInput();
+    void refusesEncryptedAndRestrictedInputs();
+    void refusesDeletingEveryPage();
     void mergesExtractsAndRotates();
+    void extractsAndDeletesWithReopenEquivalence();
 };
 
 namespace {
@@ -45,6 +54,92 @@ void createPdf(const QString& path, const QString& text) {
     QPainter painter(&writer);
     painter.drawText(QPointF(72, 72), text);
     painter.end();
+}
+
+void createPdf(const QString& path, const QStringList& pageTexts) {
+    QPdfWriter writer(path);
+    writer.setResolution(72);
+    writer.setTitle(QStringLiteral("Organizer structure fixture"));
+    QPainter painter(&writer);
+    for (qsizetype index = 0; index < pageTexts.size(); ++index) {
+        if (index > 0) {
+            writer.newPage();
+        }
+        painter.drawText(QPointF(72, 72), pageTexts.at(index));
+    }
+    painter.end();
+}
+
+QImage renderPage(QPdfDocument& document, int page) {
+    return document.render(page, QSize(612, 792));
+}
+
+bool runQpdf(const QStringList& arguments) {
+    QProcess process;
+    process.start(QStringLiteral("qpdf"), arguments);
+    return process.waitForFinished(5'000) && process.exitStatus() == QProcess::NormalExit &&
+           process.exitCode() == 0;
+}
+
+void createStructuredPdf(const QString& path) {
+    const auto streamObject = [](const QByteArray& text) {
+        const auto stream = QByteArray("BT /F1 18 Tf 72 720 Td (") + text + ") Tj ET\n";
+        return QByteArray("<< /Length ") + QByteArray::number(stream.size()) +
+               " >>\nstream\n" + stream + "endstream";
+    };
+    const QList<QByteArray> objects{
+        "<< /Type /Catalog /Pages 2 0 R /Outlines 10 0 R /PageMode /UseOutlines >>",
+        "<< /Type /Pages /Kids [3 0 R 4 0 R 5 0 R] /Count 3 >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 6 0 R >> >> /Contents 7 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 6 0 R >> >> /Contents 8 0 R >>",
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 6 0 R >> >> /Contents 9 0 R /Annots [11 0 R] >>",
+        "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        streamObject("Page one"),
+        streamObject("Page two"),
+        streamObject("Page three"),
+        "<< /Type /Outlines /First 12 0 R /Last 12 0 R /Count 1 >>",
+        "<< /Type /Annot /Subtype /Text /Rect [72 680 90 700] /Contents (Retained note) /P 5 0 R >>",
+        "<< /Title (Third page) /Parent 10 0 R /Dest [5 0 R /Fit] >>",
+        "<< /Title (Organizer structure fixture) >>",
+    };
+
+    QByteArray pdf("%PDF-1.7\n%âãÏÓ\n");
+    QList<qint64> offsets{0};
+    for (qsizetype index = 0; index < objects.size(); ++index) {
+        offsets.append(pdf.size());
+        pdf.append(QByteArray::number(index + 1));
+        pdf.append(" 0 obj\n");
+        pdf.append(objects.at(index));
+        pdf.append("\nendobj\n");
+    }
+    const qint64 xrefOffset = pdf.size();
+    pdf.append("xref\n0 ");
+    pdf.append(QByteArray::number(objects.size() + 1));
+    pdf.append("\n0000000000 65535 f \n");
+    for (qsizetype index = 1; index < offsets.size(); ++index) {
+        pdf.append(QByteArray::number(offsets.at(index)).rightJustified(10, '0'));
+        pdf.append(" 00000 n \n");
+    }
+    pdf.append("trailer\n<< /Size ");
+    pdf.append(QByteArray::number(objects.size() + 1));
+    pdf.append(" /Root 1 0 R /Info 13 0 R >>\nstartxref\n");
+    pdf.append(QByteArray::number(xrefOffset));
+    pdf.append("\n%%EOF\n");
+
+    QFile file(path);
+    QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::NewOnly));
+    QCOMPARE(file.write(pdf), pdf.size());
+}
+
+QByteArray qpdfJson(const QString& path) {
+    QProcess process;
+    process.start(
+        QStringLiteral("qpdf"),
+        {QStringLiteral("--json"), QStringLiteral("--json-stream-data=none"), path});
+    if (!process.waitForFinished(5'000) || process.exitCode() != 0) {
+        return {};
+    }
+    return process.readAllStandardOutput();
 }
 
 int pageCount(const QString& path) {
@@ -81,6 +176,11 @@ void QpdfOperationsTest::validatesPageRanges() {
     QFETCH(int, pageCount);
     QFETCH(bool, valid);
     QCOMPARE(QpdfOperations::isValidPageRange(range, pageCount), valid);
+}
+
+void QpdfOperationsTest::rejectsPageCountsAboveSafetyLimit() {
+    QVERIFY(!QpdfOperations::isValidPageRange(
+        QStringLiteral("1"), QpdfOperations::maximumPageCount + 1));
 }
 
 void QpdfOperationsTest::refusesSourceOverwrite() {
@@ -152,7 +252,15 @@ void QpdfOperationsTest::refusesChangedSourceBeforePublication() {
     const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
     QFile script(fakeQpdf);
     QVERIFY(script.open(QIODevice::WriteOnly));
-    const QByteArray body = "#!/bin/sh\ncp \"$3\" \"$6\"\nsleep 0.3\n";
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --is-encrypted) exit 2 ;;\n"
+        "  --check) exit 0 ;;\n"
+        "  --show-npages) echo 1; exit 0 ;;\n"
+        "esac\n"
+        "cp \"$1\" \"$6\"\n"
+        "sleep 0.3\n";
     QCOMPARE(script.write(body), body.size());
     script.close();
     QVERIFY(QFile::setPermissions(
@@ -195,7 +303,15 @@ void QpdfOperationsTest::refusesSameSizeSourceChangeWithRestoredMtime() {
     const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
     QFile script(fakeQpdf);
     QVERIFY(script.open(QIODevice::WriteOnly));
-    const QByteArray body = "#!/bin/sh\ncp \"$3\" \"$6\"\nsleep 0.3\n";
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "case \"$1\" in\n"
+        "  --is-encrypted) exit 2 ;;\n"
+        "  --check) exit 0 ;;\n"
+        "  --show-npages) echo 1; exit 0 ;;\n"
+        "esac\n"
+        "cp \"$1\" \"$6\"\n"
+        "sleep 0.3\n";
     QCOMPARE(script.write(body), body.size());
     script.close();
     QVERIFY(QFile::setPermissions(
@@ -299,6 +415,90 @@ void QpdfOperationsTest::cancellationLeavesNoOutputOrStaging() {
     QVERIFY(stagingDirectories(directory).isEmpty());
 }
 
+void QpdfOperationsTest::cancellationDuringToolLeavesNoOutputOrStaging() {
+#ifndef Q_OS_UNIX
+    QSKIP("Cancellation fixture requires a Unix helper script");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
+        "exec sleep 5\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    std::atomic_bool cancelled{false};
+    std::thread cancelThread([&cancelled] {
+        QThread::msleep(150);
+        cancelled.store(true);
+    });
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output, &cancelled);
+    cancelThread.join();
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("cancelled")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
+}
+
+void QpdfOperationsTest::timeoutLeavesNoOutputOrStaging() {
+#ifndef Q_OS_UNIX
+    QSKIP("Timeout fixture requires a Unix helper script");
+#else
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    const auto binDirectory = directory.filePath(QStringLiteral("bin"));
+    QVERIFY(QDir().mkdir(binDirectory));
+    const auto fakeQpdf = QDir(binDirectory).filePath(QStringLiteral("qpdf"));
+    QFile script(fakeQpdf);
+    QVERIFY(script.open(QIODevice::WriteOnly));
+    const QByteArray body =
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
+        "exec sleep 5\n";
+    QCOMPARE(script.write(body), body.size());
+    script.close();
+    QVERIFY(QFile::setPermissions(
+        fakeQpdf, QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-placeholder") > 0);
+    file.close();
+
+    const auto originalPath = qgetenv("PATH");
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output, nullptr, QpdfLimits{1024, 150});
+    qputenv("PATH", originalPath);
+
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("time safety limit")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+#endif
+}
+
 void QpdfOperationsTest::outputCapLeavesNoOutputOrStaging() {
     if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
         QSKIP("qpdf is not installed");
@@ -315,6 +515,35 @@ void QpdfOperationsTest::outputCapLeavesNoOutputOrStaging() {
     QVERIFY(result.message.contains(QStringLiteral("size safety limit")));
     QVERIFY(!QFileInfo::exists(output));
     QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::refusesInvalidSafetyLimits() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    createPdf(source, QStringLiteral("Safety fixture"));
+
+    const auto oversizedOutput = QpdfOperations::extract(
+        source,
+        QStringLiteral("1"),
+        1,
+        output,
+        nullptr,
+        QpdfLimits{QpdfOperations::maximumInputBytes + 1, 5'000});
+    QVERIFY(!oversizedOutput.succeeded);
+    QVERIFY(oversizedOutput.message.contains(QStringLiteral("Invalid operation safety limits")));
+
+    const auto oversizedTimeout = QpdfOperations::extract(
+        source,
+        QStringLiteral("1"),
+        1,
+        output,
+        nullptr,
+        QpdfLimits{1024, QpdfOperations::maximumOperationTimeoutMs + 1});
+    QVERIFY(!oversizedTimeout.succeeded);
+    QVERIFY(oversizedTimeout.message.contains(QStringLiteral("Invalid operation safety limits")));
+    QVERIFY(!QFileInfo::exists(output));
 }
 
 void QpdfOperationsTest::refusesExistingDestination() {
@@ -336,6 +565,70 @@ void QpdfOperationsTest::refusesExistingDestination() {
     QVERIFY(existing.open(QIODevice::ReadOnly));
     QCOMPARE(existing.readAll(), QByteArray("old"));
     QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::refusesMalformedInput() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("malformed.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QVERIFY(file.write("%PDF-malformed") > 0);
+    file.close();
+
+    const auto result = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, output);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("malformed or unsupported")));
+    QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::refusesEncryptedAndRestrictedInputs() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto encrypted = directory.filePath(QStringLiteral("encrypted.pdf"));
+    const auto restricted = directory.filePath(QStringLiteral("restricted.pdf"));
+    createPdf(source, QStringList{QStringLiteral("First"), QStringLiteral("Second")});
+    QVERIFY(runQpdf(
+        {QStringLiteral("--encrypt"), QStringLiteral("reader"), QStringLiteral("owner"),
+         QStringLiteral("256"), QStringLiteral("--"), source, encrypted}));
+    QVERIFY(runQpdf(
+        {QStringLiteral("--encrypt"), QString{}, QStringLiteral("owner"), QStringLiteral("256"),
+         QStringLiteral("--modify=none"), QStringLiteral("--extract=n"), QStringLiteral("--"),
+         source, restricted}));
+
+    for (const auto& input : {encrypted, restricted}) {
+        const auto output = input + QStringLiteral("-output.pdf");
+        const auto result = QpdfOperations::deletePages(
+            input, QStringLiteral("1"), 2, output);
+        QVERIFY(!result.succeeded);
+        QVERIFY(result.message.contains(QStringLiteral("Encrypted or permission-restricted")));
+        QVERIFY(!QFileInfo::exists(output));
+    }
+    QVERIFY(stagingDirectories(directory).isEmpty());
+}
+
+void QpdfOperationsTest::refusesDeletingEveryPage() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto output = directory.filePath(QStringLiteral("output.pdf"));
+    createPdf(source, QStringList{QStringLiteral("First"), QStringLiteral("Second")});
+
+    const auto result = QpdfOperations::deletePages(
+        source, QStringLiteral("1-2"), 2, output);
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("At least one page")));
+    QVERIFY(!QFileInfo::exists(output));
 }
 
 void QpdfOperationsTest::mergesExtractsAndRotates() {
@@ -363,6 +656,56 @@ void QpdfOperationsTest::mergesExtractsAndRotates() {
     const auto rotateResult = QpdfOperations::rotate(extracted, QStringLiteral("1"), 1, true, rotated);
     QVERIFY2(rotateResult.succeeded, qPrintable(rotateResult.message));
     QCOMPARE(pageCount(rotated), 1);
+}
+
+void QpdfOperationsTest::extractsAndDeletesWithReopenEquivalence() {
+    if (QStandardPaths::findExecutable(QStringLiteral("qpdf")).isEmpty()) {
+        QSKIP("qpdf is not installed");
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("source.pdf"));
+    const auto extracted = directory.filePath(QStringLiteral("extracted.pdf"));
+    const auto deleted = directory.filePath(QStringLiteral("deleted.pdf"));
+    createStructuredPdf(source);
+    QFile sourceFile(source);
+    QVERIFY(sourceFile.open(QIODevice::ReadOnly));
+    const auto originalBytes = sourceFile.readAll();
+    sourceFile.close();
+
+    const auto extractResult = QpdfOperations::extract(
+        source, QStringLiteral("2-3"), 3, extracted);
+    QVERIFY2(extractResult.succeeded, qPrintable(extractResult.message));
+    const auto deleteResult = QpdfOperations::deletePages(
+        source, QStringLiteral("1-2,2"), 3, deleted);
+    QVERIFY2(deleteResult.succeeded, qPrintable(deleteResult.message));
+
+    QPdfDocument sourceDocument;
+    QPdfDocument extractedDocument;
+    QPdfDocument deletedDocument;
+    QCOMPARE(sourceDocument.load(source), QPdfDocument::Error::None);
+    QCOMPARE(extractedDocument.load(extracted), QPdfDocument::Error::None);
+    QCOMPARE(deletedDocument.load(deleted), QPdfDocument::Error::None);
+    QCOMPARE(extractedDocument.pageCount(), 2);
+    QCOMPARE(deletedDocument.pageCount(), 1);
+    QCOMPARE(
+        extractedDocument.metaData(QPdfDocument::MetaDataField::Title),
+        sourceDocument.metaData(QPdfDocument::MetaDataField::Title));
+    QCOMPARE(
+        deletedDocument.metaData(QPdfDocument::MetaDataField::Title),
+        sourceDocument.metaData(QPdfDocument::MetaDataField::Title));
+    QCOMPARE(renderPage(extractedDocument, 0), renderPage(sourceDocument, 1));
+    QCOMPARE(renderPage(extractedDocument, 1), renderPage(sourceDocument, 2));
+    QCOMPARE(renderPage(deletedDocument, 0), renderPage(sourceDocument, 2));
+    const auto extractedStructure = qpdfJson(extracted);
+    const auto deletedStructure = qpdfJson(deleted);
+    QVERIFY(extractedStructure.contains("Retained note"));
+    QVERIFY(extractedStructure.contains("Third page"));
+    QVERIFY(deletedStructure.contains("Retained note"));
+    QVERIFY(deletedStructure.contains("Third page"));
+
+    QVERIFY(sourceFile.open(QIODevice::ReadOnly));
+    QCOMPARE(sourceFile.readAll(), originalBytes);
 }
 
 QTEST_MAIN(QpdfOperationsTest)
