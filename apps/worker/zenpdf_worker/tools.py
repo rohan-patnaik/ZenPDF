@@ -137,7 +137,7 @@ def _parse_ranges(
             if not tolerant:
                 raise
             invalid_tokens.append(token)
-            LOGGER.warning("Ignoring invalid range token in tolerant mode: %r", token)
+            LOGGER.warning("Ignoring invalid range token in tolerant mode")
             continue
     if tolerant and invalid_tokens and not ranges:
         joined = ", ".join(repr(token) for token in invalid_tokens)
@@ -525,7 +525,7 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
         elif result.get("timeout"):
             entry["notes"] = "timeout"
         elif not result.get("ok") and result.get("stderr"):
-            entry["notes"] = _truncate((result.get("stderr") or "").strip())
+            entry["notes"] = "command_failed"
         return entry
 
     def _record_step(name: str, result: dict | None, notes: str | None = None) -> None:
@@ -540,7 +540,7 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
         except ValueError:
             raise
         except (PdfReadError, OSError, EOFError) as error:
-            warnings.append(f"Could not count pages: {error}")
+            warnings.append("page_count_failed")
         except Exception:
             pass
         try:
@@ -604,7 +604,7 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
                 writer.write(handle)
             return True
         except Exception as error:
-            warnings.append(f"pypdf rewrite failed: {error}")
+            warnings.append("pypdf_rewrite_failed")
             return False
 
     def _detect_image_heavy(path: Path) -> dict:
@@ -649,7 +649,7 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
                 )
                 metrics["image_heavy"] = image_heavy
         except Exception as error:
-            warnings.append(f"image-heavy detector failed: {error}")
+            warnings.append("image_detector_failed")
         return metrics
 
     def _tmp_path(name: str) -> Path:
@@ -660,9 +660,9 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
     except ValueError as error:
         if str(error) == "PDF is encrypted":
             raise
-        warnings.append(f"preflight read failed: {error}")
+        warnings.append("preflight_read_failed")
     except Exception as error:  # noqa: BLE001
-        warnings.append(f"preflight read failed: {error}")
+        warnings.append("preflight_read_failed")
 
     timeout_override = _env_int("ZENPDF_COMPRESS_TIMEOUT_SECONDS", 0)
     if timeout_override > 0:
@@ -1090,12 +1090,12 @@ def compress_pdf(input_path: Path, output_path: Path) -> tuple[Path, dict]:
                     task_results[name] = {
                         "steps": [
                             _make_step_entry(
-                                name, {"ok": False, "ms": 0, "stderr": str(error)}
+                                name, {"ok": False, "ms": 0, "stderr": "task_failed"}
                             )
                         ],
                         "candidates": [],
                         "temp_paths": [],
-                        "warnings": [f"{name} failed: {error}"],
+                        "warnings": [f"{name}_failed"],
                     }
     else:
         for name, task in task_specs:
@@ -1788,9 +1788,8 @@ def redact_pdf(
                             matched_text = query.lower() in page_text.lower()
                     if matched_text:
                         LOGGER.warning(
-                            "OCR assist fell back to full-page redaction on page %s for query %r",
+                            "OCR assist used full-page redaction on page %s",
                             page_number,
-                            query,
                         )
                         rectangles = [page.rect]
 
@@ -1934,7 +1933,7 @@ def compare_pdfs(
                                 f"Page {page_index + 1}: region {region_index} bbox=({x0},{y0})-({x1},{y1})"
                             )
         except Exception as error:
-            visual_notes.append(f"Visual diff unavailable: {error}")
+            visual_notes.append("visual_diff_unavailable")
     if not differences:
         lines.append("No text differences detected.")
     else:
@@ -2404,17 +2403,10 @@ def office_to_pdf(input_path: Path, output_dir: Path) -> Path:
                 "Office conversion failed due to missing fonts. Install font packs (e.g. DejaVu/Noto/Liberation) and retry."
             )
         if index < len(attempts):
-            LOGGER.warning(
-                "Office conversion attempt %s failed (%s); retrying",
-                attempt_name,
-                last_error_detail,
-            )
+            LOGGER.warning("Office conversion attempt %s failed; retrying", attempt_name)
             continue
 
-    raise RuntimeError(
-        "Office conversion failed. Please verify the source file format."
-        + (f" Details: {last_error_detail}" if last_error_detail else "")
-    )
+    raise RuntimeError("Office conversion failed. Please verify the source file format.")
 
 
 def _ensure_extension(input_path: Path, allowed_extensions: set[str], label: str) -> None:
@@ -3123,7 +3115,7 @@ def pdf_to_pdfa(
         raise RuntimeError("PDF/A conversion timed out") from error
 
     if result.returncode != 0:
-        raise RuntimeError(result.stderr or result.stdout or "PDF/A conversion failed")
+        raise RuntimeError("PDF/A conversion failed")
 
     if not output_path.exists():
         raise RuntimeError("PDF/A conversion produced no output")

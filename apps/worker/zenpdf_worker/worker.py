@@ -211,6 +211,35 @@ class WorkerShutdown(RuntimeError):
     """Raised when shutdown cancels active worker processing."""
 
 
+TOOL_IPC_ERROR_CODES = {
+    "USER_INPUT_INVALID",
+    "TOOL_EXECUTION_FAILED",
+    "TOOL_IO_ERROR",
+    "TOOL_MEMORY_LIMIT",
+}
+
+
+def _stable_exception_code(error: BaseException, default: str) -> str:
+    """Classify an exception without retaining attacker-controlled text."""
+    if isinstance(error, ConvexError):
+        return error.code
+    if isinstance(error, requests.Timeout):
+        return "NETWORK_TIMEOUT"
+    if isinstance(error, requests.RequestException):
+        return "NETWORK_REQUEST_FAILED"
+    if isinstance(error, OSError):
+        return "LOCAL_IO_ERROR"
+    value = str(error)
+    stable_prefixes = (
+        "BACKEND_HTTP_",
+        "BACKEND_INVALID_RESPONSE",
+        "UPLOAD_",
+    )
+    if value.startswith(stable_prefixes) and value.replace("_", "").isalnum():
+        return value[:64]
+    return default
+
+
 def _positive_env_int(name: str, default: int) -> int:
     """Read a positive integer runtime limit with a safe default."""
     try:
@@ -240,9 +269,17 @@ def _tool_process_entry(
             resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds + 1))
             resource.setrlimit(resource.RLIMIT_CORE, (0, 0))
         connection.send(("ok", runner(job, inputs, temp)))
-    except BaseException as error:  # noqa: BLE001 - child must serialize all failures
+    except BaseException as error:  # noqa: BLE001 - child emits only safe codes
+        if isinstance(error, ValueError):
+            error_code = "USER_INPUT_INVALID"
+        elif isinstance(error, MemoryError):
+            error_code = "TOOL_MEMORY_LIMIT"
+        elif isinstance(error, OSError):
+            error_code = "TOOL_IO_ERROR"
+        else:
+            error_code = "TOOL_EXECUTION_FAILED"
         try:
-            connection.send(("error", type(error).__name__, str(error)))
+            connection.send(("error", error_code))
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
@@ -394,18 +431,22 @@ class ZenPdfWorker:
             self._confirm_uploaded_outputs(output_payload)
         except WorkerShutdown:
             print(f"Job {job_id} stopped for worker shutdown")
-        except JobOwnershipLost as error:
-            print(f"Job {job_id} ownership lost: {error}")
+        except JobOwnershipLost:
+            print(f"Job {job_id} ownership lost")
         except ValueError as error:
             self._safe_fail(
-                job_id, "USER_INPUT_INVALID", str(error), str(error), ownership_lost
+                job_id,
+                "USER_INPUT_INVALID",
+                "Input configuration is invalid.",
+                "USER_INPUT_INVALID",
+                ownership_lost,
             )
         except ConvexError as error:
             self._safe_fail(
                 job_id,
                 "SERVICE_CAPACITY_TEMPORARY",
                 "Processing failed. Please retry.",
-                error.message,
+                error.code,
                 ownership_lost,
             )
         except Exception as error:  # noqa: BLE001
@@ -413,7 +454,7 @@ class ZenPdfWorker:
                 job_id,
                 "SERVICE_CAPACITY_TEMPORARY",
                 "Processing failed. Please retry.",
-                str(error),
+                _stable_exception_code(error, "WORKER_OPERATION_FAILED"),
                 ownership_lost,
             )
         finally:
@@ -470,7 +511,14 @@ class ZenPdfWorker:
         log_message: str | None = None,
     ) -> None:
         """Report a failed job with a friendly error."""
-        print(f"Job {job_id} failed: {log_message or error_message}")
+        safe_log_code = (
+            log_message
+            if isinstance(log_message, str)
+            and log_message.replace("_", "").isalnum()
+            and len(log_message) <= 64
+            else "JOB_FAILED"
+        )
+        print(f"Job {job_id} failed ({safe_log_code})")
         result = self._mutation(
             "jobs:failJob",
             {
@@ -498,7 +546,8 @@ class ZenPdfWorker:
         try:
             self._fail(job_id, error_code, error_message, log_message)
         except Exception as error:  # noqa: BLE001
-            print(f"Failed to report job failure for {job_id}: {error}")
+            error_class = _stable_exception_code(error, "FAILURE_REPORT_FAILED")
+            print(f"Failed to report job failure for {job_id} ({error_class})")
 
     def _heartbeat(
         self,
@@ -584,9 +633,12 @@ class ZenPdfWorker:
             if message[0] == "ok" and isinstance(message[1], ToolRunResult):
                 return message[1]
             if message[0] == "error":
-                if message[1] == "ValueError":
-                    raise ValueError(message[2])
-                raise RuntimeError(f"Tool process failed ({message[1]}): {message[2]}")
+                error_code = message[1] if len(message) > 1 else "TOOL_EXECUTION_FAILED"
+                if error_code not in TOOL_IPC_ERROR_CODES:
+                    error_code = "TOOL_EXECUTION_FAILED"
+                if error_code == "USER_INPUT_INVALID":
+                    raise ValueError("Input configuration is invalid.")
+                raise RuntimeError(error_code)
             raise RuntimeError("Tool process returned an invalid result")
         finally:
             receiver.close()
@@ -1058,7 +1110,8 @@ class ZenPdfWorker:
             try:
                 self._reconcile_upload_entry(entry)
             except Exception as error:  # noqa: BLE001 - durable intent remains
-                print(f"Pending upload cleanup retained for retry: {error}")
+                error_class = _stable_exception_code(error, "UPLOAD_CLEANUP_DEFERRED")
+                print(f"Pending upload cleanup retained for retry ({error_class})")
             return
         if entry is None and storage_id is not None:
             entry = {
@@ -1083,7 +1136,8 @@ class ZenPdfWorker:
             if discarded is True:
                 self.upload_journal.remove(pending_id)
         except Exception as error:  # noqa: BLE001 - cleanup must not mask owner error
-            print(f"Pending upload cleanup retained for retry: {error}")
+            error_class = _stable_exception_code(error, "UPLOAD_CLEANUP_DEFERRED")
+            print(f"Pending upload cleanup retained for retry ({error_class})")
 
     def _discard_uploaded_outputs(self, outputs: List[Dict[str, Any]]) -> None:
         for output in outputs:
@@ -1200,10 +1254,8 @@ class ZenPdfWorker:
                     self.upload_journal.save(entry)
                 except Exception:
                     pass
-                error_class = (
-                    "UPLOAD_RECOVERY_UNRESOLVED"
-                    if str(error) == "UPLOAD_RECOVERY_UNRESOLVED"
-                    else type(error).__name__
+                error_class = _stable_exception_code(
+                    error, "UPLOAD_RECOVERY_FAILED"
                 )
                 print(f"Upload recovery retained for retry ({error_class})")
         return attempted

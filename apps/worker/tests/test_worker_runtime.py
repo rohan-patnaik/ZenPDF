@@ -15,6 +15,7 @@ from zenpdf_worker.worker import (
     ToolRunResult,
     WorkerShutdown,
     ZenPdfWorker,
+    _tool_process_entry,
 )
 
 
@@ -142,6 +143,28 @@ class _CompletionRejectWorker(ZenPdfWorker):
         raise AssertionError(path)
 
 
+class _HostileFailureWorker(ZenPdfWorker):
+    def __init__(self, hostile_message: str) -> None:
+        super().__init__("https://example.invalid", "worker-a", "worker-secret")
+        self.hostile_message = hostile_message
+        self.failure_args: dict | None = None
+
+    def _report(self, _job_id: str, _progress: int) -> bool:
+        return True
+
+    def _download_inputs(self, _inputs: list[dict], _temp: Path) -> list[Path]:
+        return []
+
+    def _run_tool_bounded(self, *_args, **_kwargs) -> ToolRunResult:  # type: ignore[no-untyped-def]
+        raise RuntimeError(self.hostile_message)
+
+    def _mutation(self, path: str, args: dict) -> object:
+        if path == "jobs:failJob":
+            self.failure_args = args
+            return {"status": "failed", "claimedBy": self.worker_id}
+        raise AssertionError(path)
+
+
 def test_heartbeat_retries_transient_failure_boundedly(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("ZENPDF_HEARTBEAT_RETRIES", "3")
     monkeypatch.setenv("ZENPDF_HEARTBEAT_RETRY_SECONDS", "0")
@@ -242,6 +265,85 @@ def test_upload_child_error_is_sanitized_before_ipc_and_logging(
     observable = f"{captured_error.value}\n{captured.out}\n{captured.err}"
     for secret in secrets.values():
         assert secret not in observable
+
+
+def test_tool_exception_is_allowlisted_before_ipc(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    hostile = (
+        "https://signed.invalid/file?token=url-secret worker-secret password-secret "
+        "/private/path customer.pdf content-marker"
+    )
+
+    class FakeConnection:
+        def __init__(self) -> None:
+            self.messages: list[tuple[object, ...]] = []
+
+        def send(self, message: tuple[object, ...]) -> None:
+            self.messages.append(message)
+
+        def close(self) -> None:
+            return None
+
+    def hostile_runner(_job: dict, _inputs: list[Path], _temp: Path) -> ToolRunResult:
+        raise RuntimeError(hostile)
+
+    monkeypatch.setattr("zenpdf_worker.worker.os.setsid", lambda: None)
+    connection = FakeConnection()
+    _tool_process_entry(hostile_runner, {}, [], tmp_path, connection)
+
+    assert connection.messages == [("error", "TOOL_EXECUTION_FAILED")]
+    assert hostile not in repr(connection.messages)
+
+
+def test_backend_and_tool_failures_never_reach_logs_or_failure_payload(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    markers = [
+        "https://signed.invalid/file?token=url-secret",
+        "worker-secret",
+        "password-secret",
+        "/private/path",
+        "customer.pdf",
+        "content-marker",
+    ]
+    worker = _HostileFailureWorker(" ".join(markers))
+
+    worker._process_job({"_id": "job-1", "inputs": [], "tool": "merge"})
+
+    captured = capsys.readouterr()
+    observable = f"{captured.out}\n{captured.err}\n{worker.failure_args!r}"
+    for marker in markers:
+        assert marker not in observable
+    assert worker.failure_args is not None
+    assert worker.failure_args["errorMessage"] == "Processing failed. Please retry."
+
+
+def test_cleanup_and_failure_reporting_logs_only_stable_classes(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    hostile = "signed-url token password /path filename.pdf content-marker"
+
+    class HostileCleanupWorker(_RecoveryUploadWorker):
+        def _mutation(self, _path: str, _args: dict) -> object:
+            raise RuntimeError(hostile)
+
+    worker = HostileCleanupWorker()
+    worker.upload_journal.save(
+        {
+            "jobId": "job-1",
+            "pendingUploadId": "pending-1",
+            "storageId": "stored-1",
+            "action": "register",
+        }
+    )
+    worker._discard_pending_upload("pending-1")
+    worker._safe_fail("job-1", "SERVICE_CAPACITY_TEMPORARY", "Safe message")
+
+    captured = capsys.readouterr()
+    assert hostile not in captured.out
+    assert "UPLOAD_CLEANUP_DEFERRED" in captured.out
+    assert "FAILURE_REPORT_FAILED" in captured.out
 
 
 def test_shutdown_kills_active_upload_process_tree_promptly(

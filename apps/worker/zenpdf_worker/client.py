@@ -9,14 +9,14 @@ import requests
 
 @dataclass
 class ConvexError(Exception):
-    """Raised when Convex returns an error response."""
+    """Raised with a stable code when Convex returns an application error."""
 
-    message: str
+    code: str = "BACKEND_APPLICATION_ERROR"
     data: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
-        """Initialize the base exception with the message."""
-        super().__init__(self.message)
+        """Initialize without retaining the backend's untrusted message."""
+        super().__init__(self.code)
 
 
 class ConvexClient:
@@ -49,12 +49,19 @@ class ConvexClient:
             timeout=60,
         )
         if response.status_code not in (200, 560):
-            raise RuntimeError(response.text)
+            status = response.status_code
+            stable_status = status if isinstance(status, int) and 100 <= status <= 599 else 0
+            raise RuntimeError(f"BACKEND_HTTP_{stable_status}")
 
-        payload = response.json()
+        try:
+            payload = response.json()
+        except (ValueError, requests.RequestException) as error:
+            raise RuntimeError("BACKEND_INVALID_RESPONSE") from error
+        if not isinstance(payload, dict):
+            raise RuntimeError("BACKEND_INVALID_RESPONSE")
         if payload.get("status") == "success":
             return payload.get("value")
-        raise ConvexError(payload.get("errorMessage", "Unknown error"), payload.get("errorData"))
+        raise ConvexError()
 
     def query(self, path: str, args: Dict[str, Any]) -> Any:
         """Execute a Convex query."""
