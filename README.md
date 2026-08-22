@@ -51,6 +51,7 @@ ctest --test-dir build/desktop --output-on-failure
 ```
 
 See `apps/desktop/README.md` for local-data and packaging details. Desktop progress is tracked without parity claims in `docs/ACROBAT_PARITY.md`.
+Alpha scope, exact feature-branch package installation, and known limits are documented in `docs/ALPHA.md`.
 
 ## Core docs
 - Product scope: `docs/PRD.md`
