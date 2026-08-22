@@ -10,7 +10,12 @@ import pytest
 from PIL import Image
 
 from zenpdf_worker import tools
-from zenpdf_worker.worker import JobOwnershipLost, ToolRunResult, ZenPdfWorker
+from zenpdf_worker.worker import (
+    JobOwnershipLost,
+    ToolRunResult,
+    WorkerShutdown,
+    ZenPdfWorker,
+)
 
 
 def _hung_tool(_job: dict, _inputs: list[Path], temp: Path) -> ToolRunResult:
@@ -199,6 +204,85 @@ def test_close_ignoring_blocked_upload_process_is_killed_on_lease_loss(
     assert [path for path, _args in worker.mutations] == ["files:beginWorkerUpload"]
 
 
+def test_upload_child_error_is_sanitized_before_ipc_and_logging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    secrets = {
+        "url": "https://upload.invalid/path?token=signed-secret",
+        "token": "worker-super-secret",
+        "filename": "private-customer-name.pdf",
+        "content": "private-pdf-content-marker",
+    }
+
+    class LeakySession:
+        @staticmethod
+        def post(*_args, **_kwargs) -> None:
+            raise RuntimeError(" ".join(secrets.values()))
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr("zenpdf_worker.worker.requests.Session", LeakySession)
+    output = tmp_path / secrets["filename"]
+    output.write_text(secrets["content"], encoding="utf-8")
+    worker = _UploadWorker()
+    worker.worker_token = secrets["token"]
+
+    with pytest.raises(RuntimeError, match=r"UPLOAD_FAILED") as captured_error:
+        worker._upload_one_pending(
+            "job-1",
+            output,
+            secrets["url"],
+            "pending-1",
+            time.time() * 1000 + 60_000,
+            threading.Event(),
+        )
+    captured = capsys.readouterr()
+    observable = f"{captured_error.value}\n{captured.out}\n{captured.err}"
+    for secret in secrets.values():
+        assert secret not in observable
+
+
+def test_shutdown_kills_active_upload_process_tree_promptly(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    started = threading.Event()
+    descendant_file = tmp_path / "upload-descendant.pid"
+
+    class BlockedSession:
+        @staticmethod
+        def post(*_args, **_kwargs) -> None:
+            child = subprocess.Popen(["sleep", "60"])
+            descendant_file.write_text(str(child.pid), encoding="ascii")
+            started.set()
+            time.sleep(60)
+
+        @staticmethod
+        def close() -> None:
+            return None
+
+    monkeypatch.setattr("zenpdf_worker.worker.requests.Session", BlockedSession)
+    output = tmp_path / "output.pdf"
+    output.write_bytes(b"%PDF-output")
+    worker = _UploadWorker()
+
+    shutdown = threading.Thread(
+        target=lambda: (started.wait(5), worker.request_shutdown())
+    )
+    shutdown.start()
+    started_at = time.monotonic()
+    with pytest.raises(WorkerShutdown, match="cancelled output upload"):
+        worker._upload_outputs("job-1", [output], threading.Event())
+    shutdown.join(timeout=5)
+    assert time.monotonic() - started_at < 3
+    descendant_pid = int(descendant_file.read_text(encoding="ascii"))
+    time.sleep(0.1)
+    status_path = Path(f"/proc/{descendant_pid}/stat")
+    if status_path.exists():
+        assert status_path.read_text(encoding="ascii").split()[2] == "Z"
+
+
 def test_registration_and_cleanup_transport_failures_recover_from_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -334,6 +418,34 @@ def test_lease_loss_cancels_running_tool_group(tmp_path: Path) -> None:
             )
     finally:
         lease_thread.join(timeout=6)
+    descendant_pid = int(descendant_file.read_text(encoding="ascii"))
+    time.sleep(0.1)
+    status_path = Path(f"/proc/{descendant_pid}/stat")
+    if status_path.exists():
+        assert status_path.read_text(encoding="ascii").split()[2] == "Z"
+
+
+def test_shutdown_cancels_running_tool_group_promptly(tmp_path: Path) -> None:
+    worker = ZenPdfWorker("https://example.invalid", "worker-a", "token")
+    descendant_file = tmp_path / "descendant.pid"
+
+    def shutdown_after_start() -> None:
+        deadline = time.monotonic() + 5
+        while not descendant_file.exists() and time.monotonic() < deadline:
+            time.sleep(0.02)
+        worker.request_shutdown()
+
+    shutdown = threading.Thread(target=shutdown_after_start)
+    shutdown.start()
+    started_at = time.monotonic()
+    try:
+        with pytest.raises(WorkerShutdown, match="cancelled tool execution"):
+            worker._run_tool_bounded(
+                {}, [], tmp_path, threading.Event(), runner=_hung_tool
+            )
+    finally:
+        shutdown.join(timeout=6)
+    assert time.monotonic() - started_at < 4
     descendant_pid = int(descendant_file.read_text(encoding="ascii"))
     time.sleep(0.1)
     status_path = Path(f"/proc/{descendant_pid}/stat")

@@ -207,6 +207,10 @@ class JobOwnershipLost(RuntimeError):
     """Raised when this worker no longer owns the active job lease."""
 
 
+class WorkerShutdown(RuntimeError):
+    """Raised when shutdown cancels active worker processing."""
+
+
 def _positive_env_int(name: str, default: int) -> int:
     """Read a positive integer runtime limit with a safe default."""
     try:
@@ -254,6 +258,8 @@ def _upload_process_entry(
     """POST one output in a killable process and return only its storage ID."""
     session = requests.Session()
     try:
+        if hasattr(os, "setsid"):
+            os.setsid()
         with output.open("rb") as handle:
             response = session.post(
                 upload_url,
@@ -266,9 +272,20 @@ def _upload_process_entry(
         if not isinstance(storage_id, str) or not storage_id:
             raise RuntimeError("Upload response did not include a storage ID")
         connection.send(("ok", storage_id))
-    except BaseException as error:  # noqa: BLE001 - serialize child failures
+    except BaseException as error:  # noqa: BLE001 - child emits only safe classes
+        error_code = "UPLOAD_FAILED"
+        if isinstance(error, requests.Timeout):
+            error_code = "UPLOAD_TIMEOUT"
+        elif isinstance(error, requests.HTTPError):
+            status = getattr(getattr(error, "response", None), "status_code", None)
+            if isinstance(status, int) and 100 <= status <= 599:
+                error_code = f"UPLOAD_HTTP_{status}"
+            else:
+                error_code = "UPLOAD_HTTP_ERROR"
+        elif isinstance(error, OSError):
+            error_code = "UPLOAD_IO_ERROR"
         try:
-            connection.send(("error", type(error).__name__, str(error)))
+            connection.send(("error", error_code))
         except (BrokenPipeError, EOFError, OSError):
             pass
     finally:
@@ -314,6 +331,10 @@ class ZenPdfWorker:
     def request_shutdown(self) -> None:
         """Stop claiming work; durable upload recovery is drained before return."""
         self._shutdown_requested.set()
+
+    def _require_running(self) -> None:
+        if self._shutdown_requested.is_set():
+            raise WorkerShutdown("Worker shutdown requested")
 
     def _process_job(self, job: Dict[str, Any]) -> None:
         """Process a single job from Convex."""
@@ -371,6 +392,8 @@ class ZenPdfWorker:
                 raise JobOwnershipLost("Job lease was lost before completion")
             uploads_committed = True
             self._confirm_uploaded_outputs(output_payload)
+        except WorkerShutdown:
+            print(f"Job {job_id} stopped for worker shutdown")
         except JobOwnershipLost as error:
             print(f"Job {job_id} ownership lost: {error}")
         except ValueError as error:
@@ -538,6 +561,9 @@ class ZenPdfWorker:
         message: Any = None
         try:
             while process.is_alive():
+                if self._shutdown_requested.is_set():
+                    self._terminate_tool_process(process)
+                    raise WorkerShutdown("Worker shutdown cancelled tool execution")
                 if ownership_lost.is_set():
                     self._terminate_tool_process(process)
                     raise JobOwnershipLost("Job ownership changed during tool execution")
@@ -941,6 +967,7 @@ class ZenPdfWorker:
                 configured_seconds,
                 max(int((upload_deadline_at - time.time() * 1000) / 1000), 1),
             )
+        self._require_running()
         start_method = os.environ.get("ZENPDF_UPLOAD_PROCESS_START_METHOD", "spawn")
         context = multiprocessing.get_context(start_method)
         receiver, sender = context.Pipe(duplex=False)
@@ -955,6 +982,9 @@ class ZenPdfWorker:
         outcome: tuple[Any, ...] | None = None
         try:
             while time.monotonic() < deadline:
+                if self._shutdown_requested.is_set():
+                    self._stop_upload_process(process)
+                    raise WorkerShutdown("Worker shutdown cancelled output upload")
                 if ownership_lost is not None and ownership_lost.is_set():
                     self._stop_upload_process(process)
                     raise JobOwnershipLost("Job ownership changed during output upload")
@@ -972,7 +1002,10 @@ class ZenPdfWorker:
                 process.join()
             process.close()
         if outcome[0] != "ok":
-            raise RuntimeError(f"Output upload failed: {outcome[-1]}")
+            error_code = outcome[1] if len(outcome) > 1 else "UPLOAD_FAILED"
+            if not isinstance(error_code, str) or not error_code.startswith("UPLOAD_"):
+                error_code = "UPLOAD_FAILED"
+            raise RuntimeError(f"Output upload failed ({error_code})")
         storage_id = outcome[1]
         if not isinstance(storage_id, str) or not storage_id:
             raise RuntimeError("Upload ended without a storage ID")
@@ -993,14 +1026,22 @@ class ZenPdfWorker:
 
     @staticmethod
     def _stop_upload_process(process: multiprocessing.Process) -> None:
-        """Stop a blocked POST without leaving a daemon behind."""
+        """Stop a blocked POST process group without leaving descendants."""
+        if process.pid is None:
+            return
         if not process.is_alive():
             process.join()
             return
-        process.terminate()
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            process.terminate()
         process.join(timeout=1)
         if process.is_alive():
-            process.kill()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                process.kill()
             process.join()
 
     def _discard_pending_upload(
