@@ -353,6 +353,14 @@ describe("bounded storage orphan cleanup", () => {
       maxInspected: 1,
     });
     expect(firstRun.candidateIds).toHaveLength(1);
+    expect(
+      await t.mutation(finalizeCandidates, {
+        runId: firstRun.runId,
+        maxDeleted: 1,
+        maxBytesDeleted: 1024 * 1024,
+        maxWallMs: 1000,
+      }),
+    ).toMatchObject({ deleted: 1 });
 
     const secondRun = await t.mutation(markCandidates, {
       mode: "delete",
@@ -360,13 +368,6 @@ describe("bounded storage orphan cleanup", () => {
       maxInspected: 1,
     });
     expect(secondRun.candidateIds).toHaveLength(1);
-    expect(
-      await t.mutation(finalizeCandidates, {
-        maxDeleted: 1,
-        maxBytesDeleted: 1024 * 1024,
-        maxWallMs: 1000,
-      }),
-    ).toMatchObject({ deleted: 1 });
     expect(
       await t.mutation(finalizeCandidates, {
         maxDeleted: 1,

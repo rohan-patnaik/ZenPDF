@@ -530,6 +530,14 @@ export const finalizeStorageCandidates = internalMutation({
       bytesDeleted: run.bytesDeleted + bytesDeleted,
       protected: run.protected + protectedCount,
     });
+    if (deleted > 0) {
+      // Deleting a page member can invalidate its opaque `_storage` cursor.
+      // Restarting cannot skip objects; protected-only pages still paginate.
+      await ctx.db.patch(state._id, {
+        sweepCursor: undefined,
+        updatedAt: Date.now(),
+      });
+    }
     return { deleted, bytesDeleted, protected: protectedCount };
   },
 });
