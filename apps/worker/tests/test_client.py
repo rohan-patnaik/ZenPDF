@@ -23,6 +23,13 @@ class _Session:
         return self.response
 
 
+class _HostileSession:
+    def post(self, *_args: object, **_kwargs: object) -> _Response:
+        raise RuntimeError(
+            "signed-url token password /private/path filename.pdf content-marker"
+        )
+
+
 @pytest.mark.parametrize("status", [401, 502])
 def test_non_success_body_is_never_retained_or_exposed(status: int) -> None:
     hostile = (
@@ -51,3 +58,14 @@ def test_application_error_message_is_replaced_with_stable_code() -> None:
 
     assert str(captured.value) == "BACKEND_APPLICATION_ERROR"
     assert hostile not in str(captured.value)
+
+
+def test_request_exception_text_is_replaced_with_stable_code() -> None:
+    client = ConvexClient("https://convex.invalid")
+    client.session = _HostileSession()  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError) as captured:
+        client.query("files:getDownloadUrl", {})
+
+    assert str(captured.value) == "BACKEND_REQUEST_FAILED"
+    assert "content-marker" not in str(captured.value)

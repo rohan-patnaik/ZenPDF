@@ -229,7 +229,7 @@ def _stable_exception_code(error: BaseException, default: str) -> str:
         return "NETWORK_REQUEST_FAILED"
     if isinstance(error, OSError):
         return "LOCAL_IO_ERROR"
-    value = str(error)
+    value = error.args[0] if error.args and isinstance(error.args[0], str) else ""
     stable_prefixes = (
         "BACKEND_HTTP_",
         "BACKEND_INVALID_RESPONSE",

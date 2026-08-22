@@ -1,21 +1,17 @@
 """Convex HTTP client helpers for the worker."""
 
 import json
-from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
 import requests
 
 
-@dataclass
 class ConvexError(Exception):
     """Raised with a stable code when Convex returns an application error."""
 
-    code: str = "BACKEND_APPLICATION_ERROR"
-    data: Optional[Dict[str, Any]] = None
-
-    def __post_init__(self) -> None:
-        """Initialize without retaining the backend's untrusted message."""
+    def __init__(self) -> None:
+        """Initialize without retaining any backend-controlled fields."""
+        self.code = "BACKEND_APPLICATION_ERROR"
         super().__init__(self.code)
 
 
@@ -42,12 +38,17 @@ class ConvexClient:
         if self.auth_token:
             headers["Authorization"] = f"Bearer {self.auth_token}"
 
-        response = self.session.post(
-            f"{self.url}/api/{kind}",
-            data=json.dumps(body),
-            headers=headers,
-            timeout=60,
-        )
+        try:
+            response = self.session.post(
+                f"{self.url}/api/{kind}",
+                data=json.dumps(body),
+                headers=headers,
+                timeout=60,
+            )
+        except requests.Timeout as error:
+            raise RuntimeError("BACKEND_TIMEOUT") from error
+        except Exception as error:
+            raise RuntimeError("BACKEND_REQUEST_FAILED") from error
         if response.status_code not in (200, 560):
             status = response.status_code
             stable_status = status if isinstance(status, int) and 100 <= status <= 599 else 0
@@ -55,7 +56,7 @@ class ConvexClient:
 
         try:
             payload = response.json()
-        except (ValueError, requests.RequestException) as error:
+        except Exception as error:
             raise RuntimeError("BACKEND_INVALID_RESPONSE") from error
         if not isinstance(payload, dict):
             raise RuntimeError("BACKEND_INVALID_RESPONSE")
