@@ -16,6 +16,7 @@ The following initial budgets are release gates, not assumptions that libraries 
 | Page count | 100,000 hard rejection; warning above 10,000 |
 | Rendered page dimension | 32,768 pixels on either axis |
 | In-process render and thumbnail cache | 256 MiB combined |
+| Caller-declared undo payload retention | 64 MiB per document and 512 commands |
 | Concurrent background document jobs | 2 per application |
 | Extracted attachment or helper output | User-confirmed destination; 2 GiB per output |
 | Diagnostic logs | Two local files of at most 1 MiB each |
@@ -38,7 +39,9 @@ Document changes use a command journal with deterministic undo/redo records. Aut
 
 On startup, ZenPDF offers recoverable sessions rather than silently reopening hostile input. Stale working files are listed with their source and timestamp and require an explicit recovery or discard choice. Symlinks, ownership changes, destination changes, insufficient space, and cross-filesystem replacement are treated as save failures, not reasons to weaken atomicity.
 
-The current implementation only establishes a 512-command in-memory undo limit, clean-revision dirty tracking, active-tab undo/redo routing, and dirty-close confirmation. The command count does not bound retained command or payload bytes; a measured memory budget and admission/eviction policy is required before mutation-backed undo can meet the resource gate. No PDF mutation command, atomic save/save-as path, autosave working copy, serialized recovery journal, or startup recovery workflow exists yet; the sequence above remains the gate for those later slices.
+The current implementation establishes a 512-command in-memory undo limit, a configurable per-document admission ceiling that defaults to 64 MiB of caller-declared retained payload costs, clean-revision dirty tracking, active-tab undo/redo routing, and dirty-close confirmation. Admission fails before command execution or transfer to the Qt undo stack when a command is missing, individually over budget, would overflow the counter, or would exceed the cumulative ceiling. Commands cannot merge; undo/redo retain their costs, and redo-branch replacement or oldest-command eviction releases the corresponding declarations.
+
+This accounting does not inspect allocations or prove a heap bound. It depends on future command producers declaring complete retained payload costs and excludes command object and Qt framework overhead. Producer-specific measurement, under-declaration tests, and an allocator/process-level memory boundary remain required before strict completion. No PDF mutation command, atomic save/save-as path, autosave working copy, serialized recovery journal, or startup recovery workflow exists yet; the sequence above remains the gate for those later slices.
 
 ## Failure behavior
 
