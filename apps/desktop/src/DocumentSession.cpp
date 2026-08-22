@@ -6,31 +6,43 @@
 #include <limits>
 
 namespace {
+constexpr int kCommandAlive = 0;
+constexpr int kCommandDiscarded = 1;
+constexpr int kCommandObsoleteAfterRedo = 2;
+constexpr int kCommandObsoleteAfterUndo = 3;
+
 class NonMergingCommand final : public QUndoCommand {
 public:
     NonMergingCommand(std::unique_ptr<QUndoCommand> command,
-                      std::shared_ptr<bool> alive)
-        : QUndoCommand(command->text()), command_(std::move(command)), alive_(std::move(alive)) {}
-    ~NonMergingCommand() override { *alive_ = false; }
+                      std::shared_ptr<int> state)
+        : QUndoCommand(command->text()), command_(std::move(command)), state_(std::move(state)) {}
+    ~NonMergingCommand() override {
+        if (*state_ == kCommandAlive) {
+            *state_ = kCommandDiscarded;
+        }
+    }
 
     int id() const override { return -1; }
     void redo() override {
         command_->redo();
-        synchronizeState();
+        synchronizeState(kCommandObsoleteAfterRedo);
     }
     void undo() override {
         command_->undo();
-        synchronizeState();
+        synchronizeState(kCommandObsoleteAfterUndo);
     }
 
 private:
-    void synchronizeState() {
+    void synchronizeState(int obsoleteState) {
         setText(command_->text());
         setObsolete(command_->isObsolete());
+        if (isObsolete()) {
+            *state_ = obsoleteState;
+        }
     }
 
     std::unique_ptr<QUndoCommand> command_;
-    std::shared_ptr<bool> alive_;
+    std::shared_ptr<int> state_;
 };
 }
 
@@ -42,6 +54,13 @@ DocumentSession::DocumentSession(QString filePath,
       undoStack_(),
       retainedByteLimit_(retainedByteLimit) {
     undoStack_.setUndoLimit(maximumUndoCommands);
+    const auto reconcile = [this] { reconcileCommandLifetimes(); };
+    connect(&undoStack_, &QUndoStack::indexChanged, this, reconcile);
+    connect(&undoStack_, &QUndoStack::cleanChanged, this, reconcile);
+    connect(&undoStack_, &QUndoStack::canUndoChanged, this, reconcile);
+    connect(&undoStack_, &QUndoStack::canRedoChanged, this, reconcile);
+    connect(&undoStack_, &QUndoStack::undoTextChanged, this, reconcile);
+    connect(&undoStack_, &QUndoStack::redoTextChanged, this, reconcile);
     connect(&undoStack_, &QUndoStack::cleanChanged, this, &DocumentSession::stateChanged);
     connect(&undoStack_, &QUndoStack::canUndoChanged, this, &DocumentSession::stateChanged);
     connect(&undoStack_, &QUndoStack::canRedoChanged, this, &DocumentSession::stateChanged);
@@ -109,6 +128,37 @@ QUndoStack& DocumentSession::undoStack() {
     return undoStack_;
 }
 
+void DocumentSession::reconcileCommandLifetimes() {
+    const auto previousBytes = retainedBytes_;
+    auto becameDirtyWithoutUndo = false;
+    for (auto index = commandStates_.size() - 1; index >= 0; --index) {
+        const auto state = *commandStates_.at(index);
+        if (state == kCommandAlive) {
+            continue;
+        }
+
+        retainedBytes_ -= retainedCosts_.at(index);
+        retainedCosts_.removeAt(index);
+        commandStates_.removeAt(index);
+        if (state == kCommandObsoleteAfterRedo) {
+            hasUntrackedExecutedChange_ = true;
+            becameDirtyWithoutUndo = true;
+            emit obsoleteCommandDiscarded(
+                tr("The change became obsolete while redoing and was removed from history."));
+        } else if (state == kCommandObsoleteAfterUndo) {
+            emit obsoleteCommandDiscarded(
+                tr("The change became obsolete while undoing and was removed from history."));
+        }
+    }
+
+    if (!suppressRetainedBytesSignal_ && retainedBytes_ != previousBytes) {
+        emit retainedBytesChanged(retainedBytes_);
+    }
+    if (becameDirtyWithoutUndo) {
+        emit stateChanged();
+    }
+}
+
 bool DocumentSession::push(std::unique_ptr<QUndoCommand> command,
                            quint64 retainedBytes) {
     const auto reject = [this](PushRejection reason, QString message) {
@@ -152,35 +202,29 @@ bool DocumentSession::push(std::unique_ptr<QUndoCommand> command,
     }
 
     QVector<quint64> projectedCosts;
+    QVector<std::shared_ptr<int>> projectedStates;
     projectedCosts.reserve(qMin(retainedCount + 1, maximumUndoCommands));
+    projectedStates.reserve(qMin(retainedCount + 1, maximumUndoCommands));
     for (auto index = firstRetained; index < retainedCount; ++index) {
         projectedCosts.append(retainedCosts_.at(index));
+        projectedStates.append(commandStates_.at(index));
     }
     projectedCosts.append(retainedBytes);
 
-    auto commandAlive = std::make_shared<bool>(true);
+    auto commandState = std::make_shared<int>(kCommandAlive);
+    projectedStates.append(commandState);
     auto wrappedCommand =
-        std::make_unique<NonMergingCommand>(std::move(command), commandAlive);
+        std::make_unique<NonMergingCommand>(std::move(command), commandState);
     const auto previousBytes = retainedBytes_;
+    retainedCosts_ = std::move(projectedCosts);
+    commandStates_ = std::move(projectedStates);
+    retainedBytes_ = projectedBytes;
     lastPushRejection_ = PushRejection::None;
     lastPushRejectionMessage_.clear();
+    suppressRetainedBytesSignal_ = true;
     undoStack_.push(wrappedCommand.release());
-
-    const auto commandWasRetained = *commandAlive;
-    if (commandWasRetained) {
-        retainedCosts_ = std::move(projectedCosts);
-        retainedBytes_ = projectedBytes;
-    } else {
-        retainedCosts_.resize(undoStack_.count());
-        retainedBytes_ = 0;
-        for (const auto cost : retainedCosts_) {
-            retainedBytes_ += cost;
-        }
-        hasUntrackedExecutedChange_ = true;
-        emit obsoleteCommandDiscarded(
-            tr("The change became obsolete while executing and was not retained for undo."));
-        emit stateChanged();
-    }
+    reconcileCommandLifetimes();
+    suppressRetainedBytesSignal_ = false;
     if (retainedBytes_ != previousBytes) {
         emit retainedBytesChanged(retainedBytes_);
     }
@@ -188,31 +232,13 @@ bool DocumentSession::push(std::unique_ptr<QUndoCommand> command,
 }
 
 void DocumentSession::undo() {
-    const auto commandIndex = undoStack_.index() - 1;
-    const auto previousCount = undoStack_.count();
     undoStack_.undo();
-    if (undoStack_.count() < previousCount) {
-        retainedBytes_ -= retainedCosts_.at(commandIndex);
-        retainedCosts_.removeAt(commandIndex);
-        emit retainedBytesChanged(retainedBytes_);
-        emit obsoleteCommandDiscarded(
-            tr("The change became obsolete while undoing and was removed from history."));
-    }
+    reconcileCommandLifetimes();
 }
 
 void DocumentSession::redo() {
-    const auto commandIndex = undoStack_.index();
-    const auto previousCount = undoStack_.count();
     undoStack_.redo();
-    if (undoStack_.count() < previousCount) {
-        retainedBytes_ -= retainedCosts_.at(commandIndex);
-        retainedCosts_.removeAt(commandIndex);
-        hasUntrackedExecutedChange_ = true;
-        emit retainedBytesChanged(retainedBytes_);
-        emit obsoleteCommandDiscarded(
-            tr("The change became obsolete while redoing and was removed from history."));
-        emit stateChanged();
-    }
+    reconcileCommandLifetimes();
 }
 
 void DocumentSession::markSaved() {

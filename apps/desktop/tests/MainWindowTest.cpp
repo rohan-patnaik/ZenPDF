@@ -29,6 +29,7 @@ private slots:
     void exposesKeyboardAccessibleDeleteAction();
     void routesUndoForFirstDocumentImmediately();
     void routesUndoAndDirtyStateToActiveDocument();
+    void routesObsoleteCommandAccountingThroughActions();
     void dirtyTabRequiresExplicitDiscard();
     void dirtyWindowRequiresExplicitDiscard();
     void successfulOrganizerOutputOpensAsCleanTab();
@@ -54,6 +55,35 @@ public:
 private:
     int* value_;
     int amount_;
+};
+
+class ObsoleteCommand final : public QUndoCommand {
+public:
+    enum class Timing { Undo, SecondRedo };
+
+    ObsoleteCommand(int* value, int* destructions, Timing timing)
+        : value_(value), destructions_(destructions), timing_(timing) {}
+    ~ObsoleteCommand() override { ++*destructions_; }
+
+    void redo() override {
+        ++*value_;
+        ++redoCount_;
+        if (timing_ == Timing::SecondRedo && redoCount_ == 2) {
+            setObsolete(true);
+        }
+    }
+    void undo() override {
+        --*value_;
+        if (timing_ == Timing::Undo) {
+            setObsolete(true);
+        }
+    }
+
+private:
+    int* value_;
+    int* destructions_;
+    Timing timing_;
+    int redoCount_ = 0;
 };
 
 void answerMessageBox(QMessageBox::StandardButton answer) {
@@ -146,6 +176,57 @@ void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
     window.tabs_->setCurrentIndex(1);
     QVERIFY(!undoAction->isEnabled());
     QVERIFY(!redoAction->isEnabled());
+}
+
+void MainWindowTest::routesObsoleteCommandAccountingThroughActions() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    createPdf(path, QStringLiteral("Document"));
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    window.openFiles({path});
+    auto& session = window.currentDocument()->session();
+    auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
+    auto* redoAction = window.findChild<QAction*>(QStringLiteral("redoAction"));
+    QVERIFY(undoAction != nullptr);
+    QVERIFY(redoAction != nullptr);
+    QSignalSpy retainedChanges(&session, &DocumentSession::retainedBytesChanged);
+    QSignalSpy discarded(&session, &DocumentSession::obsoleteCommandDiscarded);
+    int value = 0;
+    int destructions = 0;
+
+    QVERIFY(session.push(
+        std::make_unique<ObsoleteCommand>(&value, &destructions, ObsoleteCommand::Timing::Undo),
+        4));
+    QCOMPARE(session.retainedBytes(), quint64(4));
+    retainedChanges.clear();
+    undoAction->trigger();
+    QCOMPARE(value, 0);
+    QCOMPARE(destructions, 1);
+    QCOMPARE(session.undoCommandCount(), 0);
+    QCOMPARE(session.retainedBytes(), quint64(0));
+    QCOMPARE(retainedChanges.count(), 1);
+    QCOMPARE(discarded.count(), 1);
+    QVERIFY(!session.isDirty());
+
+    QVERIFY(session.push(std::make_unique<ObsoleteCommand>(
+                             &value, &destructions, ObsoleteCommand::Timing::SecondRedo),
+                         6));
+    retainedChanges.clear();
+    undoAction->trigger();
+    QCOMPARE(session.retainedBytes(), quint64(6));
+    QCOMPARE(retainedChanges.count(), 0);
+    QVERIFY(redoAction->isEnabled());
+    redoAction->trigger();
+    QCOMPARE(value, 1);
+    QCOMPARE(destructions, 2);
+    QCOMPARE(session.undoCommandCount(), 0);
+    QCOMPARE(session.retainedBytes(), quint64(0));
+    QCOMPARE(retainedChanges.count(), 1);
+    QCOMPARE(discarded.count(), 2);
+    QVERIFY(session.isDirty());
 }
 
 void MainWindowTest::dirtyTabRequiresExplicitDiscard() {

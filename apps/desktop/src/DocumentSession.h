@@ -63,12 +63,15 @@ private:
     friend class MainWindow;
 
     [[nodiscard]] QUndoStack& undoStack();
+    void reconcileCommandLifetimes();
 
     QString filePath_;
     QUndoStack undoStack_;
     QVector<quint64> retainedCosts_;
+    QVector<std::shared_ptr<int>> commandStates_;
     quint64 retainedBytes_ = 0;
     quint64 retainedByteLimit_;
+    bool suppressRetainedBytesSignal_ = false;
     bool hasUntrackedExecutedChange_ = false;
     PushRejection lastPushRejection_ = PushRejection::None;
     QString lastPushRejectionMessage_;
