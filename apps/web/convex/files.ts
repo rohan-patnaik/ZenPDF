@@ -18,6 +18,7 @@ import {
   storageIdHasAuthoritativeOwner,
   storageReferenceIndexIsComplete,
 } from "./lib/storage_ownership";
+import { MAX_AUTHORITATIVE_STORAGE_BYTES } from "./lib/storage_limits";
 
 const WORKER_UPLOAD_DEADLINE_MS = 2 * 60 * 1000;
 const WORKER_UPLOAD_RECOVERY_MS = 24 * 60 * 60 * 1000;
@@ -50,19 +51,13 @@ export const beginBrowserUpload = mutation({
         ? await ctx.db
             .query("browserUploadReservations")
             .withIndex("by_user_status_expiry", (q) =>
-              q
-                .eq("userId", userId)
-                .eq("status", status)
-                .gt("expiresAt", now),
+              q.eq("userId", userId).eq("status", status).gt("expiresAt", now),
             )
             .take(MAX_OUTSTANDING_BROWSER_UPLOADS + 1)
         : await ctx.db
             .query("browserUploadReservations")
             .withIndex("by_anon_status_expiry", (q) =>
-              q
-                .eq("anonId", anonId)
-                .eq("status", status)
-                .gt("expiresAt", now),
+              q.eq("anonId", anonId).eq("status", status).gt("expiresAt", now),
             )
             .take(MAX_OUTSTANDING_BROWSER_UPLOADS + 1);
       outstanding += reservations.length;
@@ -158,7 +153,12 @@ export const beginWorkerUpload = mutation({
     ) {
       return null;
     }
-    if (!args.filename || args.sizeBytes < 0 || !Number.isSafeInteger(args.sizeBytes)) {
+    if (
+      !args.filename ||
+      args.sizeBytes < 0 ||
+      args.sizeBytes > MAX_AUTHORITATIVE_STORAGE_BYTES ||
+      !Number.isSafeInteger(args.sizeBytes)
+    ) {
       return null;
     }
     const limits = await resolveGlobalLimits(ctx);
@@ -200,7 +200,9 @@ export const getWorkerUploadState = query({
       ) {
         return "mismatch";
       }
-      return pending.storageId === args.storageId ? "registered" : "unregistered";
+      return pending.storageId === args.storageId
+        ? "registered"
+        : "unregistered";
     }
     const artifact = await ctx.db
       .query("artifacts")
@@ -264,7 +266,11 @@ export const discardWorkerUpload = mutation({
     if (!pending || pending.workerId !== args.workerId) {
       return false;
     }
-    if (pending.storageId && args.storageId && pending.storageId !== args.storageId) {
+    if (
+      pending.storageId &&
+      args.storageId &&
+      pending.storageId !== args.storageId
+    ) {
       return false;
     }
     const storageId = pending.storageId ?? args.storageId;
@@ -322,7 +328,8 @@ export const getOutputDownloadUrl = query({
       }
     }
     const allowed = (job.outputs ?? []).some(
-      (output: { storageId: Id<"_storage"> }) => output.storageId === args.storageId,
+      (output: { storageId: Id<"_storage"> }) =>
+        output.storageId === args.storageId,
     );
     if (!allowed) {
       return null;

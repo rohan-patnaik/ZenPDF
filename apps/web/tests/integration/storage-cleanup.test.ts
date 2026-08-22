@@ -307,6 +307,38 @@ describe("bounded storage orphan cleanup", () => {
     ).toBe(false);
   });
 
+  it("accepts a 2 GiB browser ticket and rejects one byte more", async () => {
+    vi.stubEnv("ZENPDF_ANON_MAX_MB_PER_FILE", "2048");
+    const t = convexTest(schema, modules);
+
+    await expect(
+      t.mutation(beginBrowserUpload, {
+        anonId: "absolute-limit-anon",
+        filename: "maximum.pdf",
+        sizeBytes: MAX_STORAGE_OBJECT_BYTES,
+        contentType: "application/pdf",
+      }),
+    ).resolves.toMatchObject({ reservationId: expect.any(String) });
+    await expect(
+      t.mutation(beginBrowserUpload, {
+        anonId: "absolute-limit-anon",
+        filename: "too-large.pdf",
+        sizeBytes: MAX_STORAGE_OBJECT_BYTES + 1,
+        contentType: "application/pdf",
+      }),
+    ).rejects.toThrow();
+
+    vi.stubEnv("ZENPDF_ANON_MAX_MB_PER_FILE", "2049");
+    await expect(
+      t.mutation(beginBrowserUpload, {
+        anonId: "absolute-limit-anon",
+        filename: "misconfigured.pdf",
+        sizeBytes: 1,
+        contentType: "application/pdf",
+      }),
+    ).rejects.toThrow("Plan file-size limit exceeds the 2 GiB storage ceiling");
+  });
+
   it("runs from cron configuration in dry-run mode by default", async () => {
     vi.useFakeTimers();
     const t = convexTest(schema, modules);

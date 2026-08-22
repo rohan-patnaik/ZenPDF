@@ -20,7 +20,7 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_STORAGE_SWEEP_MAX_INSPECTED` defaults to 50 and is hard-capped at 100 rows per run.
   - `ZENPDF_STORAGE_SWEEP_MAX_DELETED` defaults to 5 and is hard-capped at 10 objects per run.
   - `ZENPDF_STORAGE_SWEEP_MAX_BYTES` defaults to 134217728 and is hard-capped at 268435456 ordinary bytes per action. One object larger than that budget may be deleted only when it is the action's sole deletion, with an absolute 2 GiB ceiling matching the worker output limit.
-  - `ZENPDF_STORAGE_SWEEP_MAX_WALL_MS` defaults to 1000 and is hard-capped at 5000 ms per mutation.
+  - `ZENPDF_STORAGE_SWEEP_MAX_WALL_MS` defaults to 1000 and is hard-capped at 5000 ms per action. Each mutation receives only the action's remaining monotonic budget, so a frozen database wall clock cannot extend the run.
   - `ZENPDF_STORAGE_BACKFILL_MAX_JOBS` defaults to 25 and is hard-capped at 50 jobs per run.
 - Optional donate/feedback env vars as needed
 
@@ -38,7 +38,7 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_JOB_WALL_SECONDS` (hard wall clock for an entire tool run; default 600)
   - `ZENPDF_JOB_CPU_SECONDS` (kernel CPU limit for a tool process; default 300)
   - `ZENPDF_JOB_MEMORY_BYTES` (tool-process address-space limit; default 4 GiB)
-  - `ZENPDF_JOB_OUTPUT_BYTES` (tool-process file-size limit; default 2 GiB)
+  - `ZENPDF_JOB_OUTPUT_BYTES` (tool-process file-size limit; default and absolute maximum 2 GiB; larger configuration is rejected)
   - `ZENPDF_TOOL_PROCESS_JOIN_SECONDS` (per-stage tool TERM/KILL join bound; default 2, hard maximum 5)
   - `ZENPDF_HEARTBEAT_RETRIES` and `ZENPDF_HEARTBEAT_RETRY_SECONDS`
   - `ZENPDF_UPLOAD_DEADLINE_SECONDS` (hard total output POST deadline; default 60)
@@ -110,8 +110,10 @@ App URL: `http://localhost:3000`
 2. Confirm `storageCleanupState.backfillStatus=complete`. Browser binding also fails closed until this state is complete. A `blocked` state or a run with `status=failed` must be investigated before proceeding.
 3. Wait for `sweepCycle` to advance, proving a complete pagination cycle. Review `storageCleanupRuns` for backlog age/bytes, candidate counts/bytes, bound compliance, and unexpected protected-object patterns.
 4. Set `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED=1` only after the dry-run evidence is acceptable. Start with the defaults; do not raise bounds during initial rollout.
-5. Monitor deleted counts/bytes and tombstones. Retry and new-candidate work share one action deadline and delete-count/byte budget. A missing object is recorded as a successful zero-byte deletion; a newly referenced object is retained and removed from the candidate queue.
+5. Monitor deleted counts/bytes and tombstones. Backfill, retry, and new-candidate work share one monotonic action deadline; retry and new work also share delete-count/byte budgets. A missing object is recorded as a successful zero-byte deletion; a newly referenced object is retained and removed from the candidate queue. Legacy artifact/pending expiry cleanup performs the same indexed ownership recheck transactionally before deleting bytes.
 6. To stop new deletion work, unset the enable flag. If an invocation stopped after candidate marking, its candidate remains fail-closed and blocks late binding; re-enable only after review so the bounded retry path can recheck and drain it.
+
+Browser plan file limits from stored configuration or `ZENPDF_ANON_MAX_MB_PER_FILE` / `ZENPDF_FREE_ACCOUNT_MAX_MB_PER_FILE` must not exceed 2048 MiB. Larger values are rejected, and upload tickets independently reject objects above 2 GiB.
 
 ### Alerts
 - Failure rate > 5% sustained

@@ -1,4 +1,5 @@
 import type { MutationCtx, QueryCtx } from "../_generated/server";
+import { MAX_AUTHORITATIVE_STORAGE_MB } from "./storage_limits";
 
 export type PlanTier = "ANON" | "FREE_ACCOUNT";
 
@@ -73,7 +74,7 @@ export const resolvePlanLimits = async (ctx: Ctx, tier: PlanTier) => {
 
   const prefix = `ZENPDF_${tier}_`;
 
-  return {
+  const resolved = {
     maxFilesPerJob: parseEnvNumber(
       process.env[`${prefix}MAX_FILES_PER_JOB`],
       base.maxFilesPerJob,
@@ -95,6 +96,10 @@ export const resolvePlanLimits = async (ctx: Ctx, tier: PlanTier) => {
       base.maxDailyMinutes,
     ),
   } satisfies PlanLimits;
+  if (resolved.maxMbPerFile > MAX_AUTHORITATIVE_STORAGE_MB) {
+    throw new Error("Plan file-size limit exceeds the 2 GiB storage ceiling");
+  }
+  return resolved;
 };
 
 export const resolveGlobalLimits = async (ctx: Ctx) => {

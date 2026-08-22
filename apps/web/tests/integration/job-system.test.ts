@@ -857,6 +857,24 @@ describe("job system", () => {
           workerToken: "test-worker-token",
         }),
       ).toBeNull();
+      expect(
+        await t.mutation(beginWorkerUpload, {
+          jobId,
+          workerId: "worker-1",
+          filename: "maximum.bin",
+          sizeBytes: 2 * 1024 * 1024 * 1024,
+          workerToken: "test-worker-token",
+        }),
+      ).not.toBeNull();
+      expect(
+        await t.mutation(beginWorkerUpload, {
+          jobId,
+          workerId: "worker-1",
+          filename: "too-large.bin",
+          sizeBytes: 2 * 1024 * 1024 * 1024 + 1,
+          workerToken: "test-worker-token",
+        }),
+      ).toBeNull();
       const pending = await t.mutation(beginWorkerUpload, {
         jobId,
         workerId: "worker-1",

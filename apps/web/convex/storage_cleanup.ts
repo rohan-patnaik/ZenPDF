@@ -11,6 +11,7 @@ import {
   STORAGE_CLEANUP_STATE_NAME,
   storageIdHasLiveAuthoritativeOwner,
 } from "./lib/storage_ownership";
+import { MAX_AUTHORITATIVE_STORAGE_BYTES } from "./lib/storage_limits";
 
 const MIN_GRACE_MS = 48 * 60 * 60 * 1000;
 const MAX_GRACE_MS = 30 * 24 * 60 * 60 * 1000;
@@ -26,7 +27,7 @@ const DEFAULT_WALL_MS = 1_000;
 const MAX_BACKFILL_JOBS = 50;
 const DEFAULT_BACKFILL_JOBS = 25;
 const MAX_REFERENCES_PER_JOB = 100;
-export const MAX_STORAGE_OBJECT_BYTES = 2 * 1024 * 1024 * 1024;
+export const MAX_STORAGE_OBJECT_BYTES = MAX_AUTHORITATIVE_STORAGE_BYTES;
 
 type CleanupMode = "dryRun" | "delete";
 type BackfillResult = {

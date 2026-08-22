@@ -81,6 +81,8 @@ TOOL_OUTPUT_SUFFIXES = {
     "crop": ("cropped", None),
 }
 
+MAX_STORAGE_OUTPUT_BYTES = 2 * 1024**3
+
 
 def _strip_input_prefix(path: Path) -> Path:
     """Remove the two-digit download prefix from a filename if present."""
@@ -288,13 +290,18 @@ def _log_stable(message: str) -> None:
         pass
 
 
-def _positive_env_int(name: str, default: int) -> int:
+def _positive_env_int(
+    name: str, default: int, maximum: Optional[int] = None
+) -> int:
     """Read a positive integer runtime limit with a safe default."""
     try:
         value = int(os.environ.get(name, str(default)))
     except ValueError:
         return default
-    return value if value > 0 else default
+    resolved = value if value > 0 else default
+    if maximum is not None and resolved > maximum:
+        raise ValueError(f"{name} exceeds its maximum")
+    return resolved
 
 
 def _tool_process_entry(
@@ -308,9 +315,13 @@ def _tool_process_entry(
     try:
         if hasattr(os, "setsid"):
             os.setsid()
+        output_bytes = _positive_env_int(
+            "ZENPDF_JOB_OUTPUT_BYTES",
+            MAX_STORAGE_OUTPUT_BYTES,
+            MAX_STORAGE_OUTPUT_BYTES,
+        )
         if resource is not None:
             memory_bytes = _positive_env_int("ZENPDF_JOB_MEMORY_BYTES", 4 * 1024**3)
-            output_bytes = _positive_env_int("ZENPDF_JOB_OUTPUT_BYTES", 2 * 1024**3)
             cpu_seconds = _positive_env_int("ZENPDF_JOB_CPU_SECONDS", 300)
             resource.setrlimit(resource.RLIMIT_AS, (memory_bytes, memory_bytes))
             resource.setrlimit(resource.RLIMIT_FSIZE, (output_bytes, output_bytes))

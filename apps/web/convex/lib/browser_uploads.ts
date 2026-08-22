@@ -1,6 +1,7 @@
 import type { Doc, Id } from "../_generated/dataModel";
 
 import { throwFriendlyError } from "./errors";
+import { MAX_AUTHORITATIVE_STORAGE_BYTES } from "./storage_limits";
 
 export const BROWSER_UPLOAD_RESERVATION_TTL_MS = 15 * 60 * 1000;
 export const MAX_OUTSTANDING_BROWSER_UPLOADS = 12;
@@ -10,7 +11,9 @@ const CONTENT_TYPE_PATTERN = /^[A-Za-z0-9!#$&^_.+-]+\/[A-Za-z0-9!#$&^_.+-]+$/;
 
 export const normalizeAnonId = (anonId: string | undefined) => {
   const normalized = anonId?.trim();
-  return normalized && ANON_ID_PATTERN.test(normalized) ? normalized : undefined;
+  return normalized && ANON_ID_PATTERN.test(normalized)
+    ? normalized
+    : undefined;
 };
 
 export const normalizeUploadIntent = (
@@ -30,6 +33,8 @@ export const normalizeUploadIntent = (
     !Number.isSafeInteger(sizeBytes) ||
     sizeBytes <= 0 ||
     !Number.isSafeInteger(maxBytes) ||
+    maxBytes > MAX_AUTHORITATIVE_STORAGE_BYTES ||
+    sizeBytes > MAX_AUTHORITATIVE_STORAGE_BYTES ||
     sizeBytes > maxBytes ||
     normalizedContentType.length > 128 ||
     !CONTENT_TYPE_PATTERN.test(normalizedContentType)

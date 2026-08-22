@@ -17,11 +17,24 @@ from zenpdf_worker.worker import (
     ToolRunResult,
     WorkerShutdown,
     ZenPdfWorker,
+    _positive_env_int,
     _run_supervised,
     _stable_exception_code,
     _tool_process_entry,
     main,
 )
+
+
+def test_worker_output_limit_accepts_2_gib_and_rejects_one_byte_more(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    maximum = 2 * 1024**3
+    monkeypatch.setenv("ZENPDF_JOB_OUTPUT_BYTES", str(maximum))
+    assert _positive_env_int("ZENPDF_JOB_OUTPUT_BYTES", maximum, maximum) == maximum
+
+    monkeypatch.setenv("ZENPDF_JOB_OUTPUT_BYTES", str(maximum + 1))
+    with pytest.raises(ValueError, match="exceeds its maximum"):
+        _positive_env_int("ZENPDF_JOB_OUTPUT_BYTES", maximum, maximum)
 
 
 def _hung_tool(_job: dict, _inputs: list[Path], temp: Path) -> ToolRunResult:
