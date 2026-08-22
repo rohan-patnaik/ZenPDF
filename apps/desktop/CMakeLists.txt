@@ -14,6 +14,8 @@ set(CMAKE_AUTOUIC ON)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Core Pdf PdfWidgets PrintSupport Sql Widgets)
 
 add_library(zenpdf_core STATIC
+    src/DesktopJobScheduler.cpp
+    src/DesktopJobScheduler.h
     src/DocumentSession.cpp
     src/DocumentSession.h
     src/LocalState.cpp
@@ -68,6 +70,9 @@ if(BUILD_TESTING)
     add_executable(zenpdf_document_session_tests tests/DocumentSessionTest.cpp)
     target_link_libraries(zenpdf_document_session_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_document_session_tests COMMAND zenpdf_document_session_tests)
+    add_executable(zenpdf_job_scheduler_tests tests/DesktopJobSchedulerTest.cpp)
+    target_link_libraries(zenpdf_job_scheduler_tests PRIVATE zenpdf_core Qt6::Test)
+    add_test(NAME zenpdf_job_scheduler_tests COMMAND zenpdf_job_scheduler_tests)
     add_executable(zenpdf_logging_tests tests/LoggingTest.cpp)
     target_link_libraries(zenpdf_logging_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_logging_tests COMMAND zenpdf_logging_tests)
@@ -115,6 +120,9 @@ if(BUILD_TESTING)
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_document_session_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+    set_tests_properties(zenpdf_job_scheduler_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_qpdf_tests PROPERTIES
