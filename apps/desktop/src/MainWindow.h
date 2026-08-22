@@ -9,6 +9,7 @@ class QDragEnterEvent;
 class QDropEvent;
 class QMenu;
 class QTabWidget;
+class QUndoGroup;
 struct QpdfResult;
 class MainWindowTest;
 
@@ -31,6 +32,8 @@ private:
     void ensureWelcomeTab();
     void openFileDialog();
     void openPdf(const QString& path);
+    void closeTab(int index);
+    void updateDocumentState(DocumentWidget& document);
     void rebuildRecentMenu();
     void mergeDocuments();
     void extractPages();
@@ -45,6 +48,7 @@ private:
     [[nodiscard]] QString chooseOutputPath(const QString& suggestedName) const;
 
     LocalState& localState_;
+    QUndoGroup* undoGroup_;
     QTabWidget* tabs_;
     QMenu* recentMenu_;
 };

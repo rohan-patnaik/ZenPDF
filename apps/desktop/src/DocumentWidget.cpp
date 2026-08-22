@@ -1,5 +1,6 @@
 #include "DocumentWidget.h"
 
+#include "DocumentSession.h"
 #include "PrintPolicy.h"
 
 #include <QAction>
@@ -8,7 +9,6 @@
 #include <QCache>
 #include <QDialog>
 #include <QDialogButtonBox>
-#include <QFileInfo>
 #include <QFormLayout>
 #include <QIdentityProxyModel>
 #include <QKeySequence>
@@ -38,6 +38,7 @@
 #include <QVBoxLayout>
 
 #include <algorithm>
+#include <utility>
 
 namespace {
 constexpr int kThumbnailWidth = 128;
@@ -133,20 +134,28 @@ QString pdfErrorMessage(QPdfDocument::Error error) {
 
 DocumentWidget::DocumentWidget(QString filePath, QWidget* parent)
     : QWidget(parent),
-      filePath_(QFileInfo(filePath).absoluteFilePath()),
+      session_(new DocumentSession(std::move(filePath), this)),
       document_(new QPdfDocument(this)),
       view_(new QPdfView(this)),
       searchModel_(new QPdfSearchModel(this)),
       pageSelector_(new QSpinBox(this)) {
-    updateLoadState(document_->load(filePath_));
+    updateLoadState(document_->load(session_->filePath()));
 }
 
 QString DocumentWidget::filePath() const {
-    return filePath_;
+    return session_->filePath();
 }
 
 QString DocumentWidget::displayName() const {
-    return QFileInfo(filePath_).fileName();
+    return session_->displayName();
+}
+
+DocumentSession& DocumentWidget::session() {
+    return *session_;
+}
+
+const DocumentSession& DocumentWidget::session() const {
+    return *session_;
 }
 
 int DocumentWidget::pageCount() const {
@@ -170,7 +179,7 @@ bool DocumentWidget::unlock(const QString& password) {
         return false;
     }
     document_->setPassword(password);
-    const auto error = document_->load(filePath_);
+    const auto error = document_->load(session_->filePath());
     document_->setPassword({});
     updateLoadState(error);
     return isReady();

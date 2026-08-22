@@ -1,22 +1,34 @@
 #include "MainWindow.h"
 
+#include "DocumentSession.h"
 #include "DocumentWidget.h"
 #include "LocalState.h"
 #include "QpdfOperations.h"
 
+#include <QAbstractButton>
 #include <QAction>
+#include <QApplication>
+#include <QCloseEvent>
 #include <QFile>
+#include <QMessageBox>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QTimer>
+#include <QUndoCommand>
 #include <QtTest>
+
+#include <utility>
 
 class MainWindowTest final : public QObject {
     Q_OBJECT
 
 private slots:
     void exposesKeyboardAccessibleDeleteAction();
+    void routesUndoAndDirtyStateToActiveDocument();
+    void dirtyTabRequiresExplicitDiscard();
+    void dirtyWindowRequiresExplicitDiscard();
     void successfulOrganizerOutputOpensAsCleanTab();
 };
 
@@ -27,6 +39,29 @@ void createPdf(const QString& path, const QString& text) {
     QPainter painter(&writer);
     painter.drawText(QPointF(72, 72), text);
     painter.end();
+}
+
+class AddCommand final : public QUndoCommand {
+public:
+    AddCommand(int* value, int amount, QString label)
+        : QUndoCommand(std::move(label)), value_(value), amount_(amount) {}
+
+    void redo() override { *value_ += amount_; }
+    void undo() override { *value_ -= amount_; }
+
+private:
+    int* value_;
+    int amount_;
+};
+
+void answerMessageBox(QMessageBox::StandardButton answer) {
+    QTimer::singleShot(0, [answer] {
+        if (auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget())) {
+            if (auto* button = box->button(answer)) {
+                button->click();
+            }
+        }
+    });
 }
 }
 
@@ -42,6 +77,99 @@ void MainWindowTest::exposesKeyboardAccessibleDeleteAction() {
     QCOMPARE(action->shortcut(), QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     QVERIFY(action->text().contains(QStringLiteral("new file")));
     QVERIFY(action->statusTip().contains(QStringLiteral("unchanged")));
+}
+
+void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto firstPath = directory.filePath(QStringLiteral("first.pdf"));
+    const auto secondPath = directory.filePath(QStringLiteral("second.pdf"));
+    createPdf(firstPath, QStringLiteral("First"));
+    createPdf(secondPath, QStringLiteral("Second"));
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    window.openFiles({firstPath, secondPath});
+
+    auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
+    auto* redoAction = window.findChild<QAction*>(QStringLiteral("redoAction"));
+    QVERIFY(undoAction != nullptr);
+    QVERIFY(redoAction != nullptr);
+    QCOMPARE(undoAction->shortcut(), QKeySequence::Undo);
+    QCOMPARE(redoAction->shortcut(), QKeySequence::Redo);
+    QVERIFY(!undoAction->isEnabled());
+    QVERIFY(!redoAction->isEnabled());
+
+    auto* first = qobject_cast<DocumentWidget*>(window.tabs_->widget(0));
+    QVERIFY(first != nullptr);
+    int value = 0;
+    first->session().push(new AddCommand(&value, 1, QStringLiteral("First change")));
+    QCOMPARE(value, 1);
+    QVERIFY(window.tabs_->tabText(0).endsWith('*'));
+    QVERIFY(!window.tabs_->tabText(1).endsWith('*'));
+    QVERIFY(!undoAction->isEnabled());
+
+    window.tabs_->setCurrentIndex(0);
+    QVERIFY(undoAction->isEnabled());
+    QVERIFY(undoAction->text().contains(QStringLiteral("First change")));
+    undoAction->trigger();
+    QCOMPARE(value, 0);
+    QVERIFY(!window.tabs_->tabText(0).endsWith('*'));
+    QVERIFY(redoAction->isEnabled());
+
+    window.tabs_->setCurrentIndex(1);
+    QVERIFY(!undoAction->isEnabled());
+    QVERIFY(!redoAction->isEnabled());
+}
+
+void MainWindowTest::dirtyTabRequiresExplicitDiscard() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    createPdf(path, QStringLiteral("Document"));
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    window.openFiles({path});
+    auto* document = window.currentDocument();
+    QVERIFY(document != nullptr);
+    int value = 0;
+    document->session().push(new AddCommand(&value, 1, QStringLiteral("Unsaved change")));
+
+    answerMessageBox(QMessageBox::Cancel);
+    window.closeTab(0);
+    QCOMPARE(window.tabs_->count(), 1);
+    QCOMPARE(window.currentDocument(), document);
+    QCOMPARE(value, 1);
+
+    answerMessageBox(QMessageBox::Discard);
+    window.closeTab(0);
+    QCOMPARE(window.tabs_->count(), 1);
+    QVERIFY(window.currentDocument() == nullptr);
+}
+
+void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("document.pdf"));
+    createPdf(path, QStringLiteral("Document"));
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    window.openFiles({path});
+    int value = 0;
+    window.currentDocument()->session().push(
+        new AddCommand(&value, 1, QStringLiteral("Unsaved change")));
+
+    QCloseEvent cancelEvent;
+    answerMessageBox(QMessageBox::Cancel);
+    window.closeEvent(&cancelEvent);
+    QVERIFY(!cancelEvent.isAccepted());
+
+    QCloseEvent discardEvent;
+    answerMessageBox(QMessageBox::Discard);
+    window.closeEvent(&discardEvent);
+    QVERIFY(discardEvent.isAccepted());
 }
 
 void MainWindowTest::successfulOrganizerOutputOpensAsCleanTab() {

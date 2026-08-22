@@ -1,5 +1,6 @@
 #include "MainWindow.h"
 
+#include "DocumentSession.h"
 #include "DocumentWidget.h"
 #include "LocalState.h"
 #include "QpdfOperations.h"
@@ -25,6 +26,7 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QUndoGroup>
 #include <QUrl>
 #include <QVBoxLayout>
 #include <QtConcurrent>
@@ -77,6 +79,7 @@ bool hasLocalPdf(const QMimeData* mimeData) {
 MainWindow::MainWindow(LocalState& localState, QWidget* parent)
     : QMainWindow(parent),
       localState_(localState),
+      undoGroup_(new QUndoGroup(this)),
       tabs_(new QTabWidget(this)),
       recentMenu_(nullptr) {
     setWindowTitle(tr("ZenPDF"));
@@ -87,11 +90,10 @@ MainWindow::MainWindow(LocalState& localState, QWidget* parent)
     tabs_->setTabsClosable(true);
     setCentralWidget(tabs_);
 
-    connect(tabs_, &QTabWidget::tabCloseRequested, this, [this](int index) {
-        auto* widget = tabs_->widget(index);
-        tabs_->removeTab(index);
-        widget->deleteLater();
-        ensureWelcomeTab();
+    connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
+    connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
+        auto* document = qobject_cast<DocumentWidget*>(tabs_->widget(index));
+        undoGroup_->setActiveStack(document != nullptr ? &document->session().undoStack() : nullptr);
     });
 
     buildMenus();
@@ -109,6 +111,25 @@ void MainWindow::openFiles(const QStringList& paths) {
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {
+    int dirtyDocuments = 0;
+    for (int index = 0; index < tabs_->count(); ++index) {
+        if (const auto* document = qobject_cast<DocumentWidget*>(tabs_->widget(index));
+            document != nullptr && document->session().isDirty()) {
+            ++dirtyDocuments;
+        }
+    }
+    if (dirtyDocuments > 0 &&
+        QMessageBox::warning(
+            this,
+            tr("Discard unsaved changes?"),
+            tr("%n open document(s) contain unsaved changes. Closing ZenPDF will discard them.",
+               nullptr,
+               dirtyDocuments),
+            QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Discard) {
+        event->ignore();
+        return;
+    }
     QSettings settings;
     settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
     settings.setValue(QStringLiteral("window/state"), saveState());
@@ -143,6 +164,18 @@ void MainWindow::buildMenus() {
     auto* quitAction = fileMenu->addAction(tr("&Quit"));
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
+
+    auto* editMenu = menuBar()->addMenu(tr("&Edit"));
+    auto* undoAction = undoGroup_->createUndoAction(this, tr("&Undo"));
+    undoAction->setObjectName(QStringLiteral("undoAction"));
+    undoAction->setShortcut(QKeySequence::Undo);
+    undoAction->setStatusTip(tr("Undo the last change in the active document"));
+    editMenu->addAction(undoAction);
+    auto* redoAction = undoGroup_->createRedoAction(this, tr("&Redo"));
+    redoAction->setObjectName(QStringLiteral("redoAction"));
+    redoAction->setShortcut(QKeySequence::Redo);
+    redoAction->setStatusTip(tr("Redo the next change in the active document"));
+    editMenu->addAction(redoAction);
 
     auto* organizeMenu = menuBar()->addMenu(tr("&Organize"));
     auto* mergeAction = organizeMenu->addAction(tr("&Merge PDFs into a new file…"));
@@ -240,6 +273,11 @@ void MainWindow::openPdf(const QString& path) {
     }
     const int index = tabs_->addTab(document, document->displayName());
     tabs_->setTabToolTip(index, QDir::toNativeSeparators(cleanPath));
+    undoGroup_->addStack(&document->session().undoStack());
+    connect(&document->session(), &DocumentSession::stateChanged, this, [this, document] {
+        updateDocumentState(*document);
+    });
+    updateDocumentState(*document);
     tabs_->setCurrentIndex(index);
     QString stateError;
     if (!localState_.recordRecentFile(cleanPath, &stateError)) {
@@ -247,6 +285,36 @@ void MainWindow::openPdf(const QString& path) {
     }
     rebuildRecentMenu();
     statusBar()->showMessage(tr("Opened %1 pages locally").arg(document->pageCount()), 4'000);
+}
+
+void MainWindow::closeTab(int index) {
+    auto* document = qobject_cast<DocumentWidget*>(tabs_->widget(index));
+    if (document != nullptr && document->session().isDirty() &&
+        QMessageBox::warning(
+            this,
+            tr("Discard unsaved changes?"),
+            tr("%1 contains unsaved changes.").arg(document->displayName()),
+            QMessageBox::Discard | QMessageBox::Cancel,
+            QMessageBox::Cancel) != QMessageBox::Discard) {
+        return;
+    }
+    auto* widget = tabs_->widget(index);
+    if (document != nullptr) {
+        undoGroup_->removeStack(&document->session().undoStack());
+    }
+    tabs_->removeTab(index);
+    widget->deleteLater();
+    ensureWelcomeTab();
+}
+
+void MainWindow::updateDocumentState(DocumentWidget& document) {
+    const int index = tabs_->indexOf(&document);
+    if (index < 0) {
+        return;
+    }
+    const bool dirty = document.session().isDirty();
+    document.setWindowModified(dirty);
+    tabs_->setTabText(index, document.displayName() + (dirty ? QStringLiteral("*") : QString{}));
 }
 
 void MainWindow::rebuildRecentMenu() {

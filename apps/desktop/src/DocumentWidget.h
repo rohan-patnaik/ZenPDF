@@ -6,6 +6,7 @@
 class QPdfSearchModel;
 class QPdfView;
 class QSpinBox;
+class DocumentSession;
 class DocumentWidgetTest;
 
 class DocumentWidget final : public QWidget {
@@ -16,6 +17,8 @@ public:
 
     [[nodiscard]] QString filePath() const;
     [[nodiscard]] QString displayName() const;
+    [[nodiscard]] DocumentSession& session();
+    [[nodiscard]] const DocumentSession& session() const;
     [[nodiscard]] int pageCount() const;
     [[nodiscard]] bool isReady() const;
     [[nodiscard]] bool needsPassword() const;
@@ -32,7 +35,7 @@ private:
     void jumpToPage(int oneBasedPage);
     void updateLoadState(QPdfDocument::Error error);
 
-    QString filePath_;
+    DocumentSession* session_;
     QPdfDocument* document_;
     QPdfView* view_;
     QPdfSearchModel* searchModel_;

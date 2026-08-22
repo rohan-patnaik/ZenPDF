@@ -14,6 +14,8 @@ set(CMAKE_AUTOUIC ON)
 find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Core Pdf PdfWidgets PrintSupport Sql Widgets)
 
 add_library(zenpdf_core STATIC
+    src/DocumentSession.cpp
+    src/DocumentSession.h
     src/LocalState.cpp
     src/LocalState.h
     src/Logging.cpp
@@ -24,7 +26,7 @@ add_library(zenpdf_core STATIC
     src/QpdfOperations.h
     src/QpdfPublication.h
 )
-target_link_libraries(zenpdf_core PUBLIC Qt6::Core Qt6::Sql)
+target_link_libraries(zenpdf_core PUBLIC Qt6::Core Qt6::Gui Qt6::Sql)
 target_include_directories(zenpdf_core PUBLIC src)
 target_compile_options(zenpdf_core PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-Wall;-Wextra;-Wpedantic;-Wconversion>
@@ -63,6 +65,9 @@ if(BUILD_TESTING)
     add_executable(zenpdf_core_tests tests/LocalStateTest.cpp)
     target_link_libraries(zenpdf_core_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_core_tests COMMAND zenpdf_core_tests)
+    add_executable(zenpdf_document_session_tests tests/DocumentSessionTest.cpp)
+    target_link_libraries(zenpdf_document_session_tests PRIVATE zenpdf_core Qt6::Test)
+    add_test(NAME zenpdf_document_session_tests COMMAND zenpdf_document_session_tests)
     add_executable(zenpdf_logging_tests tests/LoggingTest.cpp)
     target_link_libraries(zenpdf_logging_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_logging_tests COMMAND zenpdf_logging_tests)
@@ -107,6 +112,9 @@ if(BUILD_TESTING)
     )
     add_test(NAME zenpdf_main_window_tests COMMAND zenpdf_main_window_tests)
     set_tests_properties(zenpdf_core_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+    set_tests_properties(zenpdf_document_session_tests PROPERTIES
         ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
     set_tests_properties(zenpdf_qpdf_tests PROPERTIES
