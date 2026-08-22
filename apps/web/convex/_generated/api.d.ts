@@ -24,6 +24,7 @@ import type * as lib_limits from "../lib/limits.js";
 import type * as lib_time from "../lib/time.js";
 import type * as lib_usage from "../lib/usage.js";
 import type * as lib_worker_auth from "../lib/worker_auth.js";
+import type * as storage_cleanup from "../storage_cleanup.js";
 import type * as users from "../users.js";
 
 import type {
@@ -49,6 +50,7 @@ declare const fullApi: ApiFromModules<{
   "lib/time": typeof lib_time;
   "lib/usage": typeof lib_usage;
   "lib/worker_auth": typeof lib_worker_auth;
+  storage_cleanup: typeof storage_cleanup;
   users: typeof users;
 }>;
 

@@ -106,6 +106,13 @@ export const bindBrowserUpload = mutation({
     if (reservation.expiresAt <= now) {
       return throwFriendlyError("USER_INPUT_INVALID");
     }
+    const cleanupRecord = await ctx.db
+      .query("storageCleanupRecords")
+      .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+      .first();
+    if (cleanupRecord) {
+      return throwFriendlyError("USER_INPUT_INVALID");
+    }
     const metadata = await ctx.db.system.get(args.storageId);
     if (
       !metadata ||
@@ -220,11 +227,26 @@ export const registerWorkerUpload = mutation({
   },
   handler: async (ctx, args) => {
     assertWorkerToken(args.workerToken);
+    const now = Date.now();
     const pending = await ctx.db.get(args.pendingUploadId);
-    if (!pending || pending.workerId !== args.workerId) {
+    if (
+      !pending ||
+      pending.workerId !== args.workerId ||
+      pending.expiresAt <= now
+    ) {
       return false;
     }
     if (pending.storageId && pending.storageId !== args.storageId) {
+      return false;
+    }
+    const [cleanupRecord, metadata] = await Promise.all([
+      ctx.db
+        .query("storageCleanupRecords")
+        .withIndex("by_storage", (q) => q.eq("storageId", args.storageId))
+        .first(),
+      ctx.db.system.get(args.storageId),
+    ]);
+    if (!metadata || metadata.size !== pending.sizeBytes || cleanupRecord) {
       return false;
     }
     await ctx.db.patch(args.pendingUploadId, { storageId: args.storageId });

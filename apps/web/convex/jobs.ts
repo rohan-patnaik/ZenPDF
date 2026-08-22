@@ -154,8 +154,13 @@ export const createJob = mutation({
         throwFriendlyError("USER_INPUT_INVALID");
       }
       const metadata = await ctx.db.system.get(input.storageId);
+      const cleanupRecord = await ctx.db
+        .query("storageCleanupRecords")
+        .withIndex("by_storage", (q) => q.eq("storageId", input.storageId))
+        .first();
       if (
         !metadata ||
+        cleanupRecord ||
         metadata.size !== reservation.sizeBytes ||
         (metadata.contentType !== undefined &&
           metadata.contentType.toLowerCase() !== reservation.contentType)
@@ -406,8 +411,13 @@ export const completeJob = mutation({
     const pendingUploads = [];
     for (const output of args.outputs) {
       const pending = await ctx.db.get(output.pendingUploadId);
+      const cleanupRecord = await ctx.db
+        .query("storageCleanupRecords")
+        .withIndex("by_storage", (q) => q.eq("storageId", output.storageId))
+        .first();
       if (
         !pending ||
+        cleanupRecord ||
         pending.jobId !== job._id ||
         pending.workerId !== args.workerId ||
         pending.storageId !== output.storageId ||

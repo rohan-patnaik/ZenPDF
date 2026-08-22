@@ -188,6 +188,7 @@ export default defineSchema({
     checkedReservations: v.boolean(),
   })
     .index("by_storage", ["storageId"])
+    .index("by_run_state", ["runId", "state", "candidateAt"])
     .index("by_state", ["state", "candidateAt"]),
 
   storageCleanupRuns: defineTable({
@@ -197,8 +198,10 @@ export default defineSchema({
     cursorOut: v.optional(v.string()),
     inspected: v.number(),
     eligible: v.number(),
+    eligibleBytes: v.number(),
     protected: v.number(),
     candidates: v.number(),
+    candidateBytes: v.number(),
     deleted: v.number(),
     bytesDeleted: v.number(),
     oldestEligibleAt: v.optional(v.number()),
