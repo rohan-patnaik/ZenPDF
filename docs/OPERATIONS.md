@@ -33,6 +33,7 @@ This document is the single operational runbook for local runs, deploys, securit
   - `ZENPDF_JOB_OUTPUT_BYTES` (tool-process file-size limit; default 2 GiB)
   - `ZENPDF_HEARTBEAT_RETRIES` and `ZENPDF_HEARTBEAT_RETRY_SECONDS`
   - `ZENPDF_UPLOAD_DEADLINE_SECONDS` (hard total output POST deadline; default 60)
+  - `ZENPDF_UPLOAD_PROCESS_JOIN_SECONDS` (per-stage TERM/KILL join bound; default 1, hard maximum 5)
   - `ZENPDF_UPLOAD_JOURNAL_DIR` (durable recovery volume; default `/var/lib/zenpdf-worker/upload-recovery`)
   - `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRIES`, `ZENPDF_UPLOAD_JOURNAL_MAX_BYTES`, and `ZENPDF_UPLOAD_JOURNAL_MAX_ENTRY_BYTES` (hard recovery-spool limits; defaults 1024, 8 MiB, and 4 KiB)
   - `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_ENTRIES`, `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_BYTES`, and `ZENPDF_UPLOAD_JOURNAL_SCAN_MAX_MS` (hard whole-directory inspection budgets; defaults 2048, 16 MiB, and 100 ms)
@@ -66,6 +67,7 @@ App URL: `http://localhost:3000`
 - Worker: Cloud Run container
 - Backend: Convex deployment with matching env values
 - Mount `ZENPDF_UPLOAD_JOURNAL_DIR` on storage that survives worker instance replacement. The Compose stack provides the `worker-upload-recovery` named volume; a production deployment must provide an equivalent durable mount.
+- Treat worker exit code 70 as a forced supervisor/cgroup restart request. It means an upload child remained alive after bounded TERM and KILL joins. The worker completes its bounded journal drain, retains unresolved journal records on the durable volume, then uses immediate exit so Python cannot wait indefinitely for a non-daemon child; the supervisor must terminate the whole container/cgroup before restart.
 - Resolve the remaining unknown-storage-ID release decision in `docs/UPLOAD_ORPHAN_DECISION.md`; the worker journal cannot identify an object when the upload response never reaches the parent process.
 
 ### Post-release

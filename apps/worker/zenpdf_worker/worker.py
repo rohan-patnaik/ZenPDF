@@ -346,6 +346,8 @@ class ZenPdfWorker:
         )
         self.upload_journal = UploadJournal(journal_root)
         self._shutdown_requested = threading.Event()
+        self._stubborn_upload_processes: List[multiprocessing.Process] = []
+        self._supervisor_force_exit_required = False
 
     def run(self) -> None:
         """Run the worker polling loop."""
@@ -1054,10 +1056,12 @@ class ZenPdfWorker:
         finally:
             receiver.close()
             if process.is_alive():
-                self._stop_upload_process(process)
+                if process not in self._stubborn_upload_processes:
+                    self._stop_upload_process(process)
             else:
                 process.join()
-            process.close()
+            if not process.is_alive():
+                process.close()
         if outcome[0] != "ok":
             error_code = outcome[1] if len(outcome) > 1 else "UPLOAD_FAILED"
             if not isinstance(error_code, str) or not error_code.startswith("UPLOAD_"):
@@ -1081,25 +1085,33 @@ class ZenPdfWorker:
             raise JobOwnershipLost("Job ownership changed during output upload")
         return storage_id
 
-    @staticmethod
-    def _stop_upload_process(process: multiprocessing.Process) -> None:
-        """Stop a blocked POST process group without leaving descendants."""
+    def _stop_upload_process(self, process: multiprocessing.Process) -> bool:
+        """Bound both joins; ask the supervisor to kill an uninterruptible group."""
         if process.pid is None:
-            return
+            return True
         if not process.is_alive():
             process.join()
-            return
+            return True
+        join_seconds = min(
+            _positive_env_int("ZENPDF_UPLOAD_PROCESS_JOIN_SECONDS", 1), 5
+        )
         try:
             os.killpg(process.pid, signal.SIGTERM)
         except (ProcessLookupError, PermissionError):
             process.terminate()
-        process.join(timeout=1)
+        process.join(timeout=join_seconds)
         if process.is_alive():
             try:
                 os.killpg(process.pid, signal.SIGKILL)
             except (ProcessLookupError, PermissionError):
                 process.kill()
-            process.join()
+            process.join(timeout=join_seconds)
+        if process.is_alive():
+            if process not in self._stubborn_upload_processes:
+                self._stubborn_upload_processes.append(process)
+            self._supervisor_force_exit_required = True
+            return False
+        return True
 
     def _discard_pending_upload(
         self, pending_id: str, storage_id: str | None = None
@@ -1323,6 +1335,9 @@ def main() -> None:
     signal.signal(signal.SIGTERM, request_shutdown)
     signal.signal(signal.SIGINT, request_shutdown)
     worker.run()
+    if worker._supervisor_force_exit_required:
+        print("Worker supervisor termination required (UPLOAD_CHILD_STUCK)")
+        os._exit(70)
 
 
 if __name__ == "__main__":

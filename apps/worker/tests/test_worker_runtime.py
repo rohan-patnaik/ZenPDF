@@ -385,6 +385,59 @@ def test_shutdown_kills_active_upload_process_tree_promptly(
         assert status_path.read_text(encoding="ascii").split()[2] == "Z"
 
 
+def test_stubborn_upload_process_forces_bounded_supervisor_return(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubbornProcess:
+        pid = 424242
+
+        def __init__(self) -> None:
+            self.joins: list[int | None] = []
+            self.terminated = False
+            self.killed = False
+
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+        def join(self, timeout: int | None = None) -> None:
+            self.joins.append(timeout)
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+    monkeypatch.setenv("ZENPDF_UPLOAD_PROCESS_JOIN_SECONDS", "1")
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.os.killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    worker = _UploadWorker()
+    worker.upload_journal.save(
+        {
+            "jobId": "job-1",
+            "pendingUploadId": "pending-1",
+            "storageId": "stored-1",
+            "action": "uploaded",
+        }
+    )
+    process = StubbornProcess()
+    started_at = time.monotonic()
+
+    stopped = worker._stop_upload_process(process)  # type: ignore[arg-type]
+
+    assert not stopped
+    assert time.monotonic() - started_at < 1
+    assert process.terminated
+    assert process.killed
+    assert process.joins == [1, 1]
+    assert worker._supervisor_force_exit_required
+    assert worker._stubborn_upload_processes == [process]
+    assert worker.upload_journal.load("pending-1") is not None
+
+
 def test_registration_and_cleanup_transport_failures_recover_from_journal(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
