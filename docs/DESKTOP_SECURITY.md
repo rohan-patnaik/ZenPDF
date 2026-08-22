@@ -38,7 +38,7 @@ Document changes use a command journal with deterministic undo/redo records. Aut
 
 On startup, ZenPDF offers recoverable sessions rather than silently reopening hostile input. Stale working files are listed with their source and timestamp and require an explicit recovery or discard choice. Symlinks, ownership changes, destination changes, insufficient space, and cross-filesystem replacement are treated as save failures, not reasons to weaken atomicity.
 
-The current implementation only establishes a bounded in-memory undo stack, clean-revision dirty tracking, active-tab undo/redo routing, and dirty-close confirmation. No PDF mutation command, atomic save/save-as path, autosave working copy, serialized recovery journal, or startup recovery workflow exists yet; the sequence above remains the gate for those later slices.
+The current implementation only establishes a 512-command in-memory undo limit, clean-revision dirty tracking, active-tab undo/redo routing, and dirty-close confirmation. The command count does not bound retained command or payload bytes; a measured memory budget and admission/eviction policy is required before mutation-backed undo can meet the resource gate. No PDF mutation command, atomic save/save-as path, autosave working copy, serialized recovery journal, or startup recovery workflow exists yet; the sequence above remains the gate for those later slices.
 
 ## Failure behavior
 
