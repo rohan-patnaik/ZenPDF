@@ -2,6 +2,7 @@ import { convexTest } from "convex-test";
 import { makeFunctionReference } from "convex/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import type { Id } from "../../convex/_generated/dataModel";
 import schema from "../../convex/schema";
 
 const modules = import.meta.glob("../../convex/**/*.ts");
@@ -219,12 +220,24 @@ describe("bounded storage orphan cleanup", () => {
     ).rejects.toThrow();
   });
 
-  it("keeps a registered worker output through completion/finalization races", async () => {
+  it("serializes worker registration/completion against deletion", async () => {
     vi.useFakeTimers();
     vi.stubEnv("ZENPDF_WORKER_TOKEN", "cleanup-worker-token");
     const t = convexTest(schema, modules);
     const storageId = await makeOldStorage(t, "output");
+    const deleteFirstStorageId = await makeOldStorage(t, "doomed");
     await t.mutation(backfill, { maxJobs: 25 });
+    const temporaryProtection = await t.mutation(beginBrowserUpload, {
+      anonId: "worker-delete-protection",
+      filename: "doomed.pdf",
+      sizeBytes: 6,
+      contentType: "application/octet-stream",
+    });
+    await t.mutation(bindBrowserUpload, {
+      reservationId: temporaryProtection.reservationId,
+      storageId: deleteFirstStorageId,
+      anonId: "worker-delete-protection",
+    });
     const { jobId, pendingUploadId } = await t.run(async (ctx) => {
       const now = Date.now();
       const jobId = await ctx.db.insert("jobs", {
@@ -287,6 +300,63 @@ describe("bounded storage orphan cleanup", () => {
           .first(),
       ),
     ).toMatchObject({ kind: "jobOutput" });
+
+    await t.run(async (ctx) => {
+      await ctx.db.patch(
+        temporaryProtection.reservationId as Id<"browserUploadReservations">,
+        { status: "expired", expiresAt: Date.now() - 1 },
+      );
+    });
+
+    const deleteFirst = await t.run(async (ctx) => {
+      const now = Date.now();
+      const deleteFirstJobId = await ctx.db.insert("jobs", {
+        anonId: "worker-delete-first",
+        tier: "ANON",
+        tool: "merge",
+        status: "running",
+        claimedBy: "worker-delete-first",
+        claimExpiresAt: now + 60_000,
+        attempts: 1,
+        maxAttempts: 3,
+        inputs: [],
+        createdAt: now,
+        updatedAt: now,
+      });
+      const deleteFirstPendingId = await ctx.db.insert("pendingUploads", {
+        jobId: deleteFirstJobId,
+        workerId: "worker-delete-first",
+        filename: "doomed.pdf",
+        sizeBytes: 6,
+        createdAt: now,
+        expiresAt: now + 60_000,
+      });
+      return { deleteFirstPendingId };
+    });
+    const deleteFirstRun = await t.mutation(markCandidates, {
+      mode: "delete",
+      ...bounds,
+    });
+    expect(deleteFirstRun.candidateIds).toHaveLength(1);
+    expect(
+      await t.mutation(registerWorkerUpload, {
+        pendingUploadId: deleteFirst.deleteFirstPendingId,
+        workerId: "worker-delete-first",
+        storageId: deleteFirstStorageId,
+        workerToken: "cleanup-worker-token",
+      }),
+    ).toBe(false);
+    expect(
+      await t.mutation(finalizeCandidates, {
+        runId: deleteFirstRun.runId,
+        maxDeleted: 5,
+        maxBytesDeleted: 1024 * 1024,
+        maxWallMs: 1000,
+      }),
+    ).toMatchObject({ deleted: 1 });
+    expect(
+      await t.run(async (ctx) => ctx.db.system.get(deleteFirstStorageId)),
+    ).toBeNull();
   });
 
   it("deletes only the exact unreferenced candidate and retains its tombstone", async () => {
