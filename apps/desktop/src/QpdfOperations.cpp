@@ -33,6 +33,12 @@ constexpr int kMaximumInputs = 100;
 constexpr int kStartTimeoutMs = 5'000;
 constexpr int kProcessPollMs = 100;
 constexpr qsizetype kMaximumDiagnosticBytes = 8 * 1024;
+constexpr qsizetype kMaximumSensitiveDiagnosticTokenBytes = 4 * 1024;
+constexpr qsizetype kMaximumDiagnosticCaptureBytes =
+    kMaximumDiagnosticBytes + kMaximumSensitiveDiagnosticTokenBytes;
+static_assert(kMaximumDiagnosticBytes
+              <= std::numeric_limits<qsizetype>::max()
+                     - kMaximumSensitiveDiagnosticTokenBytes);
 constexpr qsizetype kMaximumPageCountOutputBytes = 64;
 constexpr auto kOwnerDirectoryPermissions =
     QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
@@ -40,8 +46,12 @@ constexpr auto kOwnerFilePermissions = QFileDevice::ReadOwner | QFileDevice::Wri
 
 class BoundedProcess final {
 public:
-    explicit BoundedProcess(qsizetype standardOutputLimit = 0)
-        : m_standardOutputLimit(standardOutputLimit) {
+    explicit BoundedProcess(qsizetype standardOutputLimit = 0,
+                            qsizetype diagnosticLimit = kMaximumDiagnosticBytes)
+        : m_standardOutputLimit(standardOutputLimit), m_diagnosticLimit(diagnosticLimit) {
+        if (diagnosticLimit < 0 || diagnosticLimit > kMaximumDiagnosticCaptureBytes) {
+            return;
+        }
 #ifdef Q_OS_UNIX
         int standardOutputPipe[2] = {-1, -1};
         int standardErrorPipe[2] = {-1, -1};
@@ -115,7 +125,7 @@ public:
     void drain() {
 #ifdef Q_OS_UNIX
         drainFd(m_standardOutputRead, &m_standardOutput, m_standardOutputLimit, &m_standardOutputOverflow);
-        drainFd(m_standardErrorRead, &m_diagnostic, kMaximumDiagnosticBytes, nullptr);
+        drainFd(m_standardErrorRead, &m_diagnostic, m_diagnosticLimit, nullptr);
 #else
         appendBounded(
             m_process.readAllStandardOutput(),
@@ -123,7 +133,7 @@ public:
             m_standardOutputLimit,
             &m_standardOutputOverflow);
         appendBounded(
-            m_process.readAllStandardError(), &m_diagnostic, kMaximumDiagnosticBytes, nullptr);
+            m_process.readAllStandardError(), &m_diagnostic, m_diagnosticLimit, nullptr);
 #endif
     }
 
@@ -205,6 +215,7 @@ private:
 #endif
     QProcess m_process;
     qsizetype m_standardOutputLimit{0};
+    qsizetype m_diagnosticLimit{kMaximumDiagnosticBytes};
     qint64 m_processGroup{0};
     QByteArray m_standardOutput;
     QByteArray m_diagnostic;
@@ -241,6 +252,48 @@ QpdfResult validateInput(const QString& path) {
 
 QString normalizedPath(const QString& path) {
     return QDir::cleanPath(QFileInfo(path).absoluteFilePath());
+}
+
+std::optional<qsizetype> diagnosticCaptureLimit(const QStringList& sensitiveTokens) {
+    qsizetype maximumTokenBytes = 0;
+    for (const auto& token : sensitiveTokens) {
+        maximumTokenBytes = std::max(maximumTokenBytes, QFile::encodeName(token).size());
+    }
+    if (maximumTokenBytes > kMaximumSensitiveDiagnosticTokenBytes
+        || maximumTokenBytes > kMaximumDiagnosticCaptureBytes - kMaximumDiagnosticBytes) {
+        return std::nullopt;
+    }
+    return kMaximumDiagnosticBytes + maximumTokenBytes;
+}
+
+QString truncateDiagnostic(QString diagnostic) {
+    if (diagnostic.toUtf8().size() <= kMaximumDiagnosticBytes) {
+        return diagnostic;
+    }
+    qsizetype lower = 0;
+    qsizetype upper = diagnostic.size();
+    while (lower < upper) {
+        const auto middle = lower + (upper - lower + 1) / 2;
+        if (diagnostic.left(middle).toUtf8().size() <= kMaximumDiagnosticBytes) {
+            lower = middle;
+        } else {
+            upper = middle - 1;
+        }
+    }
+    diagnostic.truncate(lower);
+    if (!diagnostic.isEmpty() && diagnostic.back().isHighSurrogate()) {
+        diagnostic.chop(1);
+    }
+    return diagnostic;
+}
+
+QString sanitizedDiagnostic(const QByteArray& captured, const QStringList& sensitiveTokens) {
+    auto diagnostic = QString::fromLocal8Bit(captured);
+    const auto replacement = QStringLiteral("<private temporary directory>");
+    for (const auto& token : sensitiveTokens) {
+        diagnostic.replace(token, replacement);
+    }
+    return truncateDiagnostic(diagnostic.trimmed());
 }
 
 struct FileIdentity final {
@@ -723,7 +776,14 @@ QpdfResult QpdfOperations::run(
         }
     }
     processArguments << temporaryPath;
-    BoundedProcess process;
+    QStringList sensitiveDiagnosticTokens{
+        stagingDirectory.path(), QDir::toNativeSeparators(stagingDirectory.path())};
+    sensitiveDiagnosticTokens.removeDuplicates();
+    const auto captureLimit = diagnosticCaptureLimit(sensitiveDiagnosticTokens);
+    if (!captureLimit.has_value()) {
+        return {false, QStringLiteral("The private temporary path exceeds the diagnostic safety limit.")};
+    }
+    BoundedProcess process(0, *captureLimit);
     if (!process.isReady()) {
         return {false, QStringLiteral("Could not create bounded qpdf output channels.")};
     }
@@ -762,11 +822,8 @@ QpdfResult QpdfOperations::run(
         return {false, QStringLiteral("The generated output exceeded its size safety limit.")};
     }
     if (process.exitStatus() != QProcess::NormalExit || process.exitCode() != 0) {
-        auto detail = QString::fromLocal8Bit(process.diagnostic()).trimmed();
-        detail.replace(stagingDirectory.path(), QStringLiteral("<private temporary directory>"));
-        detail.replace(
-            QDir::toNativeSeparators(stagingDirectory.path()),
-            QStringLiteral("<private temporary directory>"));
+        const auto detail = sanitizedDiagnostic(
+            process.diagnostic(), sensitiveDiagnosticTokens);
         return {false, detail.isEmpty() ? QStringLiteral("qpdf could not complete the operation.") : detail};
     }
 

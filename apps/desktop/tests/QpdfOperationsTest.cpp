@@ -598,12 +598,14 @@ void QpdfOperationsTest::noisyHelperDiagnosticsAreBoundedAndPrivate() {
     const QByteArray body =
         "#!/bin/sh\n"
         "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
-        "i=0\n"
-        "while [ $i -lt 2000 ]; do\n"
-        "  printf '%s noisy diagnostic\\n' \"$1\" >&2\n"
-        "  printf 'untrusted stdout\\n'\n"
-        "  i=$((i + 1))\n"
-        "done\n"
+        "path_bytes=$(printf %s \"$1\" | wc -c)\n"
+        "used=$((2 * (path_bytes + 1)))\n"
+        "padding=$((8192 - used - path_bytes / 2))\n"
+        "printf '%s\\n%s\\n' \"$1\" \"$1\" >&2\n"
+        "head -c \"$padding\" /dev/zero | tr '\\000' x >&2\n"
+        "printf '%s\\n' \"$1\" >&2\n"
+        "head -c 20000 /dev/zero | tr '\\000' y >&2\n"
+        "printf 'untrusted stdout\\n'\n"
         "exit 1\n";
     QCOMPARE(script.write(body), body.size());
     script.close();
@@ -622,8 +624,30 @@ void QpdfOperationsTest::noisyHelperDiagnosticsAreBoundedAndPrivate() {
 
     QVERIFY(!result.succeeded);
     QVERIFY(result.message.toUtf8().size() <= 8 * 1024);
+    QVERIFY(result.message.contains(QStringLiteral("<private temporary directory>")));
     QVERIFY(!result.message.contains(QStringLiteral(".zenpdf-")));
+    QVERIFY(!result.message.contains(directory.path()));
     QVERIFY(!QFileInfo::exists(output));
+    QVERIFY(stagingDirectories(directory).isEmpty());
+
+    QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Truncate));
+    const QByteArray exactLimitBody =
+        "#!/bin/sh\n"
+        "if [ \"$1\" = --is-encrypted ]; then exit 2; fi\n"
+        "head -c 20000 /dev/zero | tr '\\000' z >&2\n"
+        "exit 1\n";
+    QCOMPARE(script.write(exactLimitBody), exactLimitBody.size());
+    script.close();
+    const auto exactLimitOutput = directory.filePath(QStringLiteral("exact-limit.pdf"));
+    qputenv("PATH", QFile::encodeName(binDirectory) + ':' + originalPath);
+    const auto exactLimitResult = QpdfOperations::extract(
+        source, QStringLiteral("1"), 1, exactLimitOutput, nullptr, QpdfLimits{1024, 5'000});
+    qputenv("PATH", originalPath);
+    QVERIFY(!exactLimitResult.succeeded);
+    QCOMPARE(exactLimitResult.message.toUtf8().size(), 8 * 1024);
+    QCOMPARE(exactLimitResult.message.size(), 8 * 1024);
+    QVERIFY(!exactLimitResult.message.contains(directory.path()));
+    QVERIFY(!QFileInfo::exists(exactLimitOutput));
     QVERIFY(stagingDirectories(directory).isEmpty());
 #endif
 }
