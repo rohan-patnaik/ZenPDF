@@ -7,6 +7,11 @@ Use this file for remaining owner-level tasks before production hardening and op
 
 ## Production-critical
 
+- [ ] Complete the Option 1 storage-orphan dry-run and deliberate enablement review.
+  - Leave `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED` unset through reference backfill and at least one complete sweep cycle.
+  - Review cleanup bounds, backlog age/bytes, candidates, failures, and tombstone behavior before deciding whether to set the flag to `1`.
+  - The implementation is present; production dry-run evidence and deletion enablement are not yet claimed.
+
 - [ ] Configure card checkout provider and set `NEXT_PUBLIC_DONATE_CARD_EMBED_URL`.
   - File: `apps/web/.env.local` and production web env.
   - Requirement: iframe-embeddable checkout URL and provider domain allowlist for local + production origins.

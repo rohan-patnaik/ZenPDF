@@ -14,6 +14,14 @@ This document is the single operational runbook for local runs, deploys, securit
 - Clerk keys and JWT issuer/audience
 - Convex URL (`NEXT_PUBLIC_CONVEX_URL`)
 - `ZENPDF_WORKER_TOKEN`
+- Storage orphan sweep controls (all optional; deletion is off by default):
+  - `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED=1` enables candidate marking and final deletion after dry-run review.
+  - `ZENPDF_STORAGE_SWEEP_GRACE_HOURS` defaults to 72; values below the hard 48-hour minimum are ignored.
+  - `ZENPDF_STORAGE_SWEEP_MAX_INSPECTED` defaults to 50 and is hard-capped at 100 rows per run.
+  - `ZENPDF_STORAGE_SWEEP_MAX_DELETED` defaults to 5 and is hard-capped at 10 objects per run.
+  - `ZENPDF_STORAGE_SWEEP_MAX_BYTES` defaults to 134217728 and is hard-capped at 268435456 bytes per run.
+  - `ZENPDF_STORAGE_SWEEP_MAX_WALL_MS` defaults to 1000 and is hard-capped at 5000 ms per mutation.
+  - `ZENPDF_STORAGE_BACKFILL_MAX_JOBS` defaults to 25 and is hard-capped at 50 jobs per run.
 - Optional donate/feedback env vars as needed
 
 ### Worker (`apps/worker/.env`)
@@ -69,7 +77,7 @@ App URL: `http://localhost:3000`
 - Backend: Convex deployment with matching env values
 - Mount `ZENPDF_UPLOAD_JOURNAL_DIR` on storage that survives worker instance replacement. The Compose stack provides the `worker-upload-recovery` named volume; a production deployment must provide an equivalent durable mount.
 - Treat worker exit code 70 as a forced supervisor/cgroup restart request. It means a tool or upload child remained alive (or its state became uncertain) after bounded TERM and KILL joins. Dedicated restart state immediately unwinds the active workflow and prevents any later claim, failure report, registration, or completion. If an upload storage ID already reached the parent, its `register` intent is fsynced first; the forced-exit drain performs only bounded local journal validation and makes no backend transition. Unresolved and unreadable records remain on the durable volume, then the worker uses immediate exit so Python cannot wait indefinitely for a non-daemon child; the supervisor must terminate the whole container/cgroup before restart.
-- Resolve the remaining unknown-storage-ID release decision in `docs/UPLOAD_ORPHAN_DECISION.md`; the worker journal cannot identify an object when the upload response never reaches the parent process.
+- Complete the dry-run storage-sweep rollout in `docs/UPLOAD_ORPHAN_DECISION.md`. Do not enable deletion until `storageCleanupState.backfillStatus` is `complete`, at least one full sweep cycle has completed, and run metrics have been reviewed.
 
 ### Post-release
 - Run smoke tests: upload -> process -> download across core tools.
@@ -94,6 +102,16 @@ App URL: `http://localhost:3000`
 - Queue time, processing time, total duration
 - Worker retries/concurrency
 - Capacity and budget pressure signals
+- Storage cleanup run mode/status, inspected and eligible rows/bytes, protected and candidate rows/bytes, oldest eligible object age, deleted objects/bytes, sweep cycle/cursor, and reference-backfill status
+
+## Storage orphan sweep rollout
+
+1. Deploy with `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED` unset. The hourly action performs bounded reference backfill first, then dry-run-only `_storage` pages.
+2. Confirm `storageCleanupState.backfillStatus=complete`. A `blocked` state or a run with `status=failed` is fail-closed and must be investigated before proceeding.
+3. Wait for `sweepCycle` to advance, proving a complete pagination cycle. Review `storageCleanupRuns` for backlog age/bytes, candidate counts/bytes, bound compliance, and unexpected protected-object patterns.
+4. Set `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED=1` only after the dry-run evidence is acceptable. Start with the defaults; do not raise bounds during initial rollout.
+5. Monitor deleted counts/bytes and tombstones. A missing object is recorded as a successful zero-byte deletion; a newly referenced object is retained and removed from the candidate queue.
+6. To stop new deletion work, unset the enable flag. If an invocation stopped after candidate marking, its candidate remains fail-closed and blocks late binding; re-enable only after review so the bounded retry path can recheck and drain it.
 
 ### Alerts
 - Failure rate > 5% sustained

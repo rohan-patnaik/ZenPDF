@@ -1,10 +1,12 @@
 # Stored-object orphan decision
 
-## Decision required
+## Decision
 
 The current direct-upload path cannot prove cleanup when storage accepted bytes but the worker never received, IPC-delivered, or journaled the returned storage ID. The same limitation applies when an anonymous browser uploads a file and never creates a job. The durable worker journal closes failures after the ID reaches the parent process; it cannot identify an ID that was never observed.
 
-No change below is implemented. This is the remaining release-gate decision because fully closing the gap requires a backend cleanup policy or a constrained alternate upload path.
+Option 1 was owner-approved on 2026-08-22 and is implemented in this repository. Browser uploads now require server-issued reservations and atomic job consumption. The scheduled `_storage` sweep is deployed in dry-run mode unless an operator explicitly sets `ZENPDF_STORAGE_SWEEP_DELETE_ENABLED=1`; deletion must not be enabled until reference backfill is complete and dry-run metrics have been reviewed.
+
+The remaining release work is operational validation of at least one complete dry-run pagination cycle and the deliberate production enablement decision. This document does not claim that those deployment steps have occurred.
 
 ## Option 1: bounded age-gated `_storage` sweep
 
@@ -49,6 +51,17 @@ Keep the present signed direct-upload paths and rely on the worker journal only 
 
 This has the smallest implementation cost and no destructive sweep risk, but it leaves unbounded retained data and no deletion proof. It is not acceptable for the current release gate.
 
-## Recommendation
+## Implementation and rollout
 
-Approve Option 1 only as a reviewed reservation-plus-sweep design: server-issued expiring tickets, atomic `createJob` consumption, serialized final recheck/delete, post-delete bind rejection, and a dry-run-first bounded cleanup rollout with deletion audit metrics. Option 2 may later reduce load and improve behavior for files up to 20 MB, but it is complementary rather than a complete replacement. Until Option 1 or an equivalent authoritative lifecycle design is approved and implemented, the remaining unknown-ID orphan gap is a release blocker.
+The implementation uses:
+
+- one-time, 15-minute browser reservations bound to the authenticated user or anonymous session;
+- atomic reservation validation, storage validation, job-reference insertion, job creation, and reservation consumption;
+- a bounded legacy job-reference backfill that gates every destructive sweep;
+- a 72-hour default storage age gate with a non-configurable 48-hour minimum;
+- stable `_storage` pagination and per-run row, delete-count, byte, and wall-time caps;
+- a durable candidate record followed by a separate mutation that rechecks job references, artifacts, live pending worker uploads, and live browser reservations before deletion;
+- a retained deletion tombstone that causes later browser binds, job creation, or worker registration to fail;
+- run evidence limited to storage IDs, object age/size, aggregate backlog metrics, cleanup run IDs, and completed check flags.
+
+The focused integration suite covers reservation ownership/expiry/replay and transaction rollback, candidate-versus-bind serialization, post-delete binding rejection, legacy-reference backfill, worker registration/completion protection, pagination boundaries, retry, missing-object success, false-reference negatives, and tombstone evidence. Option 2 remains complementary and is not implemented.

@@ -47,6 +47,9 @@
 - Default: Convex File Storage.
 - Optional: Cloudflare R2 via Convex component.
 - TTL cleanup removes input/output after configured time.
+- Browser uploads use server-issued, identity-bound, expiring reservations. Job creation validates and consumes those reservations while inserting normalized storage references in the same transaction.
+- A scheduled, paginated `_storage` sweep protects job references, artifacts, live pending worker uploads, and live browser reservations. Legacy reference backfill must complete before deletion is possible.
+- Destructive cleanup uses a durable candidate transition and a separate serialized final recheck/delete mutation. Tombstones reject late binding or registration. The scheduled action defaults to dry-run and requires an explicit operator flag for deletion.
 
 ## Capacity & Budget Controls
 - Enforce per-user and global caps server-side.
