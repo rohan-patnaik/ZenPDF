@@ -1,5 +1,6 @@
 #pragma once
 
+#include <QMetaType>
 #include <QString>
 #include <QStringList>
 
@@ -10,6 +11,7 @@ struct QpdfResult final {
     bool succeeded{false};
     QString message;
 };
+Q_DECLARE_METATYPE(QpdfResult)
 
 struct QpdfLimits final {
     qint64 maximumOutputBytes{2LL * 1024 * 1024 * 1024};

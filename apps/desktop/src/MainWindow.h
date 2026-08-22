@@ -1,7 +1,12 @@
 #pragma once
 
+#include "DesktopJobScheduler.h"
+
 #include <QMainWindow>
 #include <QStringList>
+
+#include <atomic>
+#include <functional>
 
 class DocumentWidget;
 class LocalState;
@@ -39,6 +44,10 @@ private:
     void extractPages();
     void deletePages();
     void rotatePages();
+    void setOrganizerActionsEnabled(bool enabled);
+    [[nodiscard]] QpdfResult runOrganizerTask(
+        const QString& title,
+        std::function<QpdfResult(const std::atomic_bool*)> operation);
     void finishOrganizerTask(
         const QString& outputPath,
         const QpdfResult& result,
@@ -48,7 +57,10 @@ private:
     [[nodiscard]] QString chooseOutputPath(const QString& suggestedName) const;
 
     LocalState& localState_;
+    DesktopJobScheduler jobScheduler_;
+    bool organizerJobActive_ = false;
     QUndoGroup* undoGroup_;
     QTabWidget* tabs_;
     QMenu* recentMenu_;
+    QMenu* organizeMenu_;
 };

@@ -7,13 +7,12 @@
 
 #include <QAction>
 #include <QCloseEvent>
-#include <QDialog>
 #include <QDir>
 #include <QDragEnterEvent>
 #include <QDropEvent>
+#include <QEventLoop>
 #include <QFileDialog>
 #include <QFileInfo>
-#include <QFutureWatcher>
 #include <QInputDialog>
 #include <QKeySequence>
 #include <QLabel>
@@ -26,13 +25,11 @@
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
+#include <QTimer>
 #include <QUndoGroup>
 #include <QUrl>
 #include <QVBoxLayout>
-#include <QtConcurrent>
 
-#include <atomic>
-#include <functional>
 #include <utility>
 
 namespace {
@@ -42,28 +39,6 @@ void clearSensitiveString(QString& value) {
     value.fill(QChar{u'\0'});
     value.clear();
     value.squeeze();
-}
-
-QpdfResult runOrganizerTask(
-    QWidget* parent,
-    const QString& title,
-    std::function<QpdfResult(const std::atomic_bool*)> operation) {
-    std::atomic_bool cancelled{false};
-    QFutureWatcher<QpdfResult> watcher;
-    QProgressDialog progress(QObject::tr("Working on a private local copy…"), QObject::tr("Cancel"), 0, 0, parent);
-    progress.setWindowTitle(title);
-    progress.setWindowModality(Qt::WindowModal);
-    progress.setMinimumDuration(0);
-    progress.setAutoClose(false);
-    progress.setAutoReset(false);
-    QObject::connect(&progress, &QProgressDialog::canceled, [&cancelled] { cancelled.store(true); });
-    QObject::connect(&watcher, &QFutureWatcher<QpdfResult>::finished, &progress, &QDialog::accept);
-    watcher.setFuture(QtConcurrent::run([operation = std::move(operation), &cancelled] {
-        return operation(&cancelled);
-    }));
-    progress.exec();
-    watcher.waitForFinished();
-    return watcher.result();
 }
 
 bool hasLocalPdf(const QMimeData* mimeData) {
@@ -81,7 +56,8 @@ MainWindow::MainWindow(LocalState& localState, QWidget* parent)
       localState_(localState),
       undoGroup_(new QUndoGroup(this)),
       tabs_(new QTabWidget(this)),
-      recentMenu_(nullptr) {
+      recentMenu_(nullptr),
+      organizeMenu_(nullptr) {
     setWindowTitle(tr("ZenPDF"));
     setMinimumSize(900, 620);
     setAcceptDrops(true);
@@ -177,17 +153,17 @@ void MainWindow::buildMenus() {
     redoAction->setStatusTip(tr("Redo the next change in the active document"));
     editMenu->addAction(redoAction);
 
-    auto* organizeMenu = menuBar()->addMenu(tr("&Organize"));
-    auto* mergeAction = organizeMenu->addAction(tr("&Merge PDFs into a new file…"));
+    organizeMenu_ = menuBar()->addMenu(tr("&Organize"));
+    auto* mergeAction = organizeMenu_->addAction(tr("&Merge PDFs into a new file…"));
     connect(mergeAction, &QAction::triggered, this, &MainWindow::mergeDocuments);
-    auto* extractAction = organizeMenu->addAction(tr("&Extract pages to a new file…"));
+    auto* extractAction = organizeMenu_->addAction(tr("&Extract pages to a new file…"));
     connect(extractAction, &QAction::triggered, this, &MainWindow::extractPages);
-    auto* deleteAction = organizeMenu->addAction(tr("&Delete selected pages into a new file…"));
+    auto* deleteAction = organizeMenu_->addAction(tr("&Delete selected pages into a new file…"));
     deleteAction->setObjectName(QStringLiteral("deletePagesAction"));
     deleteAction->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
     deleteAction->setStatusTip(tr("Create a new PDF without the selected pages; the open document is unchanged"));
     connect(deleteAction, &QAction::triggered, this, &MainWindow::deletePages);
-    auto* rotateAction = organizeMenu->addAction(tr("&Rotate pages into a new file…"));
+    auto* rotateAction = organizeMenu_->addAction(tr("&Rotate pages into a new file…"));
     connect(rotateAction, &QAction::triggered, this, &MainWindow::rotatePages);
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
@@ -351,7 +327,7 @@ void MainWindow::mergeDocuments() {
     if (output.isEmpty()) {
         return;
     }
-    const auto result = runOrganizerTask(this, tr("Merging PDFs"), [inputs, output](const std::atomic_bool* cancelled) {
+    const auto result = runOrganizerTask(tr("Merging PDFs"), [inputs, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::merge(inputs, output, cancelled);
     });
     finishOrganizerTask(output, result, tr("Merge did not complete"));
@@ -379,7 +355,7 @@ void MainWindow::extractPages() {
     }
     const auto input = document->filePath();
     const int pageCount = document->pageCount();
-    const auto result = runOrganizerTask(this, tr("Extracting pages"), [input, range, pageCount, output](const std::atomic_bool* cancelled) {
+    const auto result = runOrganizerTask(tr("Extracting pages"), [input, range, pageCount, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::extract(input, range, pageCount, output, cancelled);
     });
     finishOrganizerTask(output, result, tr("Extraction did not complete"));
@@ -417,7 +393,6 @@ void MainWindow::deletePages() {
     const auto input = document->filePath();
     const int pageCount = document->pageCount();
     const auto result = runOrganizerTask(
-        this,
         tr("Creating PDF without selected pages"),
         [input, range, pageCount, output](const std::atomic_bool* cancelled) {
             return QpdfOperations::deletePages(input, range, pageCount, output, cancelled);
@@ -453,10 +428,100 @@ void MainWindow::rotatePages() {
     const auto input = document->filePath();
     const int pageCount = document->pageCount();
     const bool clockwise = direction == directions.at(0);
-    const auto result = runOrganizerTask(this, tr("Rotating pages"), [input, range, pageCount, clockwise, output](const std::atomic_bool* cancelled) {
+    const auto result = runOrganizerTask(tr("Rotating pages"), [input, range, pageCount, clockwise, output](const std::atomic_bool* cancelled) {
         return QpdfOperations::rotate(input, range, pageCount, clockwise, output, cancelled);
     });
     finishOrganizerTask(output, result, tr("Rotation did not complete"));
+}
+
+void MainWindow::setOrganizerActionsEnabled(bool enabled) {
+    organizeMenu_->setEnabled(enabled);
+    for (auto* action : organizeMenu_->actions()) {
+        action->setEnabled(enabled);
+    }
+}
+
+QpdfResult MainWindow::runOrganizerTask(
+    const QString& title,
+    std::function<QpdfResult(const std::atomic_bool*)> operation) {
+    if (organizerJobActive_) {
+        return {false, tr("Another organizer job is already running. Cancel it or wait for it to finish.")};
+    }
+    organizerJobActive_ = true;
+    setOrganizerActionsEnabled(false);
+
+    QProgressDialog progress(
+        tr("Working on a private local copy…"), tr("Cancel"), 0, 0, this);
+    progress.setWindowTitle(title);
+    progress.setAccessibleName(tr("Organizer job progress"));
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+    progress.setAutoClose(false);
+    progress.setAutoReset(false);
+
+    QEventLoop completionLoop;
+    QpdfResult result{false, tr("The organizer job ended without a result.")};
+    bool terminal = false;
+    quint64 jobId = 0;
+    connect(
+        &jobScheduler_,
+        &DesktopJobScheduler::jobFinished,
+        &progress,
+        [&](quint64 completedId,
+            DesktopJobScheduler::Completion completion,
+            const QVariant& value,
+            const QString& message) {
+            if (completedId != jobId) {
+                return;
+            }
+            if (completion == DesktopJobScheduler::Completion::Succeeded
+                && value.canConvert<QpdfResult>()) {
+                result = value.value<QpdfResult>();
+            } else if (completion == DesktopJobScheduler::Completion::Cancelled) {
+                result = {false, tr("The organizer job was cancelled.")};
+            } else {
+                result = {false,
+                          message.isEmpty() ? tr("The organizer job failed.") : message};
+            }
+            terminal = true;
+            progress.accept();
+            completionLoop.quit();
+        });
+
+    const auto submission = jobScheduler_.submit(
+        [operation = std::move(operation)](const std::atomic_bool& cancelled) {
+            return QVariant::fromValue(operation(&cancelled));
+        });
+    if (!submission.accepted) {
+        organizerJobActive_ = false;
+        setOrganizerActionsEnabled(true);
+        return {false, submission.message};
+    }
+    jobId = submission.id;
+    connect(&progress, &QProgressDialog::canceled, &progress, [&] {
+        if (!terminal) {
+            (void)jobScheduler_.cancel(jobId);
+            QTimer::singleShot(0, &progress, [&] {
+                if (!terminal) {
+                    progress.setLabelText(tr("Cancelling the local organizer job…"));
+                    progress.setCancelButton(nullptr);
+                    progress.show();
+                }
+            });
+        }
+    });
+
+    progress.show();
+    if (!terminal) {
+        completionLoop.exec();
+    }
+    if (!terminal) {
+        (void)jobScheduler_.cancel(jobId);
+        result = {false, tr("The organizer job was cancelled during shutdown.")};
+    }
+    organizerJobActive_ = false;
+    setOrganizerActionsEnabled(true);
+    return result;
 }
 
 void MainWindow::finishOrganizerTask(

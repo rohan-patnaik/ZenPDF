@@ -11,7 +11,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTOUIC ON)
 
-find_package(Qt6 6.4 REQUIRED COMPONENTS Concurrent Core Pdf PdfWidgets PrintSupport Sql Widgets)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Pdf PdfWidgets PrintSupport Sql Widgets)
 
 add_library(zenpdf_core STATIC
     src/DesktopJobScheduler.cpp
@@ -43,7 +43,6 @@ add_executable(zenpdf
 )
 target_link_libraries(zenpdf PRIVATE
     zenpdf_core
-    Qt6::Concurrent
     Qt6::Pdf
     Qt6::PdfWidgets
     Qt6::PrintSupport
@@ -108,7 +107,6 @@ if(BUILD_TESTING)
     )
     target_link_libraries(zenpdf_main_window_tests PRIVATE
         zenpdf_core
-        Qt6::Concurrent
         Qt6::Pdf
         Qt6::PdfWidgets
         Qt6::PrintSupport

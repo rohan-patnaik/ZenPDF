@@ -11,16 +11,23 @@
 #include <QCloseEvent>
 #include <QFile>
 #include <QMessageBox>
+#include <QMenu>
 #include <QPainter>
 #include <QPdfWriter>
+#include <QProgressDialog>
+#include <QPushButton>
+#include <QSemaphore>
 #include <QTabWidget>
 #include <QTemporaryDir>
+#include <QThread>
 #include <QTimer>
 #include <QUndoCommand>
 #include <QtTest>
 
 #include <memory>
+#include <optional>
 #include <utility>
+#include <vector>
 
 class MainWindowTest final : public QObject {
     Q_OBJECT
@@ -32,7 +39,11 @@ private slots:
     void routesObsoleteCommandAccountingThroughActions();
     void dirtyTabRequiresExplicitDiscard();
     void dirtyWindowRequiresExplicitDiscard();
-    void successfulOrganizerOutputOpensAsCleanTab();
+    void organizerRunsThroughSchedulerAndOpensCleanTab();
+    void organizerCancellationUsesSchedulerToken();
+    void organizerRejectsReentrantRun();
+    void organizerAdmissionFailureIsActionable();
+    void organizerSchedulerJoinsOnWindowDestruction();
 };
 
 namespace {
@@ -280,7 +291,7 @@ void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
     QVERIFY(discardEvent.isAccepted());
 }
 
-void MainWindowTest::successfulOrganizerOutputOpensAsCleanTab() {
+void MainWindowTest::organizerRunsThroughSchedulerAndOpensCleanTab() {
     QTemporaryDir directory;
     QVERIFY(directory.isValid());
     const auto source = directory.filePath(QStringLiteral("source.pdf"));
@@ -302,10 +313,24 @@ void MainWindowTest::successfulOrganizerOutputOpensAsCleanTab() {
     QVERIFY(!sourceDocument->isWindowModified());
     QVERIFY(!window.tabs_->tabText(0).contains('*'));
 
-    window.finishOrganizerTask(
-        output,
-        QpdfResult{true, QStringLiteral("Saved output")},
-        QStringLiteral("Operation failed"));
+    QSignalSpy finished(&window.jobScheduler_, &DesktopJobScheduler::jobFinished);
+    std::atomic_bool receivedCancellationToken{false};
+    const auto result = window.runOrganizerTask(
+        QStringLiteral("Testing organizer scheduler"),
+        [&](const std::atomic_bool* cancelled) {
+            receivedCancellationToken.store(cancelled != nullptr);
+            return QpdfResult{true, QStringLiteral("Saved output")};
+        });
+    QVERIFY(result.succeeded);
+    QVERIFY(receivedCancellationToken.load());
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(qvariant_cast<DesktopJobScheduler::Completion>(finished.at(0).at(1)),
+             DesktopJobScheduler::Completion::Succeeded);
+    QVERIFY(window.organizeMenu_->isEnabled());
+    QCOMPARE(window.jobScheduler_.runningJobCount(), 0);
+    QCOMPARE(window.jobScheduler_.queuedJobCount(), 0);
+
+    window.finishOrganizerTask(output, result, QStringLiteral("Operation failed"));
 
     QCOMPARE(window.tabs_->count(), 2);
     QCOMPARE(window.currentDocument()->filePath(), output);
@@ -315,6 +340,153 @@ void MainWindowTest::successfulOrganizerOutputOpensAsCleanTab() {
     QVERIFY(!window.tabs_->tabText(1).contains('*'));
     QVERIFY(sourceFile.open(QIODevice::ReadOnly));
     QCOMPARE(sourceFile.readAll(), sourceBytes);
+}
+
+void MainWindowTest::organizerCancellationUsesSchedulerToken() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    QSignalSpy finished(&window.jobScheduler_, &DesktopJobScheduler::jobFinished);
+    std::atomic_bool observedCancellation{false};
+    bool clickedCancel = false;
+
+    QTimer::singleShot(0, [&] {
+        auto* progress = window.findChild<QProgressDialog*>();
+        QVERIFY(progress != nullptr);
+        for (auto* button : progress->findChildren<QPushButton*>()) {
+            if (button->text().contains(QStringLiteral("Cancel"))) {
+                clickedCancel = true;
+                button->click();
+                return;
+            }
+        }
+    });
+    const auto result = window.runOrganizerTask(
+        QStringLiteral("Cancelable organizer job"),
+        [&](const std::atomic_bool* cancelled) {
+            while (!cancelled->load()) {
+                QThread::msleep(1);
+            }
+            observedCancellation.store(true);
+            return QpdfResult{true, QStringLiteral("stale successful payload")};
+        });
+
+    QVERIFY(clickedCancel);
+    QVERIFY(observedCancellation.load());
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("cancelled"), Qt::CaseInsensitive));
+    QVERIFY(!result.message.contains(QStringLiteral("stale")));
+    QCOMPARE(finished.count(), 1);
+    QCOMPARE(qvariant_cast<DesktopJobScheduler::Completion>(finished.at(0).at(1)),
+             DesktopJobScheduler::Completion::Cancelled);
+    QVERIFY(!finished.at(0).at(2).isValid());
+    QVERIFY(window.organizeMenu_->isEnabled());
+}
+
+void MainWindowTest::organizerRejectsReentrantRun() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    QSemaphore releaseOuter;
+    std::optional<QpdfResult> nestedResult;
+    std::atomic_bool nestedRan{false};
+    bool menuDisabled = false;
+
+    QTimer::singleShot(0, [&] {
+        menuDisabled = !window.organizeMenu_->isEnabled();
+        for (const auto* action : window.organizeMenu_->actions()) {
+            menuDisabled = menuDisabled && !action->isEnabled();
+        }
+        nestedResult = window.runOrganizerTask(
+            QStringLiteral("Nested organizer job"),
+            [&](const std::atomic_bool*) {
+                nestedRan.store(true);
+                return QpdfResult{true, QStringLiteral("must not run")};
+            });
+        releaseOuter.release();
+    });
+    const auto outerResult = window.runOrganizerTask(
+        QStringLiteral("Outer organizer job"),
+        [&](const std::atomic_bool*) {
+            releaseOuter.acquire();
+            return QpdfResult{true, QStringLiteral("outer complete")};
+        });
+
+    QVERIFY(outerResult.succeeded);
+    QVERIFY(menuDisabled);
+    QVERIFY(nestedResult.has_value());
+    QVERIFY(!nestedResult->succeeded);
+    QVERIFY(nestedResult->message.contains(QStringLiteral("already running")));
+    QVERIFY(!nestedRan.load());
+    QVERIFY(window.organizeMenu_->isEnabled());
+}
+
+void MainWindowTest::organizerAdmissionFailureIsActionable() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    MainWindow window(state);
+    std::vector<quint64> admittedIds;
+    std::atomic_bool rejectedTaskRan{false};
+    const auto maximumOutstanding = window.jobScheduler_.maximumRunningJobs()
+        + window.jobScheduler_.maximumQueuedJobs();
+
+    for (auto index = 0; index < maximumOutstanding; ++index) {
+        const auto submission = window.jobScheduler_.submit(
+            [](const std::atomic_bool& cancelled) {
+                while (!cancelled.load()) {
+                    QThread::msleep(1);
+                }
+                return QVariant{};
+            });
+        QVERIFY(submission.accepted);
+        admittedIds.push_back(submission.id);
+    }
+    const auto result = window.runOrganizerTask(
+        QStringLiteral("Rejected organizer job"),
+        [&](const std::atomic_bool*) {
+            rejectedTaskRan.store(true);
+            return QpdfResult{true, QStringLiteral("must not run")};
+        });
+    QVERIFY(!result.succeeded);
+    QVERIFY(result.message.contains(QStringLiteral("capacity"), Qt::CaseInsensitive));
+    QVERIFY(!rejectedTaskRan.load());
+    QVERIFY(window.organizeMenu_->isEnabled());
+
+    for (const auto id : admittedIds) {
+        QVERIFY(window.jobScheduler_.cancel(id));
+    }
+    QTRY_COMPARE_WITH_TIMEOUT(window.jobScheduler_.runningJobCount(), 0, 2'000);
+    QCOMPARE(window.jobScheduler_.queuedJobCount(), 0);
+    QCOMPARE(window.jobScheduler_.pendingCompletionCount(), 0);
+}
+
+void MainWindowTest::organizerSchedulerJoinsOnWindowDestruction() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    QSemaphore started;
+    std::atomic_bool observedCancellation{false};
+
+    {
+        auto window = std::make_unique<MainWindow>(state);
+        QVERIFY(window->jobScheduler_.submit([&](const std::atomic_bool& cancelled) {
+            started.release();
+            while (!cancelled.load()) {
+                QThread::msleep(1);
+            }
+            observedCancellation.store(true);
+            return QVariant{};
+        }).accepted);
+        QVERIFY(started.tryAcquire(1, 1'000));
+    }
+    QVERIFY(observedCancellation.load());
 }
 
 QTEST_MAIN(MainWindowTest)
