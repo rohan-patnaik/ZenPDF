@@ -240,6 +240,14 @@ def _stable_exception_code(error: BaseException, default: str) -> str:
     return default
 
 
+def _log_stable(message: str) -> None:
+    """Emit a pre-sanitized boundary message without blocking forced exit."""
+    try:
+        print(message)
+    except BaseException:  # noqa: BLE001 - logging must not strand live children
+        pass
+
+
 def _positive_env_int(name: str, default: int) -> int:
     """Read a positive integer runtime limit with a safe default."""
     try:
@@ -347,25 +355,23 @@ class ZenPdfWorker:
         self.upload_journal = UploadJournal(journal_root)
         self._shutdown_requested = threading.Event()
         self._stubborn_upload_processes: List[multiprocessing.Process] = []
+        self._stubborn_tool_processes: List[multiprocessing.Process] = []
         self._supervisor_force_exit_required = False
 
     def run(self) -> None:
         """Run the worker polling loop."""
         poll_interval = float(os.environ.get("ZENPDF_POLL_INTERVAL", "5"))
         self.upload_journal.ensure_ready()
-        try:
-            while not self._shutdown_requested.is_set():
-                self._recover_pending_uploads()
-                job = self._mutation(
-                    "jobs:claimNextJob",
-                    {"workerId": self.worker_id, "workerToken": self.worker_token},
-                )
-                if not job:
-                    self._shutdown_requested.wait(max(poll_interval, 0.0))
-                    continue
-                self._process_job(job)
-        finally:
-            self._drain_upload_recovery()
+        while not self._shutdown_requested.is_set():
+            self._recover_pending_uploads()
+            job = self._mutation(
+                "jobs:claimNextJob",
+                {"workerId": self.worker_id, "workerToken": self.worker_token},
+            )
+            if not job:
+                self._shutdown_requested.wait(max(poll_interval, 0.0))
+                continue
+            self._process_job(job)
 
     def request_shutdown(self) -> None:
         """Stop claiming work; durable upload recovery is drained before return."""
@@ -643,27 +649,74 @@ class ZenPdfWorker:
                 raise RuntimeError(error_code)
             raise RuntimeError("Tool process returned an invalid result")
         finally:
-            receiver.close()
-            if process.is_alive():
-                self._terminate_tool_process(process)
-            process.close()
-
-    @staticmethod
-    def _terminate_tool_process(process: multiprocessing.Process) -> None:
-        """Terminate a tool process and its descendants, escalating if required."""
-        if process.pid is None:
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            process.terminate()
-        process.join(timeout=2)
-        if process.is_alive():
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                process.kill()
-            process.join(timeout=2)
+                receiver.close()
+            finally:
+                stopped = (
+                    False
+                    if process in self._stubborn_tool_processes
+                    else self._terminate_tool_process(process)
+                )
+                if stopped:
+                    process.close()
+
+    def _terminate_tool_process(self, process: multiprocessing.Process) -> bool:
+        """Bound tool TERM/KILL joins and retain a stubborn live handle."""
+        join_seconds = min(
+            _positive_env_int("ZENPDF_TOOL_PROCESS_JOIN_SECONDS", 2), 5
+        )
+        return self._terminate_process_group(
+            process, join_seconds, self._stubborn_tool_processes
+        )
+
+    def _terminate_process_group(
+        self,
+        process: multiprocessing.Process,
+        join_seconds: int,
+        stubborn_processes: List[multiprocessing.Process],
+    ) -> bool:
+        """Terminate a child group without leaking exceptions or live handles."""
+
+        def retain_for_supervisor() -> bool:
+            if process not in stubborn_processes:
+                stubborn_processes.append(process)
+            self._supervisor_force_exit_required = True
+            return False
+
+        try:
+            pid = process.pid
+            alive = process.is_alive()
+        except BaseException:  # noqa: BLE001 - process errors may contain secrets
+            return retain_for_supervisor()
+        if not alive:
+            try:
+                process.join(timeout=0)
+            except BaseException:  # noqa: BLE001 - retain on uncertain child state
+                return retain_for_supervisor()
+            return True
+        if pid is None:
+            return retain_for_supervisor()
+
+        stages = (
+            (signal.SIGTERM, process.terminate),
+            (signal.SIGKILL, process.kill),
+        )
+        for child_signal, fallback in stages:
+            try:
+                os.killpg(pid, child_signal)
+            except BaseException:  # noqa: BLE001 - fallback is still bounded
+                try:
+                    fallback()
+                except BaseException:  # noqa: BLE001 - force cgroup exit below
+                    pass
+            try:
+                process.join(timeout=join_seconds)
+                alive = process.is_alive()
+            except BaseException:  # noqa: BLE001 - child state is now uncertain
+                return retain_for_supervisor()
+            if not alive:
+                return True
+        return retain_for_supervisor()
 
     @staticmethod
     def _run_tool(
@@ -1054,14 +1107,16 @@ class ZenPdfWorker:
                 self._stop_upload_process(process)
                 raise RuntimeError("Output upload exceeded its hard total deadline")
         finally:
-            receiver.close()
-            if process.is_alive():
-                if process not in self._stubborn_upload_processes:
-                    self._stop_upload_process(process)
-            else:
-                process.join()
-            if not process.is_alive():
-                process.close()
+            try:
+                receiver.close()
+            finally:
+                stopped = (
+                    False
+                    if process in self._stubborn_upload_processes
+                    else self._stop_upload_process(process)
+                )
+                if stopped:
+                    process.close()
         if outcome[0] != "ok":
             error_code = outcome[1] if len(outcome) > 1 else "UPLOAD_FAILED"
             if not isinstance(error_code, str) or not error_code.startswith("UPLOAD_"):
@@ -1087,31 +1142,12 @@ class ZenPdfWorker:
 
     def _stop_upload_process(self, process: multiprocessing.Process) -> bool:
         """Bound both joins; ask the supervisor to kill an uninterruptible group."""
-        if process.pid is None:
-            return True
-        if not process.is_alive():
-            process.join()
-            return True
         join_seconds = min(
             _positive_env_int("ZENPDF_UPLOAD_PROCESS_JOIN_SECONDS", 1), 5
         )
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-        except (ProcessLookupError, PermissionError):
-            process.terminate()
-        process.join(timeout=join_seconds)
-        if process.is_alive():
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                process.kill()
-            process.join(timeout=join_seconds)
-        if process.is_alive():
-            if process not in self._stubborn_upload_processes:
-                self._stubborn_upload_processes.append(process)
-            self._supervisor_force_exit_required = True
-            return False
-        return True
+        return self._terminate_process_group(
+            process, join_seconds, self._stubborn_upload_processes
+        )
 
     def _discard_pending_upload(
         self, pending_id: str, storage_id: str | None = None
@@ -1283,7 +1319,7 @@ class ZenPdfWorker:
             and operations < max_operations
             and time.monotonic() < deadline
         ):
-            outcome: Dict[str, int] = {}
+            outcome: Dict[str, Any] = {}
             finished = threading.Event()
 
             def recover_batch() -> None:
@@ -1294,6 +1330,10 @@ class ZenPdfWorker:
                             self.upload_journal.batch_size,
                         )
                     )
+                except BaseException as error:  # noqa: BLE001 - sanitize thread exit
+                    outcome["errorCode"] = _stable_exception_code(
+                        error, "UPLOAD_DRAIN_FAILED"
+                    )
                 finally:
                     finished.set()
 
@@ -1302,6 +1342,9 @@ class ZenPdfWorker:
             finished.wait(max(deadline - time.monotonic(), 0.0))
             if not finished.is_set():
                 return
+            error_code = outcome.get("errorCode")
+            if isinstance(error_code, str):
+                raise RuntimeError(error_code) from None
             attempted = outcome.get("attempted", 0)
             operations += attempted
             if attempted == 0:
@@ -1318,26 +1361,57 @@ class ZenPdfWorker:
             return self.client.query(path, args)
 
 
+def _run_supervised(
+    worker: ZenPdfWorker, force_exit: Callable[[int], None] = os._exit
+) -> None:
+    """Sanitize the top boundary, always drain, then honor forced cgroup exit."""
+    failed = False
+    forced_exit_requested = False
+    try:
+        worker.run()
+    except BaseException as error:  # noqa: BLE001 - final process boundary
+        failed = True
+        error_code = _stable_exception_code(error, "WORKER_RUN_FAILED")
+        _log_stable(f"Worker run stopped ({error_code})")
+    finally:
+        try:
+            worker._drain_upload_recovery()
+        except BaseException as error:  # noqa: BLE001 - forced exit must still run
+            failed = True
+            error_code = _stable_exception_code(error, "UPLOAD_DRAIN_FAILED")
+            _log_stable(f"Worker recovery drain stopped ({error_code})")
+        if worker._supervisor_force_exit_required:
+            forced_exit_requested = True
+            _log_stable("Worker supervisor termination required (CHILD_PROCESS_STUCK)")
+            force_exit(70)
+    if forced_exit_requested:
+        return
+    if failed:
+        raise SystemExit(1) from None
+
+
 def main() -> None:
     """Entrypoint for the worker process."""
-    convex_url = os.environ.get("ZENPDF_CONVEX_URL")
-    if not convex_url:
-        raise RuntimeError("ZENPDF_CONVEX_URL is required")
-    worker_id = os.environ.get("ZENPDF_WORKER_ID", "worker-local")
-    worker_token = os.environ.get("ZENPDF_WORKER_TOKEN")
-    if not worker_token:
-        raise RuntimeError("ZENPDF_WORKER_TOKEN is required")
-    worker = ZenPdfWorker(convex_url, worker_id, worker_token)
+    try:
+        convex_url = os.environ.get("ZENPDF_CONVEX_URL")
+        if not convex_url:
+            raise RuntimeError("ZENPDF_CONVEX_URL is required")
+        worker_id = os.environ.get("ZENPDF_WORKER_ID", "worker-local")
+        worker_token = os.environ.get("ZENPDF_WORKER_TOKEN")
+        if not worker_token:
+            raise RuntimeError("ZENPDF_WORKER_TOKEN is required")
+        worker = ZenPdfWorker(convex_url, worker_id, worker_token)
 
-    def request_shutdown(_signum: int, _frame: Any) -> None:
-        worker.request_shutdown()
+        def request_shutdown(_signum: int, _frame: Any) -> None:
+            worker.request_shutdown()
 
-    signal.signal(signal.SIGTERM, request_shutdown)
-    signal.signal(signal.SIGINT, request_shutdown)
-    worker.run()
-    if worker._supervisor_force_exit_required:
-        print("Worker supervisor termination required (UPLOAD_CHILD_STUCK)")
-        os._exit(70)
+        signal.signal(signal.SIGTERM, request_shutdown)
+        signal.signal(signal.SIGINT, request_shutdown)
+    except BaseException as error:  # noqa: BLE001 - sanitized startup boundary
+        error_code = _stable_exception_code(error, "WORKER_STARTUP_FAILED")
+        _log_stable(f"Worker startup stopped ({error_code})")
+        raise SystemExit(1) from None
+    _run_supervised(worker)
 
 
 if __name__ == "__main__":

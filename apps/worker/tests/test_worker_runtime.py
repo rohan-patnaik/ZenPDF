@@ -4,6 +4,7 @@ import os
 import subprocess
 import threading
 import time
+import traceback
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ from zenpdf_worker.worker import (
     ToolRunResult,
     WorkerShutdown,
     ZenPdfWorker,
+    _run_supervised,
     _tool_process_entry,
+    main,
 )
 
 
@@ -436,6 +439,239 @@ def test_stubborn_upload_process_forces_bounded_supervisor_return(
     assert worker._supervisor_force_exit_required
     assert worker._stubborn_upload_processes == [process]
     assert worker.upload_journal.load("pending-1") is not None
+
+
+def test_stubborn_tool_process_sets_shared_forced_exit_without_close(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class StubbornToolProcess:
+        pid = 424243
+
+        def __init__(self) -> None:
+            self.joins: list[int | None] = []
+            self.terminated = False
+            self.killed = False
+            self.closed = False
+
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+        def join(self, timeout: int | None = None) -> None:
+            self.joins.append(timeout)
+
+        def terminate(self) -> None:
+            self.terminated = True
+
+        def kill(self) -> None:
+            self.killed = True
+
+        def close(self) -> None:
+            self.closed = True
+
+    monkeypatch.setenv("ZENPDF_TOOL_PROCESS_JOIN_SECONDS", "1")
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.os.killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    worker = ZenPdfWorker("https://example.invalid", "worker-a", "token")
+    process = StubbornToolProcess()
+
+    stopped = worker._terminate_tool_process(process)  # type: ignore[arg-type]
+
+    assert not stopped
+    assert process.terminated
+    assert process.killed
+    assert process.joins == [1, 1]
+    assert not process.closed
+    assert worker._stubborn_tool_processes == [process]
+    assert worker._supervisor_force_exit_required
+
+    monkeypatch.setattr(worker, "run", lambda: None)
+    monkeypatch.setattr(worker, "_drain_upload_recovery", lambda: None)
+    exits: list[int] = []
+    _run_supervised(worker, exits.append)
+    assert exits == [70]
+    assert not process.closed
+
+
+def test_supervisor_sanitizes_uncaught_run_and_drain_then_forces_exit(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    hostile = (
+        "poll decode report cleanup https://signed.invalid?token=secret "
+        "/private/path filename.pdf content-marker"
+    )
+
+    class HostileSupervisorWorker:
+        _supervisor_force_exit_required = True
+
+        @staticmethod
+        def run() -> None:
+            raise RuntimeError(hostile)
+
+        @staticmethod
+        def _drain_upload_recovery() -> None:
+            raise RuntimeError(hostile)
+
+    exits: list[int] = []
+    _run_supervised(  # type: ignore[arg-type]
+        HostileSupervisorWorker(), exits.append
+    )
+
+    captured = capsys.readouterr()
+    observable = f"{captured.out}\n{captured.err}"
+    assert hostile not in observable
+    assert "content-marker" not in observable
+    assert "WORKER_RUN_FAILED" in observable
+    assert "UPLOAD_DRAIN_FAILED" in observable
+    assert "CHILD_PROCESS_STUCK" in observable
+    assert exits == [70]
+
+
+def test_supervisor_forces_exit_when_stable_log_sink_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    hostile = "signed-url token /private/path filename.pdf content-marker"
+
+    class StubbornWorker:
+        _supervisor_force_exit_required = True
+
+        @staticmethod
+        def run() -> None:
+            raise RuntimeError(hostile)
+
+        @staticmethod
+        def _drain_upload_recovery() -> None:
+            raise RuntimeError(hostile)
+
+    monkeypatch.setattr(
+        "builtins.print",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError(hostile)),
+    )
+    exits: list[int] = []
+
+    _run_supervised(StubbornWorker(), exits.append)  # type: ignore[arg-type]
+
+    assert exits == [70]
+
+
+def test_supervisor_failure_exit_has_no_hostile_cause_or_traceback(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    hostile = (
+        "poll decode report cleanup https://signed.invalid?token=secret "
+        "/private/path filename.pdf content-marker"
+    )
+
+    class HostileSupervisorWorker:
+        _supervisor_force_exit_required = False
+
+        @staticmethod
+        def run() -> None:
+            raise RuntimeError(hostile)
+
+        @staticmethod
+        def _drain_upload_recovery() -> None:
+            raise RuntimeError(hostile)
+
+    with pytest.raises(SystemExit) as captured_error:
+        _run_supervised(HostileSupervisorWorker())  # type: ignore[arg-type]
+
+    assert captured_error.value.code == 1
+    assert captured_error.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(captured_error.value),
+            captured_error.value,
+            captured_error.value.__traceback__,
+        )
+    )
+    captured = capsys.readouterr()
+    observable = f"{formatted}\n{captured.out}\n{captured.err}"
+    assert hostile not in observable
+    assert "content-marker" not in observable
+    assert "WORKER_RUN_FAILED" in observable
+    assert "UPLOAD_DRAIN_FAILED" in observable
+
+
+def test_main_startup_boundary_suppresses_hostile_constructor_traceback(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = (
+        "https://signed.invalid?token=secret password /private/path "
+        "filename.pdf content-marker"
+    )
+    monkeypatch.setenv("ZENPDF_CONVEX_URL", "https://example.invalid")
+    monkeypatch.setenv("ZENPDF_WORKER_TOKEN", "worker-token")
+
+    def fail_constructor(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError(hostile)
+
+    monkeypatch.setattr("zenpdf_worker.worker.ZenPdfWorker", fail_constructor)
+    with pytest.raises(SystemExit) as captured_error:
+        main()
+
+    assert captured_error.value.code == 1
+    assert captured_error.value.__cause__ is None
+    formatted = "".join(
+        traceback.format_exception(
+            type(captured_error.value),
+            captured_error.value,
+            captured_error.value.__traceback__,
+        )
+    )
+    captured = capsys.readouterr()
+    observable = f"{formatted}\n{captured.out}\n{captured.err}"
+    assert hostile not in observable
+    assert "content-marker" not in observable
+    assert "WORKER_STARTUP_FAILED" in observable
+
+
+def test_stubborn_upload_and_unreadable_journal_still_exit_70(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    hostile = "signed-url token /private/path content-marker"
+
+    class StubbornProcess:
+        pid = 424244
+
+        @staticmethod
+        def is_alive() -> bool:
+            return True
+
+        @staticmethod
+        def join(timeout: int | None = None) -> None:
+            return None
+
+        @staticmethod
+        def terminate() -> None:
+            return None
+
+        @staticmethod
+        def kill() -> None:
+            return None
+
+    monkeypatch.setattr(
+        "zenpdf_worker.worker.os.killpg",
+        lambda *_args: (_ for _ in ()).throw(ProcessLookupError()),
+    )
+    worker = _UploadWorker()
+    worker.upload_journal.ensure_ready()
+    unreadable = worker.upload_journal.root / f"{'0' * 64}.json"
+    unreadable.write_text(hostile, encoding="utf-8")
+    unreadable.chmod(0o600)
+    worker._stop_upload_process(StubbornProcess())  # type: ignore[arg-type]
+    monkeypatch.setattr(worker, "run", lambda: None)
+    exits: list[int] = []
+
+    _run_supervised(worker, exits.append)
+
+    captured = capsys.readouterr()
+    assert hostile not in captured.out
+    assert "UPLOAD_DRAIN_FAILED" in captured.out
+    assert exits == [70]
+    assert unreadable.exists()
 
 
 def test_registration_and_cleanup_transport_failures_recover_from_journal(
