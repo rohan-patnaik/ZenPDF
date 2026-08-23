@@ -7,7 +7,14 @@
 #include <QMessageBox>
 #include <QStandardPaths>
 
+#ifdef Q_OS_UNIX
+#include <sys/stat.h>
+#endif
+
 int main(int argc, char* argv[]) {
+#ifdef Q_OS_UNIX
+    ::umask(S_IRWXG | S_IRWXO);
+#endif
     QApplication application(argc, argv);
     QCoreApplication::setOrganizationName(QStringLiteral("ZenPDF"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.rohan-patnaik"));
@@ -16,11 +23,15 @@ int main(int argc, char* argv[]) {
     QApplication::setDesktopFileName(QStringLiteral("io.github.rohan-patnaik.zenpdf"));
 
     const auto stateDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+    QString stateError;
+    if (!LocalState::preparePrivateApplicationDirectory(stateDirectory, &stateError)) {
+        QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
+        return 1;
+    }
     Logging::install(QDir(stateDirectory).filePath(QStringLiteral("logs")));
     qInfo("Starting ZenPDF Desktop");
 
     LocalState localState(QDir(stateDirectory).filePath(QStringLiteral("state.sqlite3")));
-    QString stateError;
     if (!localState.initialize(&stateError)) {
         QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
         Logging::shutdown();

@@ -16,7 +16,9 @@ Install into a staging root with `DESTDIR=/tmp/zenpdf-package cmake --install bu
 
 ## Local data
 
-Qt selects the platform data directory (normally `~/.local/share/ZenPDF/ZenPDF`). ZenPDF stores a small SQLite state database and bounded diagnostic logs there. Document bytes remain in paths selected by the user. Recent-file history can be cleared locally; no account or network connection is required.
+Qt selects the platform data directory (normally `~/.local/share/ZenPDF/ZenPDF`). On Unix, every native entry path sets umask 077 before Qt starts and requires this application-data leaf to be an owner-owned ordinary 0700 directory before logs or SQLite state are created. Existing database, WAL, and shared-memory files must be owner-owned, single-link regular 0600 files before SQLite opens. ZenPDF safely tightens owner-owned 0755/0644 state that was never group/other-writable; unsafe modes, aliases, types, links, or ownership fail startup closed with a bounded path-free error. This applies equally to direct `zenpdf`, desktop/MIME, and `zenpdf-launch` starts rather than relying on launcher behavior.
+
+The database holds recent paths and timestamps, while bounded diagnostic logs stay under the same private application leaf. Document bytes remain in user-selected paths. Recent-file history can be cleared locally; no account or network connection is required. The automated source tests and remaining installed-package forensic checks are described in `docs/LOCAL_STATE_WAYLAND_ACCEPTANCE.md`.
 
 ## Current reader and organizer scope
 

@@ -37,6 +37,12 @@ These controls do not isolate PDF parsing or rendering. The render call is synch
 
 The local state database contains recent paths, timestamps, preferences, index metadata, recovery metadata, and future audit entries. Logs contain application events and error categories; document bytes, extracted text, form values, passwords, cryptographic keys, and full user paths must not be logged by default. Users must be able to clear recent history and derived indexes without touching their documents.
 
+On Unix, the process sets umask 077 before constructing `QApplication`. Before diagnostics or SQLite can create sensitive data, ZenPDF opens the application-data leaf without following symlinks, validates the opened descriptor as an effective-user-owned ordinary directory, and requires effective mode 0700. Before SQLite opens, the database and any existing WAL/SHM sidecars are opened without following symlinks and validated through the same descriptor as owner-owned, single-link regular files at mode 0600. Owner-owned 0755 directories and 0644 files may be tightened only when they were never group/other-writable and have no special mode bits. The repaired descriptor is revalidated before use.
+
+Symlinks, wrong-owner objects, wrong types, multi-link files, special modes, group/other-writable state, and unverifiable repairs fail startup closed. Errors are product-owned, path-free, driver-free, and limited to 256 characters. Initialization failure also closes and removes the Qt SQL connection so a clean retry cannot inherit a stale handle. These controls preserve the existing 50-entry history bound, path normalization and deduplication, SQLite secure deletion, WAL truncation, `VACUUM`, and purge-sentinel contract.
+
+The secured 0700 leaf excludes replacement by a different unprivileged local user. It does not defend against the same effective UID, privileged processes, a hostile kernel or filesystem, or paths disclosed before repair. Existing diagnostic-log child handling is inside the secured leaf but retains a same-UID child-path indirection residual; this slice does not claim a no-alias guarantee for every log or rotation path. Non-Unix behavior is unchanged.
+
 ## Save and crash recovery design
 
 Document changes use a command journal with deterministic undo/redo records. Autosave metadata references the source identity and a private working copy; it never modifies the source. Each save follows this sequence:

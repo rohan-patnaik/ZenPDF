@@ -19,6 +19,9 @@ public:
     LocalState(LocalState&&) = delete;
     LocalState& operator=(LocalState&&) = delete;
 
+    [[nodiscard]] static bool preparePrivateApplicationDirectory(
+        const QString& directoryPath,
+        QString* errorMessage = nullptr);
     [[nodiscard]] bool initialize(QString* errorMessage = nullptr);
     [[nodiscard]] bool recordRecentFile(const QString& path, QString* errorMessage = nullptr);
     [[nodiscard]] QList<RecentFile> recentFiles(int limit = 10, QString* errorMessage = nullptr) const;
@@ -27,6 +30,7 @@ public:
 private:
     [[nodiscard]] QString normalizedPath(const QString& path) const;
     [[nodiscard]] bool reportDatabaseError(const QString& context, QString* errorMessage) const;
+    void closeAndRemoveConnection();
 
     QString databasePath_;
     QString connectionName_;
