@@ -55,8 +55,8 @@ expect_results 3 3000 unicode-search-independent.pdf quokka
 expect_results 1 3000 unicode-search-independent.pdf café
 expect_results 1 3000 unicode-search-independent.pdf Привет
 expect_results 0 3000 image-only-no-text-layer.pdf wombat
-expect_load_failure 5 3000 encrypted-aes256-user-reader.pdf quokka wrong-password
-expect_results 3 3000 encrypted-aes256-user-reader.pdf quokka reader
+expect_load_failure 5 3000 encrypted-aes128-user-reader.pdf quokka wrong-password
+expect_results 3 3000 encrypted-aes128-user-reader.pdf quokka reader
 expect_load_failure 4 3000 malformed-truncated.pdf quokka
 expect_results 3 3000 malformed-bad-startxref.pdf quokka
 expect_results 1 3000 hostile-flate-expansion-32m.pdf flate-expansion-control

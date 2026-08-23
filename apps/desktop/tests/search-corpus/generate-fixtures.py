@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the source-owned ZenPDF search corpus outside the repository.
-
-This optional provenance helper requires ReportLab and Pillow. Producer metadata may
-change byte hashes between runs; SHA256SUMS identifies the reviewed corpus itself.
-"""
+"""Generate and verify the source-owned ZenPDF search corpus externally."""
 
 from __future__ import annotations
 
+import argparse
+import hashlib
 import io
+import subprocess
 import zlib
 from pathlib import Path
 
@@ -19,15 +18,12 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
 
-ROOT = Path(__file__).resolve().parent
-OUT = ROOT / "fixtures"
-OUT.mkdir(exist_ok=True)
 FONT_PATH = "/usr/share/fonts/noto/NotoSans-Regular.ttf"
 pdfmetrics.registerFont(TTFont("NotoSans", FONT_PATH))
 
 
 def unicode_pdf(path: Path) -> None:
-    document = canvas.Canvas(str(path), pagesize=A4, pageCompression=1)
+    document = canvas.Canvas(str(path), pagesize=A4, pageCompression=1, invariant=1)
     document.setTitle("Unicode search interoperability fixture")
     document.setAuthor("ZenPDF search corpus via ReportLab")
     lines = [
@@ -60,13 +56,13 @@ def image_only_pdf(path: Path) -> None:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     buffer.seek(0)
-    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1)
+    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1, invariant=1)
     document.drawImage(ImageReader(buffer), 36, 300, width=540, height=337.5)
     document.save()
 
 
 def long_search_pdf(path: Path, pages: int = 400) -> None:
-    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1)
+    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1, invariant=1)
     document.setFont("Helvetica", 11)
     for page in range(1, pages + 1):
         document.drawString(54, 730, f"Long document page {page} of {pages}")
@@ -79,7 +75,7 @@ def long_search_pdf(path: Path, pages: int = 400) -> None:
 
 
 def many_results_pdf(path: Path, pages: int = 100, rows: int = 40) -> None:
-    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1)
+    document = canvas.Canvas(str(path), pagesize=letter, pageCompression=1, invariant=1)
     document.setFont("Helvetica", 8)
     for page in range(1, pages + 1):
         document.drawString(36, 760, f"Result flood page {page}")
@@ -137,18 +133,56 @@ def flate_expansion_pdf(path: Path) -> None:
     ])
 
 
-unicode_pdf(OUT / "unicode-search-independent.pdf")
-image_only_pdf(OUT / "image-only-no-text-layer.pdf")
-long_search_pdf(OUT / "long-search-400-pages.pdf")
-many_results_pdf(OUT / "many-results-4000-matches.pdf")
-huge_page_box_pdf(OUT / "hostile-huge-page-box.pdf")
-flate_expansion_pdf(OUT / "hostile-flate-expansion-32m.pdf")
+def sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
-source = (OUT / "unicode-search-independent.pdf").read_bytes()
-(OUT / "malformed-truncated.pdf").write_bytes(source[: max(128, len(source) // 2)])
-bad_xref = source.rsplit(b"startxref\n", 1)[0] + b"startxref\n999999999999\n%%EOF\n"
-(OUT / "malformed-bad-startxref.pdf").write_bytes(bad_xref)
 
-print("Run qpdf --encrypt reader owner 256 -- fixtures/unicode-search-independent.pdf "
-      "fixtures/encrypted-aes256-user-reader.pdf")
-print("Verify an approved corpus with: cd fixtures && sha256sum -c ../SHA256SUMS")
+def main() -> None:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("output_directory", help="new external directory for the corpus")
+    arguments = parser.parse_args()
+    output = Path(arguments.output_directory).expanduser().resolve()
+    source_root = Path(__file__).resolve().parents[4]
+    if output == source_root or source_root in output.parents:
+        raise SystemExit(f"refusing output inside source checkout: {output}")
+    if output.exists():
+        raise SystemExit(f"refusing existing output directory: {output}")
+    output.mkdir(parents=True, mode=0o700)
+
+    unicode_pdf(output / "unicode-search-independent.pdf")
+    image_only_pdf(output / "image-only-no-text-layer.pdf")
+    long_search_pdf(output / "long-search-400-pages.pdf")
+    many_results_pdf(output / "many-results-4000-matches.pdf")
+    huge_page_box_pdf(output / "hostile-huge-page-box.pdf")
+    flate_expansion_pdf(output / "hostile-flate-expansion-32m.pdf")
+
+    source = (output / "unicode-search-independent.pdf").read_bytes()
+    (output / "malformed-truncated.pdf").write_bytes(source[: max(128, len(source) // 2)])
+    bad_xref = source.rsplit(b"startxref\n", 1)[0] + b"startxref\n999999999999\n%%EOF\n"
+    (output / "malformed-bad-startxref.pdf").write_bytes(bad_xref)
+    subprocess.run([
+        "qpdf", "--allow-weak-crypto", "--static-id", "--static-aes-iv",
+        "--encrypt", "reader", "owner", "128", "--use-aes=y", "--",
+        str(output / "unicode-search-independent.pdf"),
+        str(output / "encrypted-aes128-user-reader.pdf"),
+    ], check=True)
+
+    manifest = Path(__file__).with_name("SHA256SUMS")
+    expected = {
+        fields[1]: fields[0]
+        for line in manifest.read_text(encoding="utf-8").splitlines()
+        if (fields := line.split())
+    }
+    actual = {path.name: sha256(path) for path in output.iterdir() if path.is_file()}
+    if actual != expected:
+        lines = [f"{digest}  {name}" for name, digest in sorted(actual.items())]
+        raise SystemExit("generated corpus does not match SHA256SUMS:\n" + "\n".join(lines))
+    print(f"generated and verified approved corpus: {output}")
+
+
+if __name__ == "__main__":
+    main()
