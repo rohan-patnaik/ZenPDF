@@ -70,6 +70,7 @@ bool validateDescriptor(int descriptor, bool enforceSize, QString* errorMessage)
     struct stat status {};
     if (::fstat(descriptor, &status) != 0 || !S_ISREG(status.st_mode) ||
         status.st_uid != ::geteuid() || status.st_nlink != 1 ||
+        (status.st_mode & S_IRUSR) == 0 ||
         (status.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0) {
         return setError(QStringLiteral("Preferences have unsafe local storage."), errorMessage);
     }
@@ -118,6 +119,7 @@ bool validateDescriptorWithoutMutation(
     struct stat before {};
     if (::fstat(descriptor, &before) != 0 || !S_ISREG(before.st_mode) ||
         before.st_uid != ::geteuid() || before.st_nlink != 1 ||
+        (before.st_mode & S_IRUSR) == 0 ||
         (before.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0 ||
         (enforceSize && before.st_size > Preferences::maximumFileBytes)) {
         return setError(QStringLiteral("Preferences have unsafe local storage."), errorMessage);
@@ -150,20 +152,29 @@ bool isRecognizableQtLock(const QByteArray& bytes) {
     if (bytes.isEmpty() || bytes.size() > 4096 || bytes.contains('\0')) {
         return false;
     }
-    const auto lines = bytes.split('\n');
-    if (lines.size() < 3 || lines.size() > 7 || lines.front().isEmpty()) {
+    auto lines = bytes.split('\n');
+    if (!lines.isEmpty() && lines.back().isEmpty()) {
+        lines.removeLast();
+    }
+    if ((lines.size() != 3 && lines.size() != 5) || lines.at(0).isEmpty()) {
         return false;
     }
+    const auto pidBytes = lines.at(0);
+    if (pidBytes.front() == '0') {
+        return false;
+    }
+    for (const char byte : pidBytes) {
+        if (byte < '0' || byte > '9') {
+            return false;
+        }
+    }
     bool pidOk = false;
-    const qlonglong pid = lines.front().toLongLong(&pidOk);
-    if (!pidOk || pid <= 0) {
+    const qlonglong pid = pidBytes.toLongLong(&pidOk);
+    if (!pidOk || pid <= 0 || QByteArray::number(pid) != pidBytes) {
         return false;
     }
     for (qsizetype index = 1; index < lines.size(); ++index) {
-        if (index + 1 == lines.size() && lines.at(index).isEmpty()) {
-            continue;
-        }
-        if (lines.at(index).isEmpty() || lines.at(index).size() > 1024) {
+        if (lines.at(index).size() > 1024) {
             return false;
         }
     }
@@ -177,6 +188,7 @@ bool validateQtLockSidecar(const QString& path, QString* errorMessage) {
         return true;
     }
     if (kind != PathKind::Regular || before.st_uid != ::geteuid() || before.st_nlink != 1 ||
+        (before.st_mode & S_IRUSR) == 0 ||
         (before.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0 || before.st_size > 4096) {
         return setError(QStringLiteral("Preferences have an unsafe lock sidecar."), errorMessage);
     }
@@ -347,6 +359,7 @@ bool readBoundedFile(const QString& path, QByteArray* bytes, QString* errorMessa
     struct stat status {};
     if (!descriptor.isValid() || ::fstat(descriptor.get(), &status) != 0 ||
         !S_ISREG(status.st_mode) || status.st_uid != ::geteuid() || status.st_nlink != 1 ||
+        (status.st_mode & S_IRUSR) == 0 ||
         (status.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0) {
         return setError(QStringLiteral("Could not safely read private preferences."), errorMessage);
     }
@@ -581,7 +594,9 @@ bool inspectLegacyParentPresence(
         }
         return setError(QStringLiteral("Could not inspect the legacy preference directory."), errorMessage);
     }
+    constexpr mode_t requiredOwnerDirectoryMode = S_IRUSR | S_IWUSR | S_IXUSR;
     if (!S_ISDIR(before.st_mode) || before.st_uid != ::geteuid() ||
+        (before.st_mode & requiredOwnerDirectoryMode) != requiredOwnerDirectoryMode ||
         (before.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0) {
         return setError(QStringLiteral("Legacy preferences have an unsafe parent."), errorMessage);
     }
@@ -592,6 +607,7 @@ bool inspectLegacyParentPresence(
     struct stat verified {};
     if (!descriptor.isValid() || ::fstat(descriptor.get(), &opened) != 0 ||
         !S_ISDIR(opened.st_mode) || opened.st_uid != ::geteuid() ||
+        (opened.st_mode & requiredOwnerDirectoryMode) != requiredOwnerDirectoryMode ||
         (opened.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0 ||
         opened.st_dev != before.st_dev || opened.st_ino != before.st_ino ||
         opened.st_mode != before.st_mode || ::fstat(descriptor.get(), &verified) != 0 ||
@@ -628,6 +644,7 @@ bool readImmutableLegacySnapshot(
         return true;
     }
     if (kind != PathKind::Regular || before.st_uid != ::geteuid() || before.st_nlink != 1 ||
+        (before.st_mode & S_IRUSR) == 0 ||
         (before.st_mode & (kUnsafeWriteMode | kSpecialMode)) != 0 ||
         before.st_size < 0 || before.st_size > Preferences::maximumFileBytes) {
         return setError(QStringLiteral("Legacy preferences have unsafe local storage."), errorMessage);

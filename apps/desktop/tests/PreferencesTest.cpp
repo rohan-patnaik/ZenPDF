@@ -7,9 +7,11 @@
 #include <QFileInfo>
 #include <QLockFile>
 #include <QCryptographicHash>
+#include <QDateTime>
 #include <QProcess>
 #include <QProcessEnvironment>
 #include <QSettings>
+#include <QSysInfo>
 #include <QTemporaryDir>
 #include <QtTest>
 
@@ -43,6 +45,11 @@ private slots:
     void validatesQtLockSidecars_data();
     void validatesQtLockSidecars();
     void recoversAbandonedRecognizableQtLock();
+    void recoversQtLockWriterGrammar_data();
+    void recoversQtLockWriterGrammar();
+    void preservesActiveQtLockWriterGrammar();
+    void preservesForeignQtLockWriterGrammar_data();
+    void preservesForeignQtLockWriterGrammar();
     void importAndSavePublishOneCompleteCurrentSnapshot();
     void boundedLegacyWriterContentionAndRecovery();
     void missingLegacyFinalHonorsActiveWriter();
@@ -62,6 +69,7 @@ private slots:
     void rejectsUnsafeLegacyLeaves_data();
     void rejectsUnsafeLegacyLeaves();
     void boundedCoordinatorContentionAndRecovery();
+    void rejectsCoordinatorWithoutOwnerRead();
     void repairsSafePrivateLeafModes();
     void rejectsUnsafeUnixLeaves_data();
     void rejectsUnsafeUnixLeaves();
@@ -483,6 +491,21 @@ void PreferencesTest::validatesQtLockSidecars_data() {
     QTest::newRow("symlink") << QStringLiteral("symlink");
     QTest::newRow("hardlink") << QStringLiteral("hardlink");
     QTest::newRow("unsafe-mode") << QStringLiteral("unsafe-mode");
+    QTest::newRow("owner-read-missing") << QStringLiteral("owner-read-missing");
+    QTest::newRow("one-field") << QStringLiteral("one-field");
+    QTest::newRow("two-field") << QStringLiteral("two-field");
+    QTest::newRow("four-field") << QStringLiteral("four-field");
+    QTest::newRow("extra-field") << QStringLiteral("extra-field");
+    QTest::newRow("empty-pid") << QStringLiteral("empty-pid");
+    QTest::newRow("zero-pid") << QStringLiteral("zero-pid");
+    QTest::newRow("negative-pid") << QStringLiteral("negative-pid");
+    QTest::newRow("plus-pid") << QStringLiteral("plus-pid");
+    QTest::newRow("leading-zero-pid") << QStringLiteral("leading-zero-pid");
+    QTest::newRow("overflow-pid") << QStringLiteral("overflow-pid");
+    QTest::newRow("nondigit-pid") << QStringLiteral("nondigit-pid");
+    QTest::newRow("oversized-field") << QStringLiteral("oversized-field");
+    QTest::newRow("double-trailing-newline") << QStringLiteral("double-trailing-newline");
+    QTest::newRow("nul") << QStringLiteral("nul");
 }
 
 void PreferencesTest::validatesQtLockSidecars() {
@@ -503,12 +526,49 @@ void PreferencesTest::validatesQtLockSidecars() {
     } else if (kind == QStringLiteral("hardlink")) {
         QVERIFY(::link(encodedTarget.constData(), encodedSidecar.constData()) == 0);
     } else {
-        writeBytes(
-            sidecar,
-            kind == QStringLiteral("oversize") ? QByteArray(4097, 'x')
-                                                : QByteArrayLiteral("not-a-qt-lock\n"));
+        QByteArray contents = QByteArrayLiteral("not-a-qt-lock\n");
+        if (kind == QStringLiteral("oversize")) {
+            contents = QByteArray(4097, 'x');
+        } else if (kind == QStringLiteral("one-field")) {
+            contents = QByteArrayLiteral("999999999\n");
+        } else if (kind == QStringLiteral("two-field")) {
+            contents = QByteArrayLiteral("999999999\napplication\n");
+        } else if (kind == QStringLiteral("four-field")) {
+            contents = QByteArrayLiteral("999999999\napplication\nhost\nmachine\n");
+        } else if (kind == QStringLiteral("extra-field")) {
+            contents = QByteArrayLiteral("999999999\napplication\nhost\nmachine\nboot\nextra\n");
+        } else if (kind == QStringLiteral("empty-pid")) {
+            contents = QByteArrayLiteral("\napplication\nhost\n");
+        } else if (kind == QStringLiteral("zero-pid")) {
+            contents = QByteArrayLiteral("0\napplication\nhost\n");
+        } else if (kind == QStringLiteral("negative-pid")) {
+            contents = QByteArrayLiteral("-1\napplication\nhost\n");
+        } else if (kind == QStringLiteral("plus-pid")) {
+            contents = QByteArrayLiteral("+1\napplication\nhost\n");
+        } else if (kind == QStringLiteral("leading-zero-pid")) {
+            contents = QByteArrayLiteral("01\napplication\nhost\n");
+        } else if (kind == QStringLiteral("overflow-pid")) {
+            contents = QByteArrayLiteral("9223372036854775808\napplication\nhost\n");
+        } else if (kind == QStringLiteral("nondigit-pid")) {
+            contents = QByteArrayLiteral("1x\napplication\nhost\n");
+        } else if (kind == QStringLiteral("oversized-field")) {
+            contents = QByteArrayLiteral("999999999\n") + QByteArray(1025, 'a') +
+                QByteArrayLiteral("\nhost\n");
+        } else if (kind == QStringLiteral("double-trailing-newline")) {
+            contents = QByteArrayLiteral("999999999\napplication\nhost\n\n");
+        } else if (kind == QStringLiteral("nul")) {
+            contents = QByteArrayLiteral("999999999\napplication\nhost");
+            contents.append('\0');
+            contents.append('\n');
+        }
+        writeBytes(sidecar, contents);
         if (kind == QStringLiteral("unsafe-mode")) {
             QVERIFY(::chmod(encodedSidecar.constData(), 0666) == 0);
+        } else if (kind == QStringLiteral("owner-read-missing")) {
+            writeBytes(
+                sidecar,
+                QByteArrayLiteral("999999999\napplication\nhost\n\n\n"));
+            QVERIFY(::chmod(encodedSidecar.constData(), 0200) == 0);
         }
     }
     struct stat before {};
@@ -522,12 +582,35 @@ void PreferencesTest::validatesQtLockSidecars() {
     QVERIFY(!preferences.loadWindowPreferences(&loaded, &error));
     QVERIFY(timer.elapsed() < 500);
     verifyPathFreeError(error, path);
+    const QStringList malformedKinds{
+        QStringLiteral("malformed"),
+        QStringLiteral("one-field"),
+        QStringLiteral("two-field"),
+        QStringLiteral("four-field"),
+        QStringLiteral("extra-field"),
+        QStringLiteral("empty-pid"),
+        QStringLiteral("zero-pid"),
+        QStringLiteral("negative-pid"),
+        QStringLiteral("plus-pid"),
+        QStringLiteral("leading-zero-pid"),
+        QStringLiteral("overflow-pid"),
+        QStringLiteral("nondigit-pid"),
+        QStringLiteral("oversized-field"),
+        QStringLiteral("double-trailing-newline"),
+        QStringLiteral("nul"),
+    };
+    if (malformedKinds.contains(kind)) {
+        QCOMPARE(error, QStringLiteral("Preferences have a malformed lock sidecar."));
+    }
     error.clear();
     timer.restart();
     QVERIFY(!preferences.saveWindowPreferences(
         {QByteArrayLiteral("blocked"), QByteArrayLiteral("blocked")}, &error));
     QVERIFY(timer.elapsed() < 500);
     verifyPathFreeError(error, path);
+    if (malformedKinds.contains(kind)) {
+        QCOMPARE(error, QStringLiteral("Preferences have a malformed lock sidecar."));
+    }
     QVERIFY(!QFileInfo(path).exists());
     QCOMPARE(fileHash(target), QCryptographicHash::hash(sentinel, QCryptographicHash::Sha256));
     struct stat after {};
@@ -545,6 +628,200 @@ void PreferencesTest::validatesQtLockSidecars() {
     WindowPreferences recovered;
     QVERIFY(preferences.loadWindowPreferences(&recovered));
     QCOMPARE(recovered.geometry, QByteArrayLiteral("recovered"));
+}
+
+void PreferencesTest::recoversQtLockWriterGrammar_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::addColumn<int>("trailingNewlines");
+    QTest::newRow("three-field-same-host") << QStringLiteral("three-field") << 1;
+    QTest::newRow("five-field-no-trailing-newline") << QStringLiteral("five-field") << 0;
+    QTest::newRow("five-field-one-trailing-newline") << QStringLiteral("five-field") << 1;
+    QTest::newRow("five-field-empty-application") << QStringLiteral("empty-application") << 1;
+    QTest::newRow("five-field-empty-host") << QStringLiteral("empty-host") << 1;
+    QTest::newRow("five-field-empty-machine-boot") << QStringLiteral("empty-machine-boot") << 1;
+    QTest::newRow("renamed-host-current-machine") << QStringLiteral("renamed-host") << 1;
+    QTest::newRow("current-machine-previous-boot") << QStringLiteral("previous-boot") << 1;
+}
+
+void PreferencesTest::recoversQtLockWriterGrammar() {
+    QFETCH(QString, kind);
+    QFETCH(int, trailingNewlines);
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("preferences.ini"));
+    qint64 testedPid = QCoreApplication::applicationPid();
+    QProcess exitedProcess;
+    if (kind != QStringLiteral("previous-boot")) {
+        exitedProcess.setProgram(QStringLiteral("/usr/bin/true"));
+        exitedProcess.start();
+        QVERIFY(exitedProcess.waitForStarted());
+        testedPid = exitedProcess.processId();
+        QVERIFY(testedPid > 0);
+        QVERIFY(exitedProcess.waitForFinished(5'000));
+    }
+    const auto application = QCoreApplication::applicationName().toUtf8();
+    const auto host = QSysInfo::machineHostName().toUtf8();
+    const auto machine = QSysInfo::machineUniqueId();
+    const auto boot = QSysInfo::bootUniqueId();
+    if (qEnvironmentVariableIsSet("ZENPDF_L004_EXPECT_EMPTY_MACHINE_ID")) {
+        QVERIFY(machine.isEmpty());
+    }
+    QByteArrayList fields{QByteArray::number(testedPid)};
+    if (kind == QStringLiteral("three-field")) {
+        fields << application << host;
+    } else if (kind == QStringLiteral("five-field")) {
+        fields << application << host << machine << boot;
+    } else if (kind == QStringLiteral("empty-application")) {
+        fields << QByteArray{} << host << machine << boot;
+    } else if (kind == QStringLiteral("empty-host")) {
+        fields << application << QByteArray{} << machine << boot;
+    } else if (kind == QStringLiteral("empty-machine-boot")) {
+        fields << application << host << QByteArray{} << QByteArray{};
+    } else if (kind == QStringLiteral("renamed-host")) {
+        fields << application << (host + QByteArrayLiteral("-renamed")) << machine << boot;
+    } else {
+        fields << application << host << machine << (boot + QByteArrayLiteral("-previous"));
+    }
+    QByteArray lockBytes = fields.join('\n');
+    lockBytes.append(QByteArray(trailingNewlines, '\n'));
+    const auto lockPath = path + QStringLiteral(".lock");
+    writeBytes(lockPath, lockBytes);
+    const auto lockHash = fileHash(lockPath);
+    const auto encodedLockPath = QFile::encodeName(lockPath);
+    struct stat lockStatusBefore {};
+    QVERIFY(::lstat(encodedLockPath.constData(), &lockStatusBefore) == 0);
+    Preferences preferences(path);
+    QString error;
+
+    if (kind == QStringLiteral("renamed-host") && machine.isEmpty()) {
+        QVERIFY(!preferences.saveWindowPreferences(
+            {QByteArrayLiteral("blocked"), QByteArrayLiteral("blocked")}, &error));
+        QCOMPARE(error, QStringLiteral("Preferences are busy; try again."));
+        verifyPathFreeError(error, path);
+        QVERIFY(!QFileInfo(path).exists());
+        QCOMPARE(fileHash(lockPath), lockHash);
+        struct stat lockStatusAfter {};
+        QVERIFY(::lstat(encodedLockPath.constData(), &lockStatusAfter) == 0);
+        QCOMPARE(lockStatusAfter.st_dev, lockStatusBefore.st_dev);
+        QCOMPARE(lockStatusAfter.st_ino, lockStatusBefore.st_ino);
+        QCOMPARE(lockStatusAfter.st_mode, lockStatusBefore.st_mode);
+        QCOMPARE(lockStatusAfter.st_size, lockStatusBefore.st_size);
+        QCOMPARE(lockStatusAfter.st_mtim.tv_sec, lockStatusBefore.st_mtim.tv_sec);
+        QCOMPARE(lockStatusAfter.st_mtim.tv_nsec, lockStatusBefore.st_mtim.tv_nsec);
+        return;
+    }
+
+    QVERIFY(preferences.saveWindowPreferences(
+        {QByteArrayLiteral("recovered"), QByteArrayLiteral("recovered")}));
+    QVERIFY(!QFileInfo(path + QStringLiteral(".lock")).exists());
+    WindowPreferences loaded;
+    QVERIFY(preferences.loadWindowPreferences(&loaded));
+    QCOMPARE(loaded.geometry, QByteArrayLiteral("recovered"));
+}
+
+void PreferencesTest::preservesActiveQtLockWriterGrammar() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("preferences.ini"));
+    const QByteArray lockBytes = QByteArray::number(QCoreApplication::applicationPid()) +
+        QByteArrayLiteral("\n") + QCoreApplication::applicationName().toUtf8() +
+        QByteArrayLiteral("\n") + QSysInfo::machineHostName().toUtf8() +
+        QByteArrayLiteral("\n") + QSysInfo::machineUniqueId() + QByteArrayLiteral("\n") +
+        QSysInfo::bootUniqueId() + QByteArrayLiteral("\n");
+    const auto lockPath = path + QStringLiteral(".lock");
+    writeBytes(lockPath, lockBytes);
+    QFile lockFile(lockPath);
+    QVERIFY(lockFile.open(QIODevice::ReadWrite));
+    QVERIFY(lockFile.setFileTime(
+        QDateTime::currentDateTimeUtc().addSecs(-31), QFileDevice::FileModificationTime));
+    lockFile.close();
+    const auto before = fileHash(lockPath);
+    const auto encodedLockPath = QFile::encodeName(lockPath);
+    struct stat beforeStatus {};
+    QVERIFY(::lstat(encodedLockPath.constData(), &beforeStatus) == 0);
+    Preferences preferences(path);
+    QString error;
+
+    QVERIFY(!preferences.saveWindowPreferences(
+        {QByteArrayLiteral("blocked"), QByteArrayLiteral("blocked")}, &error));
+    verifyPathFreeError(error, path);
+    QVERIFY(!QFileInfo(path).exists());
+    QCOMPARE(fileHash(lockPath), before);
+    struct stat afterStatus {};
+    QVERIFY(::lstat(encodedLockPath.constData(), &afterStatus) == 0);
+    QCOMPARE(afterStatus.st_dev, beforeStatus.st_dev);
+    QCOMPARE(afterStatus.st_ino, beforeStatus.st_ino);
+    QCOMPARE(afterStatus.st_mode, beforeStatus.st_mode);
+    QCOMPARE(afterStatus.st_size, beforeStatus.st_size);
+    QCOMPARE(afterStatus.st_mtim.tv_sec, beforeStatus.st_mtim.tv_sec);
+    QCOMPARE(afterStatus.st_mtim.tv_nsec, beforeStatus.st_mtim.tv_nsec);
+}
+
+void PreferencesTest::preservesForeignQtLockWriterGrammar_data() {
+    QTest::addColumn<QString>("kind");
+    QTest::newRow("machine") << QStringLiteral("machine");
+    QTest::newRow("host-without-machine") << QStringLiteral("host-without-machine");
+}
+
+void PreferencesTest::preservesForeignQtLockWriterGrammar() {
+    QFETCH(QString, kind);
+    if (qEnvironmentVariableIsSet("ZENPDF_L004_EXPECT_EMPTY_MACHINE_ID")) {
+        QVERIFY(QSysInfo::machineUniqueId().isEmpty());
+    }
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("preferences.ini"));
+    QProcess exitedProcess;
+    exitedProcess.setProgram(QStringLiteral("/usr/bin/true"));
+    exitedProcess.start();
+    QVERIFY(exitedProcess.waitForStarted());
+    const auto deadPid = exitedProcess.processId();
+    QVERIFY(deadPid > 0);
+    QVERIFY(exitedProcess.waitForFinished(5'000));
+    QByteArrayList fields{
+        QByteArray::number(deadPid), QCoreApplication::applicationName().toUtf8()};
+    if (kind == QStringLiteral("machine")) {
+        fields << QSysInfo::machineHostName().toUtf8()
+               << (QSysInfo::machineUniqueId() + QByteArrayLiteral("-foreign"))
+               << QSysInfo::bootUniqueId();
+    } else {
+        fields << (QSysInfo::machineHostName().toUtf8() + QByteArrayLiteral("-foreign"));
+    }
+    const QByteArray lockBytes = fields.join('\n') + '\n';
+    const auto lockPath = path + QStringLiteral(".lock");
+    writeBytes(lockPath, lockBytes);
+    const auto before = fileHash(lockPath);
+    const auto encodedLockPath = QFile::encodeName(lockPath);
+    struct stat beforeStatus {};
+    QVERIFY(::lstat(encodedLockPath.constData(), &beforeStatus) == 0);
+    Preferences preferences(path);
+    QString error;
+
+    if (kind == QStringLiteral("machine") && QSysInfo::machineUniqueId().isEmpty()) {
+        QVERIFY(preferences.saveWindowPreferences(
+            {QByteArrayLiteral("recovered"), QByteArrayLiteral("recovered")}, &error));
+        QVERIFY(error.isEmpty());
+        QVERIFY(!QFileInfo(lockPath).exists());
+        WindowPreferences loaded;
+        QVERIFY(preferences.loadWindowPreferences(&loaded));
+        QCOMPARE(loaded.geometry, QByteArrayLiteral("recovered"));
+        return;
+    }
+
+    QVERIFY(!preferences.saveWindowPreferences(
+        {QByteArrayLiteral("blocked"), QByteArrayLiteral("blocked")}, &error));
+    QCOMPARE(error, QStringLiteral("Preferences are busy; try again."));
+    verifyPathFreeError(error, path);
+    QVERIFY(!QFileInfo(path).exists());
+    QCOMPARE(fileHash(lockPath), before);
+    struct stat afterStatus {};
+    QVERIFY(::lstat(encodedLockPath.constData(), &afterStatus) == 0);
+    QCOMPARE(afterStatus.st_dev, beforeStatus.st_dev);
+    QCOMPARE(afterStatus.st_ino, beforeStatus.st_ino);
+    QCOMPARE(afterStatus.st_mode, beforeStatus.st_mode);
+    QCOMPARE(afterStatus.st_size, beforeStatus.st_size);
+    QCOMPARE(afterStatus.st_mtim.tv_sec, beforeStatus.st_mtim.tv_sec);
+    QCOMPARE(afterStatus.st_mtim.tv_nsec, beforeStatus.st_mtim.tv_nsec);
 }
 
 void PreferencesTest::recoversAbandonedRecognizableQtLock() {
@@ -896,6 +1173,9 @@ void PreferencesTest::rejectsUnsafeLegacyParents_data() {
     QTest::newRow("special") << QStringLiteral("special");
     QTest::newRow("symlink") << QStringLiteral("symlink");
     QTest::newRow("wrong-type") << QStringLiteral("wrong-type");
+    QTest::newRow("owner-read-missing") << QStringLiteral("owner-read-missing");
+    QTest::newRow("owner-write-missing") << QStringLiteral("owner-write-missing");
+    QTest::newRow("owner-execute-missing") << QStringLiteral("owner-execute-missing");
 }
 
 void PreferencesTest::rejectsUnsafeLegacyParents() {
@@ -915,8 +1195,12 @@ void PreferencesTest::rejectsUnsafeLegacyParents() {
         writeBytes(parentPath, QByteArrayLiteral("not-a-directory"));
     } else {
         QVERIFY(QDir().mkpath(parentPath));
-        QVERIFY(::chmod(
-            encodedParent.constData(), kind == QStringLiteral("writable") ? 0777 : 01700) == 0);
+        const mode_t mode = kind == QStringLiteral("writable") ? 0777
+            : kind == QStringLiteral("special") ? 01700
+            : kind == QStringLiteral("owner-read-missing") ? 0300
+            : kind == QStringLiteral("owner-write-missing") ? 0500
+                                                             : 0600;
+        QVERIFY(::chmod(encodedParent.constData(), mode) == 0);
     }
     struct stat before {};
     QVERIFY(::lstat(encodedParent.constData(), &before) == 0);
@@ -990,6 +1274,7 @@ void PreferencesTest::validatesLegacyLockSidecars_data() {
     QTest::newRow("symlink") << QStringLiteral("symlink");
     QTest::newRow("hardlink") << QStringLiteral("hardlink");
     QTest::newRow("unsafe-mode") << QStringLiteral("unsafe-mode");
+    QTest::newRow("owner-read-missing") << QStringLiteral("owner-read-missing");
 }
 
 void PreferencesTest::validatesLegacyLockSidecars() {
@@ -1020,6 +1305,11 @@ void PreferencesTest::validatesLegacyLockSidecars() {
                                                 : QByteArrayLiteral("invalid-lock\n"));
         if (kind == QStringLiteral("unsafe-mode")) {
             QVERIFY(::chmod(encodedSidecar.constData(), 0666) == 0);
+        } else if (kind == QStringLiteral("owner-read-missing")) {
+            writeBytes(
+                sidecar,
+                QByteArrayLiteral("999999999\napplication\nhost\n\n\n"));
+            QVERIFY(::chmod(encodedSidecar.constData(), 0200) == 0);
         }
     }
     struct stat before {};
@@ -1179,6 +1469,7 @@ void PreferencesTest::rejectsUnsafeLegacyLeaves_data() {
     QTest::newRow("hardlink") << QStringLiteral("hardlink");
     QTest::newRow("writable") << QStringLiteral("writable");
     QTest::newRow("special") << QStringLiteral("special");
+    QTest::newRow("owner-read-missing") << QStringLiteral("owner-read-missing");
 }
 
 void PreferencesTest::rejectsUnsafeLegacyLeaves() {
@@ -1201,8 +1492,10 @@ void PreferencesTest::rejectsUnsafeLegacyLeaves() {
         QVERIFY(::link(encodedTarget.constData(), encodedLegacy.constData()) == 0);
     } else {
         writeSettings(legacyPath, QByteArrayLiteral("legacy"), QByteArrayLiteral("legacy"));
-        QVERIFY(::chmod(
-            encodedLegacy.constData(), kind == QStringLiteral("writable") ? 0666 : 04700) == 0);
+        const mode_t mode = kind == QStringLiteral("writable") ? 0666
+            : kind == QStringLiteral("owner-read-missing") ? 0200
+                                                           : 04700;
+        QVERIFY(::chmod(encodedLegacy.constData(), mode) == 0);
     }
     struct stat before {};
     QVERIFY(::lstat(encodedLegacy.constData(), &before) == 0);
@@ -1288,6 +1581,33 @@ void PreferencesTest::boundedCoordinatorContentionAndRecovery() {
     struct stat lockStatus {};
     QVERIFY(::lstat(hostileLock.constData(), &lockStatus) == 0);
     QVERIFY(S_ISLNK(lockStatus.st_mode));
+}
+
+void PreferencesTest::rejectsCoordinatorWithoutOwnerRead() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto path = directory.filePath(QStringLiteral("preferences.ini"));
+    const auto lockPath = path + QStringLiteral(".zenpdf-lock");
+    writeBytes(lockPath, QByteArrayLiteral("coordinator"));
+    const auto encodedLock = QFile::encodeName(lockPath);
+    QVERIFY(::chmod(encodedLock.constData(), 0200) == 0);
+    struct stat before {};
+    QVERIFY(::lstat(encodedLock.constData(), &before) == 0);
+    Preferences preferences(path);
+    QString error;
+
+    QVERIFY(!preferences.saveWindowPreferences(
+        {QByteArrayLiteral("blocked"), QByteArrayLiteral("blocked")}, &error));
+    verifyPathFreeError(error, path);
+    QVERIFY(!QFileInfo(path).exists());
+    struct stat after {};
+    QVERIFY(::lstat(encodedLock.constData(), &after) == 0);
+    QCOMPARE(after.st_dev, before.st_dev);
+    QCOMPARE(after.st_ino, before.st_ino);
+    QCOMPARE(after.st_mode, before.st_mode);
+    QVERIFY(::chmod(encodedLock.constData(), 0600) == 0);
+    QVERIFY(preferences.saveWindowPreferences(
+        {QByteArrayLiteral("recovered"), QByteArrayLiteral("recovered")}));
 }
 
 void PreferencesTest::repairsSafePrivateLeafModes() {
