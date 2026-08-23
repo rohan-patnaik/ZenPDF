@@ -39,7 +39,7 @@ Record the commit, tree, package version and SHA-256 before acceptance. A develo
 
 ## Known alpha limits
 
-- Search uses Qt PDF/PDFium in-process. Generated regressions cover text success, Unicode, blank and malformed PDFs, deterministic query supersession, active-search destruction, and an 80-page fixture. Scanned-image PDFs require an OCR engine that has not been selected. Hostile and very-large-document resource behavior, true cancellation and timeout, highlight fidelity, installed assistive technology, and independent-producer coverage remain incomplete.
+- Search uses Qt PDF/PDFium in-process. Generated regressions cover text success, Unicode, blank and malformed PDFs, deterministic query supersession, active-search destruction, keyboard traversal, and an 80-page fixture. The hashed opt-in external corpus records encrypted search, independent-producer Unicode/no-text, recoverable malformed, late-hit/result-flood, and sampled hostile RSS observations while preserving source hashes. Scanned-image PDFs require an OCR engine that has not been selected. Hard resource limits, true cancellation and timeout, highlight fidelity, installed assistive technology/spoken output, and broad independent-producer coverage remain incomplete.
 - PDF parsing and rendering are not process-isolated. Thumbnail rendering is owner-thread deferred but has no mid-render cancellation or hard timeout.
 - Persistent PDF mutation, save/save-as, autosave, serialized recovery, crash recovery, forms, signatures, redaction, OCR, color management, and standards conversion are not implemented.
 - Native chooser assistive-technology behavior and live cancellation announcements retain known acceptance gaps. See the capability matrix and security model for the complete limits.

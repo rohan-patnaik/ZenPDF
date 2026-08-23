@@ -86,6 +86,8 @@ if(BUILD_TESTING)
     add_executable(zenpdf_pdf_tests tests/PdfDocumentTest.cpp)
     target_link_libraries(zenpdf_pdf_tests PRIVATE Qt6::Gui Qt6::Pdf Qt6::Test)
     add_test(NAME zenpdf_pdf_tests COMMAND zenpdf_pdf_tests)
+    add_executable(zenpdf_search_corpus_probe tests/SearchCorpusProbe.cpp)
+    target_link_libraries(zenpdf_search_corpus_probe PRIVATE Qt6::Core Qt6::Pdf)
     add_executable(zenpdf_document_widget_tests
         src/DocumentWidget.cpp
         src/DocumentWidget.h

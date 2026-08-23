@@ -29,6 +29,7 @@ private slots:
     void searchesUnicodeAndHandlesNoText();
     void supersedesLongSearchAndShutsDownCleanly();
     void rejectsMalformedPdfBeforeSearchStarts();
+    void traversesSearchControlsByKeyboard();
     void spaceActivatesOnlyTheFocusedThumbnailList();
 };
 
@@ -298,6 +299,77 @@ void DocumentWidgetTest::rejectsMalformedPdfBeforeSearchStarts() {
     QVERIFY(!widget.errorMessage().isEmpty());
     QCOMPARE(searchLineEdit(widget), nullptr);
     QCOMPARE(widget.searchModel_->rowCount({}), 0);
+}
+
+void DocumentWidgetTest::traversesSearchControlsByKeyboard() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("keyboard-search.pdf"));
+
+    QPdfWriter writer(source);
+    writer.setResolution(72);
+    QPainter painter(&writer);
+    painter.drawText(QPointF(72, 72), QStringLiteral("Search keyboard cover"));
+    QVERIFY(writer.newPage());
+    painter.drawText(QPointF(72, 72), QStringLiteral("Keyboard quokka result"));
+    painter.end();
+
+    DocumentWidget widget(source);
+    QVERIFY(widget.isReady());
+    auto* searchInput = searchLineEdit(widget);
+    auto* searchResults = searchResultList(widget);
+    auto* searchStatus = searchStatusLabel(widget);
+    auto* sideTabs = widget.findChild<QTabWidget*>();
+    QVERIFY(searchInput != nullptr);
+    QVERIFY(searchResults != nullptr);
+    QVERIFY(searchStatus != nullptr);
+    QVERIFY(sideTabs != nullptr);
+
+    const auto* inputInterface = QAccessible::queryAccessibleInterface(searchInput);
+    const auto* resultsInterface = QAccessible::queryAccessibleInterface(searchResults);
+    const auto* statusInterface = QAccessible::queryAccessibleInterface(searchStatus);
+    QVERIFY(inputInterface != nullptr);
+    QVERIFY(resultsInterface != nullptr);
+    QVERIFY(statusInterface != nullptr);
+    QCOMPARE(inputInterface->role(), QAccessible::EditableText);
+    QCOMPARE(resultsInterface->role(), QAccessible::List);
+    QCOMPARE(statusInterface->role(), QAccessible::StaticText);
+    QCOMPARE(searchInput->accessibleName(), QStringLiteral("Search document"));
+    QCOMPARE(searchResults->accessibleName(), QStringLiteral("Document search results"));
+    QCOMPARE(searchStatus->accessibleDescription(), QStringLiteral("Search status"));
+
+    sideTabs->setCurrentWidget(searchInput->parentWidget());
+    widget.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&widget));
+    searchInput->setFocus();
+    QTRY_VERIFY(searchInput->hasFocus());
+    QTest::keyClicks(searchInput, QStringLiteral("quokka"));
+    QTRY_COMPARE(searchResults->model()->rowCount(), 1);
+    QCOMPARE(searchStatus->text(), QStringLiteral("1 result(s) found so far."));
+
+    QTest::keyClick(searchInput, Qt::Key_Tab);
+    QTRY_VERIFY(searchResults->hasFocus());
+    QTest::keyClick(searchResults, Qt::Key_Down);
+    QTRY_COMPARE(searchResults->currentIndex().row(), 0);
+    QTest::keyClick(searchResults, Qt::Key_Return);
+    QTRY_COMPARE(widget.view_->pageNavigator()->currentPage(), 1);
+
+    QTest::keyClick(searchResults, Qt::Key_Tab, Qt::ShiftModifier);
+    QTRY_VERIFY(searchInput->hasFocus());
+    QTest::keyClick(searchInput, Qt::Key_A, Qt::ControlModifier);
+    QTest::keyClick(searchInput, Qt::Key_Backspace);
+    QCOMPARE(searchInput->text(), QString{});
+    QCOMPARE(searchStatus->text(), QStringLiteral("Enter text to search."));
+    QVERIFY(searchInput->hasFocus());
+    QVERIFY(!searchResults->currentIndex().isValid());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    QCOMPARE(widget.view_->currentSearchResultIndex(), -1);
+#endif
+
+    QTest::keyClicks(searchInput, QStringLiteral("replacement"));
+    QTRY_COMPARE(searchResults->model()->rowCount(), 0);
+    QCOMPARE(searchStatus->text(), QStringLiteral("Searching locally; no results yet."));
+    QVERIFY(searchInput->hasFocus());
 }
 
 void DocumentWidgetTest::spaceActivatesOnlyTheFocusedThumbnailList() {

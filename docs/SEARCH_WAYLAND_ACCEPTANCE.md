@@ -9,6 +9,11 @@ reset, and destruction with an active query. These generated fixtures are narrow
 regression evidence, not independent-producer, installed-package, assistive-technology,
 or hard resource-bound evidence.
 
+The hashed opt-in independent/hostile corpus, bounded probe runner, recorded resource
+observations, source-preservation hashes, and keyboard/role sequence are documented in
+`docs/SEARCH_CORPUS_EVIDENCE.md`. They remain source-level evidence, not this installed
+Wayland gate.
+
 ## Fixture and package identity
 
 1. Record the published commit and tree, exact-tip CI run, Arch package filename/version and SHA-256, Omarchy version, compositor, display scale, and assistive-technology versions.
