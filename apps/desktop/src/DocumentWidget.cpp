@@ -77,7 +77,10 @@ public:
             const auto page = QIdentityProxyModel::data(index, static_cast<int>(QPdfSearchModel::Role::Page)).toInt() + 1;
             const auto before = QIdentityProxyModel::data(index, static_cast<int>(QPdfSearchModel::Role::ContextBefore)).toString();
             const auto after = QIdentityProxyModel::data(index, static_cast<int>(QPdfSearchModel::Role::ContextAfter)).toString();
-            return QStringLiteral("Page %1: …%2%3…").arg(page).arg(before.trimmed(), after.trimmed());
+            const auto* searchModel = qobject_cast<const QPdfSearchModel*>(sourceModel());
+            const auto query = searchModel == nullptr ? QString{} : searchModel->searchString();
+            const auto context = QStringLiteral("%1%2%3").arg(before, query, after).simplified();
+            return QStringLiteral("Page %1: …%2…").arg(page).arg(context);
         }
         return QIdentityProxyModel::data(index, role);
     }
@@ -214,6 +217,10 @@ void DocumentWidget::buildInterface() {
     searchInput->setPlaceholderText(tr("Search document"));
     searchInput->setAccessibleName(tr("Search document"));
     searchInput->setClearButtonEnabled(true);
+    auto* searchStatus = new QLabel(tr("Enter text to search."), searchPage);
+    searchStatus->setObjectName(QStringLiteral("searchStatus"));
+    searchStatus->setAccessibleDescription(tr("Search status"));
+    searchStatus->setWordWrap(true);
     auto* searchDisplay = new SearchDisplayModel(searchPage);
     searchModel_->setDocument(document_);
     searchDisplay->setSourceModel(searchModel_);
@@ -222,6 +229,7 @@ void DocumentWidget::buildInterface() {
     searchResults->setWordWrap(true);
     searchResults->setAccessibleName(tr("Document search results"));
     searchLayout->addWidget(searchInput);
+    searchLayout->addWidget(searchStatus);
     searchLayout->addWidget(searchResults);
     sideTabs->addTab(searchPage, tr("Search"));
 
@@ -264,13 +272,27 @@ void DocumentWidget::buildInterface() {
         const auto zoom = source.data(static_cast<int>(QPdfBookmarkModel::Role::Zoom)).toReal();
         view_->pageNavigator()->jump(page, location, zoom);
     });
-    connect(searchInput, &QLineEdit::textChanged, this, [this, searchResults](const QString& query) {
+    const auto updateSearchStatus = [this, searchStatus] {
+        if (searchModel_->searchString().isEmpty()) {
+            searchStatus->setText(tr("Enter text to search."));
+            return;
+        }
+        const int resultCount = searchModel_->rowCount({});
+        searchStatus->setText(resultCount == 0
+            ? tr("Searching locally; no results yet.")
+            : tr("%n result(s) found so far.", nullptr, resultCount));
+    };
+    connect(searchModel_, &QAbstractItemModel::rowsInserted, this, updateSearchStatus);
+    connect(searchModel_, &QAbstractItemModel::rowsRemoved, this, updateSearchStatus);
+    connect(searchModel_, &QAbstractItemModel::modelReset, this, updateSearchStatus);
+    connect(searchInput, &QLineEdit::textChanged, this, [this, searchResults, updateSearchStatus](const QString& query) {
 #if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
         view_->setCurrentSearchResultIndex(-1);
 #endif
         searchResults->clearSelection();
         searchResults->setCurrentIndex({});
         searchModel_->setSearchString(query);
+        updateSearchStatus();
     });
     connect(searchResults, &QListView::activated, this, [this, searchDisplay](const QModelIndex& index) {
         const auto source = searchDisplay->mapToSource(index);

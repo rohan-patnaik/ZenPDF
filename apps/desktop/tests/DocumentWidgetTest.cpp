@@ -1,9 +1,12 @@
 #include "DocumentWidget.h"
 
+#include <QAccessible>
 #include <QFileInfo>
+#include <QLabel>
 #include <QLineEdit>
 #include <QPainter>
 #include <QPdfPageNavigator>
+#include <QPdfSearchModel>
 #include <QPdfView>
 #include <QPdfWriter>
 #include <QListView>
@@ -14,6 +17,8 @@
 #include <QTemporaryDir>
 #include <QtTest>
 
+#include <memory>
+
 class DocumentWidgetTest final : public QObject {
     Q_OBJECT
 
@@ -21,6 +26,9 @@ private slots:
     void clearsPasswordAfterUnlock();
     void exposesAccessibleThumbnailNames();
     void findsGeneratedTextAndActivatesResult();
+    void searchesUnicodeAndHandlesNoText();
+    void supersedesLongSearchAndShutsDownCleanly();
+    void rejectsMalformedPdfBeforeSearchStarts();
     void spaceActivatesOnlyTheFocusedThumbnailList();
 };
 
@@ -59,6 +67,15 @@ QListView* searchResultList(DocumentWidget& widget) {
 QLineEdit* searchLineEdit(DocumentWidget& widget) {
     for (auto* candidate : widget.findChildren<QLineEdit*>()) {
         if (candidate->placeholderText() == QStringLiteral("Search document")) {
+            return candidate;
+        }
+    }
+    return nullptr;
+}
+
+QLabel* searchStatusLabel(DocumentWidget& widget) {
+    for (auto* candidate : widget.findChildren<QLabel*>()) {
+        if (candidate->objectName() == QStringLiteral("searchStatus")) {
             return candidate;
         }
     }
@@ -132,14 +149,22 @@ void DocumentWidgetTest::findsGeneratedTextAndActivatesResult() {
     QVERIFY(widget.document_->getAllText(1).text().contains(QStringLiteral("quokka")));
     auto* searchInput = searchLineEdit(widget);
     auto* searchResults = searchResultList(widget);
+    auto* searchStatus = searchStatusLabel(widget);
     auto* sideTabs = widget.findChild<QTabWidget*>();
     QVERIFY(searchInput != nullptr);
     QVERIFY(searchResults != nullptr);
+    QVERIFY(searchStatus != nullptr);
     QVERIFY(sideTabs != nullptr);
     QCOMPARE(searchInput->accessibleName(), QStringLiteral("Search document"));
+    QCOMPARE(searchStatus->text(), QStringLiteral("Enter text to search."));
+    QCOMPARE(QAccessible::queryAccessibleInterface(searchStatus)->text(QAccessible::Name),
+             searchStatus->text());
 
     searchInput->setText(QStringLiteral("quokka"));
     QTRY_COMPARE(searchResults->model()->rowCount(), 1);
+    QCOMPARE(searchStatus->text(), QStringLiteral("1 result(s) found so far."));
+    QCOMPARE(QAccessible::queryAccessibleInterface(searchStatus)->text(QAccessible::Name),
+             searchStatus->text());
     const auto result = searchResults->model()->index(0, 0);
     QVERIFY(result.data(Qt::DisplayRole).toString().contains(QStringLiteral("Page 2")));
 
@@ -161,6 +186,118 @@ void DocumentWidgetTest::findsGeneratedTextAndActivatesResult() {
     QCOMPARE(widget.view_->currentSearchResultIndex(), -1);
 #endif
     QTRY_COMPARE(searchResults->model()->rowCount(), 0);
+    QCOMPARE(searchStatus->text(), QStringLiteral("Searching locally; no results yet."));
+}
+
+void DocumentWidgetTest::searchesUnicodeAndHandlesNoText() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto unicodeSource = directory.filePath(QStringLiteral("unicode.pdf"));
+    const auto blankSource = directory.filePath(QStringLiteral("blank.pdf"));
+
+    {
+        QPdfWriter writer(unicodeSource);
+        writer.setResolution(72);
+        QPainter painter(&writer);
+        painter.drawText(QPointF(72, 72), QString::fromUtf8("Local caf\u00e9 r\u00e9sum\u00e9"));
+        painter.end();
+    }
+    {
+        QPdfWriter writer(blankSource);
+        writer.setResolution(72);
+        QPainter painter(&writer);
+        painter.end();
+    }
+
+    DocumentWidget unicodeWidget(unicodeSource);
+    QVERIFY(unicodeWidget.isReady());
+    auto* unicodeInput = searchLineEdit(unicodeWidget);
+    auto* unicodeResults = searchResultList(unicodeWidget);
+    QVERIFY(unicodeInput != nullptr);
+    QVERIFY(unicodeResults != nullptr);
+    unicodeInput->setText(QString::fromUtf8("caf\u00e9"));
+    QTRY_COMPARE(unicodeResults->model()->rowCount(), 1);
+    QVERIFY(unicodeResults->model()->index(0, 0).data(Qt::AccessibleTextRole).toString()
+                .contains(QString::fromUtf8("caf\u00e9"), Qt::CaseInsensitive));
+
+    DocumentWidget blankWidget(blankSource);
+    QVERIFY(blankWidget.isReady());
+    QCOMPARE(blankWidget.document_->getAllText(0).text().trimmed(), QString{});
+    auto* blankInput = searchLineEdit(blankWidget);
+    auto* blankResults = searchResultList(blankWidget);
+    auto* blankStatus = searchStatusLabel(blankWidget);
+    QVERIFY(blankInput != nullptr);
+    QVERIFY(blankResults != nullptr);
+    QVERIFY(blankStatus != nullptr);
+    blankInput->setText(QStringLiteral("anything"));
+    QTest::qWait(150);
+    QCOMPARE(blankResults->model()->rowCount(), 0);
+    QCOMPARE(blankStatus->text(), QStringLiteral("Searching locally; no results yet."));
+}
+
+void DocumentWidgetTest::supersedesLongSearchAndShutsDownCleanly() {
+    constexpr int boundedPageCount = 80;
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("bounded-long.pdf"));
+
+    QPdfWriter writer(source);
+    writer.setResolution(72);
+    QPainter painter(&writer);
+    for (int page = 0; page < boundedPageCount; ++page) {
+        const auto text = page + 1 == boundedPageCount
+            ? QStringLiteral("replacement-only")
+            : QStringLiteral("superseded-result");
+        painter.drawText(QPointF(72, 72), text);
+        if (page + 1 < boundedPageCount) {
+            QVERIFY(writer.newPage());
+        }
+    }
+    painter.end();
+
+    auto widget = std::make_unique<DocumentWidget>(source);
+    QVERIFY(widget->isReady());
+    QCOMPARE(widget->pageCount(), boundedPageCount);
+    auto* searchInput = searchLineEdit(*widget);
+    auto* searchResults = searchResultList(*widget);
+    QVERIFY(searchInput != nullptr);
+    QVERIFY(searchResults != nullptr);
+
+    searchInput->setText(QStringLiteral("superseded-result"));
+    QTRY_VERIFY(searchResults->model()->rowCount() > 0);
+    searchResults->setCurrentIndex(searchResults->model()->index(0, 0));
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    widget->view_->setCurrentSearchResultIndex(0);
+#endif
+
+    searchInput->setText(QStringLiteral("replacement-only"));
+    QVERIFY(!searchResults->currentIndex().isValid());
+#if QT_VERSION >= QT_VERSION_CHECK(6, 6, 0)
+    QCOMPARE(widget->view_->currentSearchResultIndex(), -1);
+#endif
+    QTRY_COMPARE_WITH_TIMEOUT(searchResults->model()->rowCount(), 1, 15'000);
+    QVERIFY(searchResults->model()->index(0, 0).data(Qt::DisplayRole).toString()
+                .contains(QStringLiteral("Page 80")));
+
+    searchInput->setText(QStringLiteral("superseded-result"));
+    widget.reset();
+    QCoreApplication::processEvents();
+}
+
+void DocumentWidgetTest::rejectsMalformedPdfBeforeSearchStarts() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    const auto source = directory.filePath(QStringLiteral("malformed.pdf"));
+    QFile file(source);
+    QVERIFY(file.open(QIODevice::WriteOnly));
+    QCOMPARE(file.write("%PDF-1.7\nmalformed"), qint64{18});
+    file.close();
+
+    DocumentWidget widget(source);
+    QVERIFY(!widget.isReady());
+    QVERIFY(!widget.errorMessage().isEmpty());
+    QCOMPARE(searchLineEdit(widget), nullptr);
+    QCOMPARE(widget.searchModel_->rowCount({}), 0);
 }
 
 void DocumentWidgetTest::spaceActivatesOnlyTheFocusedThumbnailList() {

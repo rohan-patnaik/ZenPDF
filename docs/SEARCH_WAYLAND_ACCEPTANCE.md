@@ -2,6 +2,13 @@
 
 Run this gate only after the search-evidence commit is independently reviewed, published by normal fast-forward, and green in exact-tip CI. A developer build is not acceptance evidence.
 
+Source-level `DocumentWidgetTest` regressions cover generated text activation, exact
+Unicode search, a PDF with no text layer, malformed-input rejection, query
+replacement through an 80-page document, dynamic accessible status text, highlight
+reset, and destruction with an active query. These generated fixtures are narrow
+regression evidence, not independent-producer, installed-package, assistive-technology,
+or hard resource-bound evidence.
+
 ## Fixture and package identity
 
 1. Record the published commit and tree, exact-tip CI run, Arch package filename/version and SHA-256, Omarchy version, compositor, display scale, and assistive-technology versions.
@@ -29,4 +36,4 @@ Run this gate only after the search-evidence commit is independently reviewed, p
 - Close the tab and application while a query is active. Confirm clean shutdown and no document content or full path in diagnostics.
 - Record search-field/result-list AT-SPI names, roles, focus, selection, and announcements. Toolkit or chooser gaps remain product gaps.
 
-Keep L012 and related security/release rows below `Verified` until Unicode, no-text, malformed/hostile, long-document resource and cancellation behavior, highlighting, assistive technology, independent producers, exact-tip CI, and installed exact-package evidence are complete. Qt PDF remains an in-process parser; this gate does not prove isolation or a hard time/memory bound.
+Keep L012 and related security/release rows below `Verified` until independent-producer Unicode/no-text/malformed/hostile coverage, long-document resource and cancellation behavior, highlight fidelity, assistive technology, exact-tip CI, and installed exact-package evidence are complete. Qt PDF remains an in-process parser; this gate does not prove isolation or a hard time/memory bound.
