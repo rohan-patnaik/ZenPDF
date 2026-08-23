@@ -13,7 +13,7 @@ Adobe AI Assistant, PDF Spaces, Express templates, Adobe cloud sharing, account 
 - Historical candidates (not accepted architecture decisions): PDFium for rendering and low-level page inspection, and qpdf for structural transformations and encryption. Dedicated adapters are intended to keep engines replaceable; current accepted boundaries are recorded by ADR.
 - Historical candidates (not adopted): Tesseract/Leptonica for offline OCR and isolated optional LibreOffice integration for office conversions.
 - RAII, QObject parent ownership, smart pointers, bounded caches, and background jobs with cancellation.
-- SQLite for recent files, preferences, indexes, autosave metadata, and audit logs; document content stays in user-selected files.
+- SQLite for recent files and future index/autosave/audit metadata; schema-versioned QSettings INI storage for bounded window preferences. Both live below the private application-data directory, while document content stays in user-selected files.
 - Sandboxed or reduced-privilege helper processes for high-risk parsing and conversions where Omarchy supports them.
 - Root Omarchy `menu` plugin is a thin launcher/integration surface; the native app remains independently runnable.
 
@@ -74,4 +74,3 @@ Create `docs/ACROBAT_PARITY.md` with one row per documented workflow and these s
 ## Definition of done per feature
 
 Every feature requires focused tests, hostile/corrupt input behavior, cancellation/resource bounds for background work, keyboard/accessibility handling, documentation, and a coherent commit pushed after CI passes.
-

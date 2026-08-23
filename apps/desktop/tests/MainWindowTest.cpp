@@ -3,13 +3,16 @@
 #include "DocumentSession.h"
 #include "DocumentWidget.h"
 #include "LocalState.h"
+#include "Preferences.h"
 #include "QpdfOperations.h"
 
 #include <QAbstractButton>
 #include <QAction>
 #include <QApplication>
 #include <QCloseEvent>
+#include <QDir>
 #include <QFile>
+#include <QFileInfo>
 #include <QMessageBox>
 #include <QMenu>
 #include <QPainter>
@@ -17,6 +20,7 @@
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSemaphore>
+#include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
 #include <QThread>
@@ -39,6 +43,8 @@ private slots:
     void routesObsoleteCommandAccountingThroughActions();
     void dirtyTabRequiresExplicitDiscard();
     void dirtyWindowRequiresExplicitDiscard();
+    void persistsGeometryAndRejectsInvalidWindowBlobs();
+    void preferenceSaveFailureRequiresExplicitDiscard();
     void organizerRunsThroughSchedulerAndOpensCleanTab();
     void organizerCancellationUsesSchedulerToken();
     void organizerRejectsReentrantRun();
@@ -113,7 +119,8 @@ void MainWindowTest::exposesKeyboardAccessibleDeleteAction() {
     QVERIFY(directory.isValid());
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
 
     auto* action = window.findChild<QAction*>(QStringLiteral("deletePagesAction"));
     QVERIFY(action != nullptr);
@@ -129,7 +136,8 @@ void MainWindowTest::routesUndoForFirstDocumentImmediately() {
     createPdf(path, QStringLiteral("Document"));
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     window.openFiles({path});
     auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
     QVERIFY(undoAction != nullptr);
@@ -154,7 +162,8 @@ void MainWindowTest::routesUndoAndDirtyStateToActiveDocument() {
     createPdf(secondPath, QStringLiteral("Second"));
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     window.openFiles({firstPath, secondPath});
 
     auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
@@ -196,7 +205,8 @@ void MainWindowTest::routesObsoleteCommandAccountingThroughActions() {
     createPdf(path, QStringLiteral("Document"));
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     window.openFiles({path});
     auto& session = window.currentDocument()->session();
     auto* undoAction = window.findChild<QAction*>(QStringLiteral("undoAction"));
@@ -247,7 +257,8 @@ void MainWindowTest::dirtyTabRequiresExplicitDiscard() {
     createPdf(path, QStringLiteral("Document"));
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     window.openFiles({path});
     auto* document = window.currentDocument();
     QVERIFY(document != nullptr);
@@ -274,7 +285,9 @@ void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
     createPdf(path, QStringLiteral("Document"));
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    const auto preferencesPath = directory.filePath(QStringLiteral("preferences.ini"));
+    Preferences preferences(preferencesPath);
+    MainWindow window(state, preferences);
     window.openFiles({path});
     int value = 0;
     QVERIFY(window.currentDocument()->session().push(
@@ -284,11 +297,79 @@ void MainWindowTest::dirtyWindowRequiresExplicitDiscard() {
     answerMessageBox(QMessageBox::Cancel);
     window.closeEvent(&cancelEvent);
     QVERIFY(!cancelEvent.isAccepted());
+    QVERIFY(!QFileInfo::exists(preferencesPath));
 
     QCloseEvent discardEvent;
     answerMessageBox(QMessageBox::Discard);
     window.closeEvent(&discardEvent);
     QVERIFY(discardEvent.isAccepted());
+    QVERIFY(QFileInfo::exists(preferencesPath));
+}
+
+void MainWindowTest::persistsGeometryAndRejectsInvalidWindowBlobs() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    const auto preferencesPath = directory.filePath(QStringLiteral("preferences.ini"));
+    Preferences preferences(preferencesPath);
+    QByteArray expectedGeometry;
+    QByteArray expectedState;
+
+    {
+        MainWindow window(state, preferences);
+        window.setWindowState(Qt::WindowMaximized);
+        expectedGeometry = window.saveGeometry();
+        expectedState = window.saveState();
+        QCloseEvent closeEvent;
+        window.closeEvent(&closeEvent);
+        QVERIFY(closeEvent.isAccepted());
+    }
+    WindowPreferences persisted;
+    QVERIFY(preferences.loadWindowPreferences(&persisted));
+    QCOMPARE(persisted.geometry, expectedGeometry);
+    QCOMPARE(persisted.state, expectedState);
+    {
+        MainWindow restored(state, preferences);
+        QCOMPARE(restored.statusBar()->currentMessage(), QStringLiteral("Local-only workspace ready"));
+        QVERIFY(restored.isMaximized());
+        QCOMPARE(restored.saveState(), expectedState);
+    }
+
+    Preferences defaultPreferences(directory.filePath(QStringLiteral("default-preferences.ini")));
+    MainWindow defaultWindow(state, defaultPreferences);
+    const auto defaultGeometry = defaultWindow.saveGeometry();
+    const auto defaultState = defaultWindow.saveState();
+    QVERIFY(preferences.saveWindowPreferences(
+        {QByteArrayLiteral("invalid geometry"), QByteArrayLiteral("invalid state")}));
+    MainWindow fallback(state, preferences);
+    QVERIFY(fallback.statusBar()->currentMessage().contains(
+        QStringLiteral("invalid"), Qt::CaseInsensitive));
+    QCOMPARE(fallback.saveGeometry(), defaultGeometry);
+    QCOMPARE(fallback.saveState(), defaultState);
+}
+
+void MainWindowTest::preferenceSaveFailureRequiresExplicitDiscard() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    const auto preferencesPath = directory.filePath(QStringLiteral("preferences.ini"));
+    QVERIFY(QDir().mkdir(preferencesPath));
+    Preferences preferences(preferencesPath);
+    MainWindow window(state, preferences);
+
+    QCloseEvent cancelEvent;
+    answerMessageBox(QMessageBox::Cancel);
+    window.closeEvent(&cancelEvent);
+    QVERIFY(!cancelEvent.isAccepted());
+    QVERIFY(QFileInfo(preferencesPath).isDir());
+
+    QCloseEvent discardEvent;
+    answerMessageBox(QMessageBox::Discard);
+    window.closeEvent(&discardEvent);
+    QVERIFY(discardEvent.isAccepted());
+    QVERIFY(QFileInfo(preferencesPath).isDir());
 }
 
 void MainWindowTest::organizerRunsThroughSchedulerAndOpensCleanTab() {
@@ -305,7 +386,8 @@ void MainWindowTest::organizerRunsThroughSchedulerAndOpensCleanTab() {
 
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     window.openFiles({source});
     QCOMPARE(window.tabs_->count(), 1);
     auto* sourceDocument = window.currentDocument();
@@ -347,7 +429,8 @@ void MainWindowTest::organizerCancellationUsesSchedulerToken() {
     QVERIFY(directory.isValid());
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     QSignalSpy finished(&window.jobScheduler_, &DesktopJobScheduler::jobFinished);
     std::atomic_bool observedCancellation{false};
     bool clickedCancel = false;
@@ -390,7 +473,8 @@ void MainWindowTest::organizerRejectsReentrantRun() {
     QVERIFY(directory.isValid());
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     QSemaphore releaseOuter;
     std::optional<QpdfResult> nestedResult;
     std::atomic_bool nestedRan{false};
@@ -430,7 +514,8 @@ void MainWindowTest::organizerAdmissionFailureIsActionable() {
     QVERIFY(directory.isValid());
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
-    MainWindow window(state);
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
     std::vector<quint64> admittedIds;
     std::atomic_bool rejectedTaskRan{false};
     const auto maximumOutstanding = window.jobScheduler_.maximumRunningJobs()
@@ -471,11 +556,12 @@ void MainWindowTest::organizerSchedulerJoinsOnWindowDestruction() {
     QVERIFY(directory.isValid());
     LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
     QVERIFY(state.initialize());
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
     QSemaphore started;
     std::atomic_bool observedCancellation{false};
 
     {
-        auto window = std::make_unique<MainWindow>(state);
+        auto window = std::make_unique<MainWindow>(state, preferences);
         QVERIFY(window->jobScheduler_.submit([&](const std::atomic_bool& cancelled) {
             started.release();
             while (!cancelled.load()) {

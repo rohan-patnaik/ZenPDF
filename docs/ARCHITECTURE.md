@@ -19,7 +19,7 @@
 
 ## Native Desktop Boundary
 
-- Desktop state is local SQLite/preferences data under the platform application-data directory.
+- Desktop state stays under the private platform application-data directory. Recent-file state uses SQLite; window preferences use an explicit schema-versioned QSettings INI leaf rather than the process-wide default settings path, with a one-time bounded import of the versionless legacy QSettings location.
 - PDF document content is never sent to the web app, Convex, the worker, or telemetry.
 - PDF rendering and structural-editing engines are behind desktop-only adapters so risky work can move into bounded helper processes without coupling the web product.
 - The first reader adapter uses Qt PDF's PDFium-backed widget API. Structural page operations invoke qpdf with argument arrays (never a shell), bounded inputs/time, cancellation, and atomic new-file publication.

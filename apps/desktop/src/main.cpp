@@ -1,10 +1,12 @@
 #include "LocalState.h"
 #include "Logging.h"
 #include "MainWindow.h"
+#include "Preferences.h"
 
 #include <QApplication>
 #include <QDir>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStandardPaths>
 
 #ifdef Q_OS_UNIX
@@ -40,7 +42,10 @@ int main(int argc, char* argv[]) {
         if (!localState.initialize(&stateError)) {
             QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
         } else {
-            MainWindow window(localState);
+            Preferences preferences(
+                QDir(stateDirectory).filePath(QStringLiteral("preferences.ini")),
+                QSettings().fileName());
+            MainWindow window(localState, preferences);
             window.show();
             window.openFiles(application.arguments().mid(1));
             result = application.exec();

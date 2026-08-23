@@ -3,6 +3,7 @@
 #include "DocumentSession.h"
 #include "DocumentWidget.h"
 #include "LocalState.h"
+#include "Preferences.h"
 #include "QpdfOperations.h"
 
 #include <QAction>
@@ -21,7 +22,6 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressDialog>
-#include <QSettings>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
@@ -51,9 +51,10 @@ bool hasLocalPdf(const QMimeData* mimeData) {
 }
 }
 
-MainWindow::MainWindow(LocalState& localState, QWidget* parent)
+MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget* parent)
     : QMainWindow(parent),
       localState_(localState),
+      preferences_(preferences),
       undoGroup_(new QUndoGroup(this)),
       tabs_(new QTabWidget(this)),
       recentMenu_(nullptr),
@@ -74,10 +75,34 @@ MainWindow::MainWindow(LocalState& localState, QWidget* parent)
 
     buildMenus();
     ensureWelcomeTab();
-    QSettings settings;
-    restoreGeometry(settings.value(QStringLiteral("window/geometry")).toByteArray());
-    restoreState(settings.value(QStringLiteral("window/state")).toByteArray());
-    statusBar()->showMessage(tr("Local-only workspace ready"));
+    const auto defaultGeometryRect = geometry();
+    const auto defaultState = saveState();
+    const auto defaultWindowState = windowState();
+    QString statusMessage = tr("Local-only workspace ready");
+    WindowPreferences windowPreferences;
+    QString preferencesError;
+    if (!preferences_.loadWindowPreferences(&windowPreferences, &preferencesError)) {
+        statusMessage = preferencesError;
+    } else {
+        QMainWindow validationWindow;
+        const bool geometryValid = windowPreferences.geometry.isEmpty() ||
+                                   validationWindow.restoreGeometry(windowPreferences.geometry);
+        const bool stateValid = windowPreferences.state.isEmpty() ||
+                                validationWindow.restoreState(windowPreferences.state);
+        const bool geometryRestored = geometryValid &&
+                                      (windowPreferences.geometry.isEmpty() ||
+                                       restoreGeometry(windowPreferences.geometry));
+        const bool stateRestored = stateValid &&
+                                   (windowPreferences.state.isEmpty() ||
+                                    restoreState(windowPreferences.state));
+        if (!geometryRestored || !stateRestored) {
+            setWindowState(defaultWindowState);
+            setGeometry(defaultGeometryRect);
+            (void)restoreState(defaultState);
+            statusMessage = tr("Window preferences were invalid; defaults were used.");
+        }
+    }
+    statusBar()->showMessage(statusMessage);
 }
 
 void MainWindow::openFiles(const QStringList& paths) {
@@ -106,9 +131,20 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         event->ignore();
         return;
     }
-    QSettings settings;
-    settings.setValue(QStringLiteral("window/geometry"), saveGeometry());
-    settings.setValue(QStringLiteral("window/state"), saveState());
+    QString preferencesError;
+    if (!preferences_.saveWindowPreferences(
+            {saveGeometry(), saveState()}, &preferencesError)) {
+        statusBar()->showMessage(preferencesError);
+        if (QMessageBox::warning(
+                this,
+                tr("Window preferences not saved"),
+                tr("ZenPDF could not save private window preferences. Close without saving them?"),
+                QMessageBox::Discard | QMessageBox::Cancel,
+                QMessageBox::Cancel) != QMessageBox::Discard) {
+            event->ignore();
+            return;
+        }
+    }
     QMainWindow::closeEvent(event);
 }
 

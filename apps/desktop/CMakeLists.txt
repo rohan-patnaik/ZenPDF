@@ -24,6 +24,8 @@ add_library(zenpdf_core STATIC
     src/Logging.h
     src/PrintPolicy.cpp
     src/PrintPolicy.h
+    src/Preferences.cpp
+    src/Preferences.h
     src/QpdfOperations.cpp
     src/QpdfOperations.h
     src/QpdfPublication.h
@@ -80,6 +82,20 @@ if(BUILD_TESTING)
     add_executable(zenpdf_print_policy_tests tests/PrintPolicyTest.cpp)
     target_link_libraries(zenpdf_print_policy_tests PRIVATE zenpdf_core Qt6::Test)
     add_test(NAME zenpdf_print_policy_tests COMMAND zenpdf_print_policy_tests)
+    add_executable(zenpdf_preferences_tests tests/PreferencesTest.cpp)
+    target_link_libraries(zenpdf_preferences_tests PRIVATE zenpdf_core Qt6::Test)
+    if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_library(zenpdf_preferences_fstat_fault MODULE
+            tests/PreferencesFstatFault.cpp
+        )
+        target_link_libraries(zenpdf_preferences_fstat_fault PRIVATE ${CMAKE_DL_LIBS})
+        set_target_properties(zenpdf_preferences_fstat_fault PROPERTIES PREFIX "")
+        target_compile_definitions(zenpdf_preferences_tests PRIVATE
+            ZENPDF_PREFERENCES_FSTAT_FAULT_LIBRARY="$<TARGET_FILE:zenpdf_preferences_fstat_fault>"
+        )
+        add_dependencies(zenpdf_preferences_tests zenpdf_preferences_fstat_fault)
+    endif()
+    add_test(NAME zenpdf_preferences_tests COMMAND zenpdf_preferences_tests)
     add_executable(zenpdf_qpdf_tests tests/QpdfOperationsTest.cpp)
     target_link_libraries(zenpdf_qpdf_tests PRIVATE zenpdf_core Qt6::Gui Qt6::Pdf Qt6::Test)
     add_test(NAME zenpdf_qpdf_tests COMMAND zenpdf_qpdf_tests)
@@ -135,27 +151,30 @@ if(BUILD_TESTING)
     )
     add_test(NAME zenpdf_main_window_tests COMMAND zenpdf_main_window_tests)
     set_tests_properties(zenpdf_core_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_document_session_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_job_scheduler_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_qpdf_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
+    )
+    set_tests_properties(zenpdf_preferences_tests PROPERTIES
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_pdf_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_document_widget_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_thumbnail_model_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
     set_tests_properties(zenpdf_main_window_tests PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+        ENVIRONMENT "QT_QPA_PLATFORM=offscreen;QT_QPA_PLATFORMTHEME=;QT_STYLE_OVERRIDE=Fusion"
     )
 endif()

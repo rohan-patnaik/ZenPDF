@@ -10,6 +10,7 @@
 
 class DocumentWidget;
 class LocalState;
+class Preferences;
 class QDragEnterEvent;
 class QDropEvent;
 class QMenu;
@@ -22,7 +23,10 @@ class MainWindow final : public QMainWindow {
     Q_OBJECT
 
 public:
-    explicit MainWindow(LocalState& localState, QWidget* parent = nullptr);
+    explicit MainWindow(
+        LocalState& localState,
+        Preferences& preferences,
+        QWidget* parent = nullptr);
     void openFiles(const QStringList& paths);
 
 protected:
@@ -57,6 +61,7 @@ private:
     [[nodiscard]] QString chooseOutputPath(const QString& suggestedName) const;
 
     LocalState& localState_;
+    Preferences& preferences_;
     DesktopJobScheduler jobScheduler_;
     bool organizerJobActive_ = false;
     QUndoGroup* undoGroup_;
