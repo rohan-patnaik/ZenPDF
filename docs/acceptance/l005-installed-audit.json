@@ -1,0 +1,147 @@
+{
+  "artifacts": {
+    "candidate_executable_sha256": "a48f20268555796a7f159508a27cd6a36c2561a936cfb7767c5a4ea072292416",
+    "candidate_package_sha256": "0767a68df9aead7f9ec5bfeb595b8dcc0d7ba4ed93b48c5925d1ebc2ed2dac99",
+    "candidate_package_version": "0.1.0.r0.gaa118d8-1",
+    "exact_source_archive_sha256": "c1a5c8699647ad08865fccbe05efe13d8cad72d404bdc2764cb1bb8ebe8f17f8",
+    "fixture_sha256": "893fd90c2553f6a0b075711da52d0433ba73345b0f4f0df2e3f2ded1f3805122",
+    "rollback_executable_sha256": "7575cdbf2e7fa30f429039acc7631cf577c71d0cfbad9150411fad42bb8e206c",
+    "rollback_package_sha256": "d231fc58f62847fbf2603b9b29dcf54334457d83b47a3a0cc2ba88b67b6402e2",
+    "rollback_package_version": "0.1.0.r0.geeba33d-1"
+  },
+  "case_groups": {
+    "bounds_and_rotation": {
+      "cases": 4,
+      "passed": true
+    },
+    "contention_and_recovery": {
+      "cases": 2,
+      "passed": true
+    },
+    "directory_state": {
+      "cases": 6,
+      "passed": true
+    },
+    "fatal_restart_and_core": {
+      "cases": 1,
+      "passed": true
+    },
+    "filesystem_preflight": {
+      "cases": 1,
+      "passed": true
+    },
+    "fstat_failure": {
+      "cases": 1,
+      "passed": true
+    },
+    "log_child_state": {
+      "cases": 16,
+      "passed": true
+    },
+    "multiprocess_rotation": {
+      "cases": 1,
+      "passed": true
+    },
+    "runtime_and_lifecycle": {
+      "cases": 2,
+      "passed": true
+    }
+  },
+  "case_totals": {
+    "failed": 0,
+    "passed": 34,
+    "total": 34
+  },
+  "ci": {
+    "artifact_uploaded": false,
+    "conclusion": "success",
+    "head_sha": "aa118d8a9544e4982ef8110988f95e45fa9ccf3b",
+    "job_count": 5,
+    "run_id": 32651427740
+  },
+  "evidence": {
+    "final_index_sha256": "c348ac2984fb77fcdda43d87398d1b640b052a3654880a1ab9aa6dc669cffef4",
+    "package_member_manifest_sha256": "c37eb2b25500f7d2657a8e70375353dd3fd592fd497ff2513e3e0d21e333ef4b",
+    "private_bundle_manifest_sha256": "34d0c9c2f862a1a63bd0a5d1d8dc4843e0e06d6b5a8611c89ffcb906ab6ed7a2",
+    "private_raw_record_sha256": "2839344f58c9be843d49d800b5b007e65d67780983acc9c34e665591c00110a3",
+    "rollback_member_manifest_sha256": "8ee31a842e628b6d2c8138e9f67151e03308a7b97d7a42b00980436b0c86e9c2"
+  },
+  "helpers": {
+    "accepted_fstat_fault_binary_sha256": "bf1fd492ce5bd324c380542ba3027a5e06e7e3d5caf53b05f9043bc12ff5a763",
+    "accepted_probe_binary_sha256": "1a6bf3c45df6766763b2a60f26c5d5c8355baa16aec12a378ccb838c46eaa260",
+    "bundle_manifest_sha256": "b4d8d0ec58425e3df45b5488ac8efa628fd8edd4f13666fa6210cc9e4de1c446",
+    "fstat_fault_map_sha256": "a25b82123a4fbf38edbfda151d9a27c26f8eecce6e3d81a01dc3cd951a8abffa",
+    "fstat_fault_source_sha256": "3c83918d2f76b3544933d25cd2a55fa9a48ba6b5ed24ad857cca9f3ca627c6c9",
+    "installed_runner_sha256": "405116bf07f20aef0f33064b2a5b025f6046581518929ffb585376f558cc9583",
+    "package_manifest_sha256": "ddcf38b5cacc2ab862cbf48a39bf1ab32d1b2ff1f1caf80157625de99ceabafe",
+    "probe_map_sha256": "826350a5176584d2762b0d3c313777289d702a103ec7e7a4464b5382eebdc04d",
+    "probe_source_sha256": "49943b4b4ca64a948e5070128221ca50b769f6a5cd5e4b559f30b5b5f91c8176"
+  },
+  "implementation": {
+    "parent": "f2fac2351658c677afc4519e4b44dcf0fad30592",
+    "sha": "aa118d8a9544e4982ef8110988f95e45fa9ccf3b",
+    "tree": "649c6283b40f22b672f3f4f436ddab03b9809051"
+  },
+  "package_install": {
+    "candidate_qkk_altered": 0,
+    "candidate_qkk_total": 12,
+    "candidate_query_exact": true,
+    "package_member_equals_installed": true,
+    "rollback_qkk_altered": 0,
+    "rollback_qkk_total": 12,
+    "rollback_query_exact": true
+  },
+  "privacy": {
+    "absolute_paths_present": false,
+    "private_runtime_identifiers_present": false,
+    "private_fixture_content_present": false,
+    "raw_logs_present": false,
+    "sensitive_body_absent_from_stderr_and_logs": true
+  },
+  "result": "PASS",
+  "runtime": {
+    "filesystem_class": "btrfs",
+    "host_packages": [
+      "qt6-base 6.11.2-2",
+      "qt6-webengine 6.11.2-1",
+      "qpdf 12.4.0-1",
+      "glibc 2.44+r24+g16be1518495f-1",
+      "bubblewrap 0.11.2-1"
+    ],
+    "namespace_host_backed_files": true,
+    "qpa": "offscreen"
+  },
+  "security_assertions": {
+    "directory_mode_0700": true,
+    "exact_two_file_ceiling": true,
+    "fatal_exit_signal": "SIGABRT",
+    "fatal_list_candidate_count": 1,
+    "fatal_marker_match_count": 1,
+    "fatal_pid_join": true,
+    "fatal_restart_same_state": true,
+    "file_mode_0600": true,
+    "fstat_failure_no_mutation": true,
+    "host_install_untouched": true,
+    "no_open_deleted_log_descriptors": true,
+    "no_stored_core": true,
+    "single_link_regular_files": true,
+    "source_and_fixture_unchanged": true
+  },
+  "timings_ms": {
+    "fatal_after_trigger": 214.096,
+    "fatal_list_after_trigger": 168.55,
+    "fatal_list_before_process_end": 45.596,
+    "fatal_total": 470.333,
+    "fstat_failure": 66.389,
+    "hostile_case_max": 66.306,
+    "hostile_case_min": 65.391,
+    "multiprocess_max": 310.991,
+    "multiprocess_min": 303.239,
+    "normal_lifecycle": 216.237,
+    "runtime_contended_event": 111.047,
+    "runtime_contention_total": 172.95,
+    "setup_contention_total": 263.004,
+    "setup_ready_under_lock": 252.74
+  },
+  "timestamp_note": "coredump info Timestamp was rounded display metadata; the precise list timestamp was authoritative for the bounded acceptance window"
+}

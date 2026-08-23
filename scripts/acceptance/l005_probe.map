@@ -1,0 +1,6 @@
+Qt_6 {
+    global:
+        _ZN12QApplication4execEv;
+    local:
+        *;
+};
