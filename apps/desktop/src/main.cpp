@@ -15,33 +15,40 @@ int main(int argc, char* argv[]) {
 #ifdef Q_OS_UNIX
     ::umask(S_IRWXG | S_IRWXO);
 #endif
-    QApplication application(argc, argv);
-    QCoreApplication::setOrganizationName(QStringLiteral("ZenPDF"));
-    QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.rohan-patnaik"));
-    QCoreApplication::setApplicationName(QStringLiteral("ZenPDF"));
-    QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
-    QApplication::setDesktopFileName(QStringLiteral("io.github.rohan-patnaik.zenpdf"));
+    int result = 1;
+    bool loggingInstalled = false;
+    {
+        QApplication application(argc, argv);
+        QCoreApplication::setOrganizationName(QStringLiteral("ZenPDF"));
+        QCoreApplication::setOrganizationDomain(QStringLiteral("io.github.rohan-patnaik"));
+        QCoreApplication::setApplicationName(QStringLiteral("ZenPDF"));
+        QCoreApplication::setApplicationVersion(QStringLiteral("0.1.0"));
+        QApplication::setDesktopFileName(QStringLiteral("io.github.rohan-patnaik.zenpdf"));
 
-    const auto stateDirectory = QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
-    QString stateError;
-    if (!LocalState::preparePrivateApplicationDirectory(stateDirectory, &stateError)) {
-        QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
-        return 1;
+        const auto stateDirectory =
+            QStandardPaths::writableLocation(QStandardPaths::AppLocalDataLocation);
+        QString stateError;
+        if (!LocalState::preparePrivateApplicationDirectory(stateDirectory, &stateError)) {
+            QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
+            return 1;
+        }
+        Logging::install(QDir(stateDirectory).filePath(QStringLiteral("logs")));
+        loggingInstalled = true;
+        qInfo("Starting ZenPDF Desktop");
+
+        LocalState localState(QDir(stateDirectory).filePath(QStringLiteral("state.sqlite3")));
+        if (!localState.initialize(&stateError)) {
+            QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
+        } else {
+            MainWindow window(localState);
+            window.show();
+            window.openFiles(application.arguments().mid(1));
+            result = application.exec();
+        }
     }
-    Logging::install(QDir(stateDirectory).filePath(QStringLiteral("logs")));
-    qInfo("Starting ZenPDF Desktop");
 
-    LocalState localState(QDir(stateDirectory).filePath(QStringLiteral("state.sqlite3")));
-    if (!localState.initialize(&stateError)) {
-        QMessageBox::critical(nullptr, QObject::tr("ZenPDF could not start"), stateError);
+    if (loggingInstalled) {
         Logging::shutdown();
-        return 1;
     }
-
-    MainWindow window(localState);
-    window.show();
-    window.openFiles(application.arguments().mid(1));
-    const int result = application.exec();
-    Logging::shutdown();
     return result;
 }
