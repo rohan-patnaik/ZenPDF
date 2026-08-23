@@ -21,8 +21,8 @@ This source-revision prerequisite starts from published branch commit `76619334b
 | Status | Count |
 | --- | ---: |
 | Not started | 45 |
-| Partial | 30 |
-| Verified | 1 |
+| Partial | 29 |
+| Verified | 2 |
 | Blocked | 0 |
 | **Total** | **76** |
 
@@ -32,7 +32,7 @@ This source-revision prerequisite starts from published branch commit `76619334b
 
 | ID | Local capability | Owner | Deps | Status | Tests | Interop evidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| L001 | Native Arch/Wayland application launch | M0 / Platform | Qt, package | Partial | CI configure/build/CTest; real-session smoke missing | Omarchy Quattro launch record missing |
+| L001 | Native Arch/Wayland application launch | M0 / Platform | Qt, package | Verified | Exact-tip CI configure/build/CTest/package plus [`L001_ACCEPTANCE_EVIDENCE.md`](L001_ACCEPTANCE_EVIDENCE.md) reconcile the installed executable/package identity, mapped visible native Wayland client, Omarchy platform, bounded successful-launch diagnostics, and clean shutdown | Omarchy `4.0.0-1` / Hyprland `0.56.2` native Wayland launch record |
 | L002 | Multi-document tabbed workspace | M0 / Shell | Qt Widgets | Partial | `DocumentSessionTest.cpp` and `MainWindowTest.cpp` cover a 512-command per-tab limit, a 64 MiB default ceiling on caller-declared retained payload costs, active routing, dirty markers, clean organizer tabs, and explicit owner-thread source-revision classification; true heap bounds, monitoring, save/recovery, and real-session lifecycle remain | N/A |
 | L003 | System theme, scaling, and high contrast | M0 / Accessibility | Qt platform theme | Partial | Portal, fractional-scale, contrast tests missing | Wayland compositor matrix missing |
 | L004 | Persistent local preferences | M0 / State | QSettings | Partial | Corrupt/migration fixtures missing | N/A |
