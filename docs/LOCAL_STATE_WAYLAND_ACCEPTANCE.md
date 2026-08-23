@@ -27,4 +27,6 @@ In a disposable state root, separately test a leaf symlink, database symlink, wr
 
 ## Reconciliation
 
-Record shutdown behavior, AT-SPI modal name/role/focus smoke, package/source hashes, state metadata, sentinel scans, source preservation, and all command outputs. Reconcile the installed executable and package to the exact reviewed commit and tree. Keep L016 `Partial` until this installed exact-SHA gate and the broader release reconciliation are independently accepted.
+Record shutdown behavior, AT-SPI modal name/role/focus smoke, package/source hashes, state metadata, sentinel scans, source preservation, and all command outputs. Reconcile the installed executable and package to the exact reviewed commit and tree.
+
+This gate passed for implementation commit `99b75284775f73ec81d249d003691796a13e92ca` and its exact package. The independently accepted, redacted criterion reconciliation is recorded in [`L016_ACCEPTANCE_EVIDENCE.md`](L016_ACCEPTANCE_EVIDENCE.md). L016 is `Verified`; unrelated product-wide release and accessibility gaps do not reopen this row.

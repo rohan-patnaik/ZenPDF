@@ -21,8 +21,8 @@ This source-revision prerequisite starts from published branch commit `76619334b
 | Status | Count |
 | --- | ---: |
 | Not started | 45 |
-| Partial | 31 |
-| Verified | 0 |
+| Partial | 30 |
+| Verified | 1 |
 | Blocked | 0 |
 | **Total** | **76** |
 
@@ -47,7 +47,7 @@ This source-revision prerequisite starts from published branch commit `76619334b
 | L013 | Lazy page thumbnails | M1 / Reader | Render cache | Partial | `ThumbnailModelTest.cpp` covers owner-thread FIFO deferral, a 64-request boundary, saturation invalidation and automatic visible-row readmission without a rejected-page backlog, duplicate suppression, cancellation/readmission, 128x512 render bounds, exact 32 MiB four-byte pixel-cost eviction, failure suppression, document reset/destruction, and an 80-page generated fixture; synchronous render timeout/isolation, hostile independent producers, transient/true heap bounds, and installed exact-SHA Wayland/AT evidence for this slice remain | N/A |
 | L014 | Outline and bookmark navigation | M1 / Reader | Outline adapter | Partial | Malformed/deep/named-destination tests missing | Producer corpus missing |
 | L015 | Metadata inspection | M1 / Reader | Metadata adapter | Partial | Malformed/XMP fixtures missing | Standard/XMP producer corpus missing |
-| L016 | Private recent-files history and purge | M1 / State | SQLite | Partial | `apps/desktop/tests/LocalStateTest.cpp::clearingPurgesPathsFromDatabaseFiles` and related cases cover private creation, safe permission repair, alias/type/link/unsafe-mode rejection, SQL retry cleanup, bounded path-free errors, and purge; exact-SHA installed Wayland forensic gate remains | N/A |
+| L016 | Private recent-files history and purge | M1 / State | SQLite | Verified | `apps/desktop/tests/LocalStateTest.cpp::clearingPurgesPathsFromDatabaseFiles` and related cases cover private creation, safe permission repair, alias/type/link/unsafe-mode rejection, SQL retry cleanup, bounded path-free errors, and purge; [`L016_ACCEPTANCE_EVIDENCE.md`](L016_ACCEPTANCE_EVIDENCE.md) reconciles exact-package real-Wayland entry-path, privacy, UI purge, AT-SPI, hostile-state, source-preservation, rollback and independent-acceptance evidence | N/A |
 | L017 | Page navigation and labels | M1 / Reader | Qt PDF adapter | Partial | UI automation/page-label fixtures missing | Nondecimal page-label corpus missing |
 | L018 | Zoom, actual size, fit width/page | M1 / Reader | Render adapter | Partial | DPI/shortcut/position tests missing | Reference-render comparison missing |
 | L019 | Non-destructive view rotation | M1 / Reader | Render adapter | Not started | Rotation and source-unchanged fixtures | Independent-reader source hash |
@@ -111,4 +111,4 @@ This source-revision prerequisite starts from published branch commit `76619334b
 
 ## Governance
 
-Change a row in the same commit as its implementation and focused regression evidence. The validator enforces 76 unique rows, the status vocabulary, and count totals. A row remains `Partial` or `Blocked` when exact-commit CI, real-platform, standards, accessibility, or interoperability evidence is absent. Dependency adoption, licensing posture, or helper-isolation architecture changes require an accepted ADR and user direction first.
+Record implementation status with its implementation and focused regression evidence. A later `Partial` to `Verified` promotion may be a separate, independently reviewed exact-evidence reconciliation commit after the required exact-commit CI, platform, accessibility, standards, or interoperability gates finish. The validator enforces 76 unique rows, the status vocabulary, and count totals. A row remains `Partial` or `Blocked` while any row-specific gate is absent. Dependency adoption, licensing posture, or helper-isolation architecture changes require an accepted ADR and user direction first.

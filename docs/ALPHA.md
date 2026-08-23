@@ -1,6 +1,6 @@
 # ZenPDF Desktop alpha
 
-ZenPDF Desktop alpha is an offline, account-free native Arch/Omarchy workspace. It is not an Acrobat compatibility claim. The capability matrix remains authoritative; every desktop row is still `Partial` or `Not started`.
+ZenPDF Desktop alpha is an offline, account-free native Arch/Omarchy workspace. It is not an Acrobat compatibility claim. The capability matrix remains authoritative; L016 private recent-files history and purge is `Verified`, while every other desktop row remains `Partial` or `Not started`.
 
 ## Included scope
 

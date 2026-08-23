@@ -1,0 +1,5 @@
+Qt_6 {
+    global:
+        _ZN11QMessageBox8criticalEP7QWidgetRK7QStringS4_6QFlagsINS_14StandardButtonEES6_;
+    local: *;
+};

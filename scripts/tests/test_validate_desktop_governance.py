@@ -54,7 +54,7 @@ class DesktopGovernanceNegativeTest(unittest.TestCase):
 
     def test_rejects_stale_summary(self) -> None:
         with self.assertRaisesRegex(GovernanceError, "do not match summary"):
-            validate_matrix(self.plan.replace("| Partial | 31 |", "| Partial | 30 |"))
+            validate_matrix(self.plan.replace("| Partial | 30 |", "| Partial | 29 |"))
 
     def test_rejects_missing_evidence_path(self) -> None:
         broken = self.plan.replace("`LoggingTest.cpp`", "`MissingTest.cpp`", 1)

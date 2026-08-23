@@ -1,0 +1,95 @@
+{
+  "cases": [
+    {
+      "label": "direct",
+      "leaf": {
+        "directory": true,
+        "effective_uid_owned": true,
+        "mode": "0700"
+      },
+      "sentinel_absent_from_diagnostics": true,
+      "sqlite": [
+        {
+          "effective_uid_owned": true,
+          "links": 1,
+          "mode": "0600",
+          "name": "state.sqlite3",
+          "present": true,
+          "regular": true,
+          "sentinel_absent": true,
+          "sha256": "78ecb53b3811ad83e5e9dfb514f22853ceb4b850b86ef9f52aa9abb2d7e748d1"
+        },
+        {
+          "name": "state.sqlite3-wal",
+          "present": false
+        },
+        {
+          "name": "state.sqlite3-shm",
+          "present": false
+        }
+      ]
+    },
+    {
+      "label": "desktop",
+      "leaf": {
+        "directory": true,
+        "effective_uid_owned": true,
+        "mode": "0700"
+      },
+      "sentinel_absent_from_diagnostics": true,
+      "sqlite": [
+        {
+          "effective_uid_owned": true,
+          "links": 1,
+          "mode": "0600",
+          "name": "state.sqlite3",
+          "present": true,
+          "regular": true,
+          "sentinel_absent": true,
+          "sha256": "78ecb53b3811ad83e5e9dfb514f22853ceb4b850b86ef9f52aa9abb2d7e748d1"
+        },
+        {
+          "name": "state.sqlite3-wal",
+          "present": false
+        },
+        {
+          "name": "state.sqlite3-shm",
+          "present": false
+        }
+      ]
+    },
+    {
+      "label": "launcher",
+      "leaf": {
+        "directory": true,
+        "effective_uid_owned": true,
+        "mode": "0700"
+      },
+      "sentinel_absent_from_diagnostics": true,
+      "sqlite": [
+        {
+          "effective_uid_owned": true,
+          "links": 1,
+          "mode": "0600",
+          "name": "state.sqlite3",
+          "present": true,
+          "regular": true,
+          "sentinel_absent": true,
+          "sha256": "78ecb53b3811ad83e5e9dfb514f22853ceb4b850b86ef9f52aa9abb2d7e748d1"
+        },
+        {
+          "name": "state.sqlite3-wal",
+          "present": false
+        },
+        {
+          "name": "state.sqlite3-shm",
+          "present": false
+        }
+      ]
+    }
+  ],
+  "fixture_sha256": "8786281deca6644b1b30f5c73a21ab6338c89d8976c3739847e6b9f13c0132e2",
+  "installed_executable_sha256": "c9db39c18fb08c820a6469ad0f1a60499b4a1653c0dcec66673f6d8c082e32ee",
+  "no_residual_zenpdf_process": true,
+  "recorded_utc": "2026-08-23T14:02:43.030310+00:00"
+}
