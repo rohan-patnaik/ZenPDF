@@ -67,6 +67,7 @@ private:
     bool organizerJobActive_ = false;
     bool presentationMode_ = false;
     QUndoGroup* undoGroup_;
+    QShortcut* presentationShortcut_;
     QShortcut* exitPresentationShortcut_;
     QTabWidget* tabs_;
     QMenu* recentMenu_;

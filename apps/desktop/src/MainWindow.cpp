@@ -78,6 +78,7 @@ MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget
       localState_(localState),
       preferences_(preferences),
       undoGroup_(new QUndoGroup(this)),
+      presentationShortcut_(new QShortcut(QKeySequence(Qt::Key_F11), this)),
       exitPresentationShortcut_(new QShortcut(QKeySequence(Qt::Key_Escape), this)),
       tabs_(new QTabWidget(this)),
       recentMenu_(nullptr),
@@ -89,6 +90,8 @@ MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget
     tabs_->setMovable(true);
     tabs_->setTabsClosable(true);
     setCentralWidget(tabs_);
+    presentationShortcut_->setContext(Qt::ApplicationShortcut);
+    connect(presentationShortcut_, &QShortcut::activated, this, &MainWindow::togglePresentationMode);
     exitPresentationShortcut_->setContext(Qt::ApplicationShortcut);
     exitPresentationShortcut_->setEnabled(false);
     connect(exitPresentationShortcut_, &QShortcut::activated, this, [this] {
@@ -231,8 +234,6 @@ void MainWindow::buildMenus() {
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     auto* presentation = viewMenu->addAction(tr("&Presentation mode"));
     presentation->setObjectName(QStringLiteral("presentationModeAction"));
-    presentation->setShortcut(QKeySequence(Qt::Key_F11));
-    presentation->setShortcutContext(Qt::ApplicationShortcut);
     connect(presentation, &QAction::triggered, this, &MainWindow::togglePresentationMode);
 }
 

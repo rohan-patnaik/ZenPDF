@@ -416,11 +416,17 @@ void MainWindowTest::presentationModeExitsWithEscape() {
     window.show();
     auto* presentationAction = window.findChild<QAction*>(QStringLiteral("presentationModeAction"));
     QVERIFY(presentationAction != nullptr);
-    QCOMPARE(presentationAction->shortcutContext(), Qt::ApplicationShortcut);
+    QCOMPARE(window.presentationShortcut_->context(), Qt::ApplicationShortcut);
 
-    window.togglePresentationMode();
+    QVERIFY(QMetaObject::invokeMethod(window.presentationShortcut_, "activated"));
     QVERIFY(window.presentationMode_);
     QVERIFY(window.exitPresentationShortcut_->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(window.presentationShortcut_, "activated"));
+    QVERIFY(!window.presentationMode_);
+    QVERIFY(!window.exitPresentationShortcut_->isEnabled());
+
+    QVERIFY(QMetaObject::invokeMethod(window.presentationShortcut_, "activated"));
+    QVERIFY(window.presentationMode_);
     QVERIFY(QMetaObject::invokeMethod(window.exitPresentationShortcut_, "activated"));
     QVERIFY(!window.presentationMode_);
     QVERIFY(!window.exitPresentationShortcut_->isEnabled());
