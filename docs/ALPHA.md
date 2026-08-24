@@ -8,16 +8,16 @@ ZenPDF Desktop alpha is an offline, account-free native Arch/Omarchy workspace. 
 - qpdf-backed merge, page extraction, page deletion, and rotation into a new file. Organizer operations preserve the source and never overwrite an existing destination.
 - Thin Omarchy launcher files at the repository root. The native `zenpdf` and `zenpdf-launch` executables are supplied by the Arch package.
 
-## Exact feature-branch package path
+## Exact package path
 
-The current alpha lives on `feat/omarchy-desktop-m0-m1`. Omarchy's normal plugin-install path cannot install this unpublished feature-branch revision as the default-branch plugin. Until an independently reviewed revision is published to the supported plugin source, install its exact Arch package and start `zenpdf-launch` directly; do not treat a default-branch checkout as equivalent.
+Build release packages from an exact reviewed commit on `main`. Omarchy's plugin installer installs the launcher integration but does not build the native `zenpdf` package; install the matching package before launching the plugin.
 
 For a reviewed published commit, create an archive from a clean HTTPS clone, add the package revision marker, and build without following a moving branch:
 
 ```sh
 published_sha=<reviewed-40-character-sha>
 work_root=$(mktemp -d)
-git clone --branch feat/omarchy-desktop-m0-m1 --single-branch \
+git clone --branch main --single-branch \
   https://github.com/rohan-patnaik/ZenPDF "$work_root/repo"
 cd "$work_root/repo"
 test "$(git rev-parse HEAD)" = "$published_sha"

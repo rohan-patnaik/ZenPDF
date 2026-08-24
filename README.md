@@ -9,6 +9,9 @@ ZenPDF is an open-source PDF toolkit. The existing product is a Next.js web app 
 
 ![ZenPDF homepage](docs/images/homepage-preview.png)
 
+The root `preview.png` is the original monochrome marketplace mark for the
+native plugin listing.
+
 ## Tool scope (27)
 - Merge PDF, Split PDF, Compress PDF
 - PDF to Word, PDF to PowerPoint, PDF to Excel
@@ -26,6 +29,31 @@ ZenPDF is an open-source PDF toolkit. The existing product is a Next.js web app 
 - `docs`: product, architecture, feature internals, and operations
 
 The root `manifest.json` and `Plugin.qml` provide the Omarchy Quattro plugin contract and launch the installed native `zenpdf` binary.
+
+## Omarchy plugin
+
+The plugin is a thin local launcher. Build and install the native Arch package
+first, then add and summon the plugin:
+
+```sh
+git clone https://github.com/rohan-patnaik/ZenPDF.git
+cd ZenPDF/apps/desktop/packaging/arch
+makepkg --cleanbuild --clean --noconfirm
+sudo pacman -U ./zenpdf-git-*.pkg.tar.zst
+omarchy plugin add https://github.com/rohan-patnaik/ZenPDF.git --enable --yes
+omarchy-shell shell summon io.github.rohan-patnaik.zenpdf '{}'
+```
+
+The native application depends on Qt 6 and qpdf; the `PKGBUILD` resolves the
+complete Arch dependency set. ZenPDF processes only user-selected local files
+in this desktop workflow.
+
+Remove the plugin and native package with:
+
+```sh
+omarchy plugin remove io.github.rohan-patnaik.zenpdf
+sudo pacman -Rns zenpdf-git
+```
 
 ## Quick start (local)
 1. Copy environment files:

@@ -15,11 +15,13 @@
 #include <QFileInfo>
 #include <QMessageBox>
 #include <QMenu>
+#include <QMenuBar>
 #include <QPainter>
 #include <QPdfWriter>
 #include <QProgressDialog>
 #include <QPushButton>
 #include <QSemaphore>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QTabWidget>
 #include <QTemporaryDir>
@@ -45,6 +47,8 @@ private slots:
     void dirtyWindowRequiresExplicitDiscard();
     void persistsGeometryAndRejectsInvalidWindowBlobs();
     void preferenceSaveFailureRequiresExplicitDiscard();
+    void preferenceSaveFailureExposesSemanticActions();
+    void presentationModeExitsWithEscape();
     void organizerRunsThroughSchedulerAndOpensCleanTab();
     void organizerCancellationUsesSchedulerToken();
     void organizerRejectsReentrantRun();
@@ -370,6 +374,54 @@ void MainWindowTest::preferenceSaveFailureRequiresExplicitDiscard() {
     window.closeEvent(&discardEvent);
     QVERIFY(discardEvent.isAccepted());
     QVERIFY(QFileInfo(preferencesPath).isDir());
+}
+
+void MainWindowTest::preferenceSaveFailureExposesSemanticActions() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    const auto preferencesPath = directory.filePath(QStringLiteral("preferences.ini"));
+    QVERIFY(QDir().mkdir(preferencesPath));
+    Preferences preferences(preferencesPath);
+    MainWindow window(state, preferences);
+    bool inspected = false;
+
+    QTimer::singleShot(0, [&inspected] {
+        auto* box = qobject_cast<QMessageBox*>(QApplication::activeModalWidget());
+        QVERIFY(box != nullptr);
+        auto* discard = box->button(QMessageBox::Discard);
+        auto* cancel = box->button(QMessageBox::Cancel);
+        QVERIFY(discard != nullptr);
+        QVERIFY(cancel != nullptr);
+        QCOMPARE(discard->accessibleName(), QStringLiteral("Discard"));
+        QCOMPARE(cancel->accessibleName(), QStringLiteral("Cancel"));
+        inspected = true;
+        cancel->click();
+    });
+
+    QCloseEvent event;
+    window.closeEvent(&event);
+    QVERIFY(inspected);
+    QVERIFY(!event.isAccepted());
+}
+
+void MainWindowTest::presentationModeExitsWithEscape() {
+    QTemporaryDir directory;
+    QVERIFY(directory.isValid());
+    LocalState state(directory.filePath(QStringLiteral("state.sqlite")));
+    QVERIFY(state.initialize());
+    Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
+    MainWindow window(state, preferences);
+    window.show();
+
+    window.togglePresentationMode();
+    QVERIFY(window.presentationMode_);
+    QVERIFY(window.exitPresentationShortcut_->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(window.exitPresentationShortcut_, "activated"));
+    QVERIFY(!window.presentationMode_);
+    QVERIFY(!window.exitPresentationShortcut_->isEnabled());
+    QVERIFY(window.menuBar()->isVisible());
 }
 
 void MainWindowTest::organizerRunsThroughSchedulerAndOpensCleanTab() {

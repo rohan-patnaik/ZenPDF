@@ -7,6 +7,7 @@
 #include "QpdfOperations.h"
 
 #include <QAction>
+#include <QAbstractButton>
 #include <QCloseEvent>
 #include <QDir>
 #include <QDragEnterEvent>
@@ -22,6 +23,7 @@
 #include <QMessageBox>
 #include <QMimeData>
 #include <QProgressDialog>
+#include <QShortcut>
 #include <QStatusBar>
 #include <QTabBar>
 #include <QTabWidget>
@@ -49,6 +51,26 @@ bool hasLocalPdf(const QMimeData* mimeData) {
     }
     return false;
 }
+
+bool confirmDiscard(QWidget* parent, const QString& title, const QString& text) {
+    QMessageBox box(
+        QMessageBox::Warning,
+        title,
+        text,
+        QMessageBox::Discard | QMessageBox::Cancel,
+        parent);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.setEscapeButton(QMessageBox::Cancel);
+    if (auto* discard = box.button(QMessageBox::Discard)) {
+        discard->setAccessibleName(QObject::tr("Discard"));
+        discard->setAccessibleDescription(QObject::tr("Continue without saving"));
+    }
+    if (auto* cancel = box.button(QMessageBox::Cancel)) {
+        cancel->setAccessibleName(QObject::tr("Cancel"));
+        cancel->setAccessibleDescription(QObject::tr("Return to ZenPDF"));
+    }
+    return box.exec() == QMessageBox::Discard;
+}
 }
 
 MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget* parent)
@@ -56,6 +78,7 @@ MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget
       localState_(localState),
       preferences_(preferences),
       undoGroup_(new QUndoGroup(this)),
+      exitPresentationShortcut_(new QShortcut(QKeySequence(Qt::Key_Escape), this)),
       tabs_(new QTabWidget(this)),
       recentMenu_(nullptr),
       organizeMenu_(nullptr) {
@@ -66,6 +89,13 @@ MainWindow::MainWindow(LocalState& localState, Preferences& preferences, QWidget
     tabs_->setMovable(true);
     tabs_->setTabsClosable(true);
     setCentralWidget(tabs_);
+    exitPresentationShortcut_->setContext(Qt::ApplicationShortcut);
+    exitPresentationShortcut_->setEnabled(false);
+    connect(exitPresentationShortcut_, &QShortcut::activated, this, [this] {
+        if (presentationMode_) {
+            togglePresentationMode();
+        }
+    });
 
     connect(tabs_, &QTabWidget::tabCloseRequested, this, &MainWindow::closeTab);
     connect(tabs_, &QTabWidget::currentChanged, this, [this](int index) {
@@ -120,14 +150,12 @@ void MainWindow::closeEvent(QCloseEvent* event) {
         }
     }
     if (dirtyDocuments > 0 &&
-        QMessageBox::warning(
+        !confirmDiscard(
             this,
             tr("Discard unsaved changes?"),
             tr("%n open document(s) contain unsaved changes. Closing ZenPDF will discard them.",
                nullptr,
-               dirtyDocuments),
-            QMessageBox::Discard | QMessageBox::Cancel,
-            QMessageBox::Cancel) != QMessageBox::Discard) {
+               dirtyDocuments))) {
         event->ignore();
         return;
     }
@@ -135,12 +163,10 @@ void MainWindow::closeEvent(QCloseEvent* event) {
     if (!preferences_.saveWindowPreferences(
             {saveGeometry(), saveState()}, &preferencesError)) {
         statusBar()->showMessage(preferencesError);
-        if (QMessageBox::warning(
+        if (!confirmDiscard(
                 this,
                 tr("Window preferences not saved"),
-                tr("ZenPDF could not save private window preferences. Close without saving them?"),
-                QMessageBox::Discard | QMessageBox::Cancel,
-                QMessageBox::Cancel) != QMessageBox::Discard) {
+                tr("ZenPDF could not save private window preferences. Close without saving them?"))) {
             event->ignore();
             return;
         }
@@ -303,12 +329,10 @@ void MainWindow::openPdf(const QString& path) {
 void MainWindow::closeTab(int index) {
     auto* document = qobject_cast<DocumentWidget*>(tabs_->widget(index));
     if (document != nullptr && document->session().isDirty() &&
-        QMessageBox::warning(
+        !confirmDiscard(
             this,
             tr("Discard unsaved changes?"),
-            tr("%1 contains unsaved changes.").arg(document->displayName()),
-            QMessageBox::Discard | QMessageBox::Cancel,
-            QMessageBox::Cancel) != QMessageBox::Discard) {
+            tr("%1 contains unsaved changes.").arg(document->displayName()))) {
         return;
     }
     auto* widget = tabs_->widget(index);
@@ -573,7 +597,9 @@ void MainWindow::finishOrganizerTask(
 }
 
 void MainWindow::togglePresentationMode() {
-    if (isFullScreen()) {
+    presentationMode_ = !presentationMode_;
+    exitPresentationShortcut_->setEnabled(presentationMode_);
+    if (!presentationMode_) {
         showNormal();
         menuBar()->show();
     } else {

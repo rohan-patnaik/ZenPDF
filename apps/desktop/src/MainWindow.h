@@ -14,6 +14,7 @@ class Preferences;
 class QDragEnterEvent;
 class QDropEvent;
 class QMenu;
+class QShortcut;
 class QTabWidget;
 class QUndoGroup;
 struct QpdfResult;
@@ -64,7 +65,9 @@ private:
     Preferences& preferences_;
     DesktopJobScheduler jobScheduler_;
     bool organizerJobActive_ = false;
+    bool presentationMode_ = false;
     QUndoGroup* undoGroup_;
+    QShortcut* exitPresentationShortcut_;
     QTabWidget* tabs_;
     QMenu* recentMenu_;
     QMenu* organizeMenu_;

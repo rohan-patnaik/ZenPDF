@@ -10,7 +10,7 @@ makedepends=('cmake' 'git' 'ninja')
 if [[ -n ${ZENPDF_SOURCE_ARCHIVE:-} ]]; then
   source=("$ZENPDF_SOURCE_ARCHIVE")
 else
-  source=('ZenPDF::git+https://github.com/rohan-patnaik/ZenPDF.git#branch=feat/omarchy-desktop-m0-m1')
+  source=('ZenPDF::git+https://github.com/rohan-patnaik/ZenPDF.git#branch=main')
 fi
 sha256sums=('SKIP')
 
