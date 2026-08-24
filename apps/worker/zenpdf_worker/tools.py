@@ -2138,18 +2138,14 @@ def _is_dev_mode() -> bool:
     return os.getenv("ZENPDF_DEV_MODE") == "1" or os.getenv("NODE_ENV") == "development"
 
 
-def _validate_browser_request_url(request_url: str) -> None:
-    """Validate browser network targets against SSRF policy."""
+def _browser_request_is_local(request_url: str) -> bool:
+    """Return whether a browser request is guaranteed not to use the network."""
     parsed = urlparse(request_url)
-    if parsed.scheme in {"data", "blob", "about"}:
-        return
-    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-        raise ValueError(f"Unsupported browser request URL: {request_url!r}")
-    _resolve_public_ip(parsed.hostname)
+    return parsed.scheme in {"data", "blob", "about"}
 
 
-def _browser_url_to_pdf(url: str, output_path: Path) -> Path:
-    """Render a URL into PDF using Playwright with strict network policy."""
+def _browser_html_to_pdf(html: str, output_path: Path) -> Path:
+    """Render already-fetched HTML with browser networking disabled."""
     if sync_playwright is None:
         raise RuntimeError("Browser mode requires Playwright in worker runtime")
 
@@ -2166,7 +2162,9 @@ def _browser_url_to_pdf(url: str, output_path: Path) -> Path:
         "--disable-dev-shm-usage",
         "--no-first-run",
         "--no-default-browser-check",
+        "--disable-background-networking",
         "--disable-features=TranslateUI",
+        "--host-resolver-rules=MAP * 0.0.0.0",
     ]
 
     try:
@@ -2178,23 +2176,23 @@ def _browser_url_to_pdf(url: str, output_path: Path) -> Path:
             if browser:
                 launch_kwargs["executable_path"] = browser
             browser_instance = playwright.chromium.launch(**launch_kwargs)
-            context = browser_instance.new_context(ignore_https_errors=allow_insecure)
+            context = browser_instance.new_context(
+                ignore_https_errors=allow_insecure,
+                java_script_enabled=False,
+                service_workers="block",
+            )
             page = context.new_page()
 
             def _route_handler(route, request) -> None:  # type: ignore[no-untyped-def]
                 request_url = request.url
-                try:
-                    _validate_browser_request_url(request_url)
-                except Exception:
+                if not _browser_request_is_local(request_url):
                     blocked_requests.append(request_url)
                     route.abort()
                     return
                 route.continue_()
 
             page.route("**/*", _route_handler)
-            response = page.goto(url, wait_until="domcontentloaded", timeout=60_000)
-            if response and response.status >= 400:
-                raise RuntimeError(f"Browser render failed with status {response.status}")
+            page.set_content(html, wait_until="domcontentloaded", timeout=60_000)
             page.wait_for_load_state("networkidle", timeout=30_000)
             if blocked_requests:
                 blocked_sample = ", ".join(blocked_requests[:3])
@@ -2226,28 +2224,8 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
     if render_mode_normalized not in {"browser", "text"}:
         raise ValueError("Render mode must be browser or text")
 
-    _ = _resolve_public_ip(parsed.hostname)
-
-    # Preflight to prevent redirect-based bypass and unsupported responses.
-    allow_hostname_fallback = parsed.scheme == "https" and (
-        os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
-        and _is_dev_mode()
-    )
-
-    try:
-        with requests.Session() as preflight:
-            response = preflight.get(url, allow_redirects=False, timeout=20, stream=True)
-            with response:
-                if 300 <= response.status_code < 400:
-                    raise ValueError("Redirects are not allowed")
-                response.raise_for_status()
-    except requests.exceptions.SSLError:
-        if not allow_hostname_fallback:
-            raise
-
-    if render_mode_normalized == "browser":
-        return _browser_url_to_pdf(parsed.geturl(), output_path)
-
+    # Resolve exactly once, then bind the actual fetch to that public address.
+    # Chromium receives only the fetched bytes and cannot perform network I/O.
     target_ip = _resolve_public_ip(parsed.hostname)
     is_ipv6 = isinstance(ipaddress.ip_address(target_ip), ipaddress.IPv6Address)
     host = f"[{target_ip}]" if is_ipv6 else target_ip
@@ -2293,8 +2271,6 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
             encoding = response.encoding or "utf-8"
         return body, encoding
 
-    body: bytearray
-    encoding: str
     allow_insecure = (
         os.getenv("ZENPDF_WEB_ALLOW_INSECURE_SSL") == "1"
         and _is_dev_mode()
@@ -2304,31 +2280,16 @@ def web_to_pdf(url: str, output_path: Path, render_mode: str = "browser") -> Pat
         if parsed.scheme == "https":
             session.mount("https://", HostHeaderSSLAdapter())
 
-        try:
-            body, encoding = _fetch_html(
-                session,
-                target_url,
-                host_header,
-                not allow_insecure,
-            )
-        except requests.exceptions.SSLError:
-            allow_fallback = parsed.scheme == "https" and (
-                os.getenv("ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK") == "1"
-                and _is_dev_mode()
-            )
-            if not allow_fallback:
-                raise
-            # Re-validate hostname before falling back to hostname-based HTTPS.
-            _resolve_public_ip(parsed.hostname)
-            with requests.Session() as fallback_session:
-                body, encoding = _fetch_html(
-                    fallback_session,
-                    parsed.geturl(),
-                    None,
-                    not allow_insecure,
-                )
+        body, encoding = _fetch_html(
+            session,
+            target_url,
+            host_header,
+            not allow_insecure,
+        )
 
     html = body.decode(encoding, errors="replace")
+    if render_mode_normalized == "browser":
+        return _browser_html_to_pdf(html, output_path)
     return html_to_pdf(html, output_path)
 
 

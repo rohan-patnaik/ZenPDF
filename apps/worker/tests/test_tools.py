@@ -379,6 +379,8 @@ def test_web_to_pdf_browser_mode() -> None:
         response = _DummyResponse(b"<p>Example</p>")
         session = _DummySession(response)
         output = temp_path / "site_browser.pdf"
+        launch_options: dict[str, object] = {}
+        context_options: dict[str, object] = {}
 
         class _FakePage:
             def __init__(self) -> None:
@@ -387,11 +389,8 @@ def test_web_to_pdf_browser_mode() -> None:
             def route(self, _pattern: str, handler) -> None:
                 self._route_handler = handler
 
-            def goto(self, _url: str, **_kwargs):
-                class _Response:
-                    status = 200
-
-                return _Response()
+            def set_content(self, html: str, **_kwargs) -> None:
+                assert html == "<p>Example</p>"
 
             def wait_for_load_state(self, *_args, **_kwargs) -> None:
                 return None
@@ -417,6 +416,7 @@ def test_web_to_pdf_browser_mode() -> None:
                 self.context = _FakeContext()
 
             def new_context(self, **_kwargs) -> _FakeContext:
+                context_options.update(_kwargs)
                 return self.context
 
             def close(self) -> None:
@@ -427,6 +427,7 @@ def test_web_to_pdf_browser_mode() -> None:
                 class _Chromium:
                     @staticmethod
                     def launch(**_kwargs):
+                        launch_options.update(_kwargs)
                         return _FakeBrowser()
 
                 self.chromium = _Chromium()
@@ -439,7 +440,7 @@ def test_web_to_pdf_browser_mode() -> None:
 
         with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
-        ):
+        ) as resolver:
             with patch("zenpdf_worker.tools.sync_playwright", return_value=_FakePlaywright()):
                 rendered = web_to_pdf(
                     "https://example.com",
@@ -447,6 +448,10 @@ def test_web_to_pdf_browser_mode() -> None:
                     render_mode="browser",
                 )
         assert rendered.exists()
+        assert resolver.call_count == 1
+        assert "--host-resolver-rules=MAP * 0.0.0.0" in launch_options["args"]
+        assert context_options["java_script_enabled"] is False
+        assert context_options["service_workers"] == "block"
 
 
 def test_web_to_pdf_browser_mode_blocks_private_subresource() -> None:
@@ -477,16 +482,11 @@ def test_web_to_pdf_browser_mode_blocks_private_subresource() -> None:
             def route(self, _pattern: str, handler) -> None:
                 self._route_handler = handler
 
-            def goto(self, _url: str, **_kwargs):
+            def set_content(self, _html: str, **_kwargs) -> None:
                 assert self._route_handler is not None
                 route = _DummyRoute()
                 request = _DummyRequest("http://127.0.0.1/internal")
                 self._route_handler(route, request)
-
-                class _Response:
-                    status = 200
-
-                return _Response()
 
             def wait_for_load_state(self, *_args, **_kwargs) -> None:
                 return None
@@ -657,8 +657,8 @@ def test_web_to_pdf_blocks_redirects() -> None:
                 )
 
 
-def test_web_to_pdf_fallbacks_to_hostname() -> None:
-    """Retry HTTPS requests via hostname when IP handshake fails."""
+def test_web_to_pdf_never_falls_back_to_hostname() -> None:
+    """An IP-bound TLS failure must not trigger a second DNS-based fetch."""
     with TemporaryDirectory() as temp:
         temp_path = Path(temp)
         response = _DummyResponse(b"<p>Example</p>")
@@ -673,25 +673,56 @@ def test_web_to_pdf_fallbacks_to_hostname() -> None:
 
             def __call__(self):
                 self.calls += 1
-                if self.calls == 1:
-                    return _FailingSession(response)
-                return _DummySession(response)
+                return _FailingSession(response)
 
         factory = _SessionFactory()
 
         with patch("zenpdf_worker.tools.requests.Session", side_effect=factory), patch(
             "zenpdf_worker.tools._resolve_public_ip", return_value="93.184.216.34"
-        ), patch.dict(
+        ) as resolver, patch.dict(
             os.environ,
             {"ZENPDF_WEB_ALLOW_HOSTNAME_FALLBACK": "1", "ZENPDF_DEV_MODE": "1"},
         ):
+            with pytest.raises(requests.exceptions.SSLError):
+                web_to_pdf(
+                    "https://example.com",
+                    temp_path / "site.pdf",
+                    render_mode="text",
+                )
+
+        assert resolver.call_count == 1
+        assert factory.calls == 1
+
+
+def test_web_to_pdf_binds_fetch_to_single_dns_resolution() -> None:
+    """The actual request must use the one validated IP, not resolve the hostname again."""
+    with TemporaryDirectory() as temp:
+        temp_path = Path(temp)
+        response = _DummyResponse(b"<p>Example</p>")
+
+        class _RecordingSession(_DummySession):
+            def __init__(self) -> None:
+                super().__init__(response)
+                self.urls: list[str] = []
+
+            def get(self, url: str, *_args, **_kwargs):
+                self.urls.append(url)
+                return super().get(url, *_args, **_kwargs)
+
+        session = _RecordingSession()
+        with patch("zenpdf_worker.tools.requests.Session", return_value=session), patch(
+            "zenpdf_worker.tools._resolve_public_ip",
+            side_effect=["93.184.216.34", "127.0.0.1"],
+        ) as resolver:
             output = web_to_pdf(
-                "https://example.com",
+                "https://example.com/document",
                 temp_path / "site.pdf",
                 render_mode="text",
             )
 
         assert output.exists()
+        assert resolver.call_count == 1
+        assert session.urls == ["https://93.184.216.34/document"]
 
 
 def test_web_to_pdf_limits_body_size() -> None:
