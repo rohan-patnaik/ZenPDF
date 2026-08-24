@@ -9,6 +9,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LAUNCHER = ROOT / "apps" / "desktop" / "packaging" / "zenpdf-launch"
+PKGBUILD = ROOT / "apps" / "desktop" / "packaging" / "arch" / "PKGBUILD"
+NATIVE_REVISION = "97122a2564887b5c70b15ca69c9627adf7dd919a"
 
 
 def main() -> int:
@@ -53,6 +55,26 @@ def main() -> int:
         )
         if "sudo" in launcher or "pkexec" in launcher:
             errors.append("launcher must not elevate privileges")
+
+    pkgbuild = PKGBUILD.read_text(encoding="utf-8")
+    if "git+" in pkgbuild or "#branch=" in pkgbuild:
+        errors.append("native package source must not follow a Git branch")
+    for variable in ("ZENPDF_SOURCE_ARCHIVE", "ZENPDF_EXPECTED_REVISION"):
+        if f"{variable}:?" not in pkgbuild:
+            errors.append(f"PKGBUILD must require {variable}")
+
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    readme_required = {
+        f"zenpdf_revision={NATIVE_REVISION}": "README must pin the reviewed native revision",
+        'git checkout --detach "$zenpdf_revision"': "README must detach at the pinned revision",
+        'test "$(git rev-parse HEAD)" = "$zenpdf_revision"':
+            "README must verify the fetched native revision",
+        'ZENPDF_SOURCE_ARCHIVE="$source_archive"':
+            "README must build from the generated exact source archive",
+        'ZENPDF_EXPECTED_REVISION="$zenpdf_revision"':
+            "README must bind the archive marker to the reviewed revision",
+    }
+    errors.extend(message for snippet, message in readme_required.items() if snippet not in readme)
 
     if errors:
         for error in errors:

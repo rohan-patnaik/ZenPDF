@@ -32,21 +32,44 @@ The root `manifest.json` and `Plugin.qml` provide the Omarchy Quattro plugin con
 
 ## Omarchy plugin
 
-The plugin is a thin local launcher. Build and install the native Arch package
-first, then add and summon the plugin:
+The plugin is a thin local launcher. Build the native Arch package as your
+normal user from the immutable reviewed revision below, then install it and
+add the plugin:
 
 ```sh
-git clone https://github.com/rohan-patnaik/ZenPDF.git
-cd ZenPDF/apps/desktop/packaging/arch
-makepkg --cleanbuild --clean --noconfirm
-sudo pacman -U ./zenpdf-git-*.pkg.tar.zst
+zenpdf_revision=97122a2564887b5c70b15ca69c9627adf7dd919a
+work_root=$(mktemp -d)
+git clone --filter=blob:none --no-checkout \
+  https://github.com/rohan-patnaik/ZenPDF.git "$work_root/repo"
+cd "$work_root/repo"
+git fetch --depth=1 origin "$zenpdf_revision"
+git checkout --detach "$zenpdf_revision"
+test "$(git rev-parse HEAD)" = "$zenpdf_revision"
+
+mkdir "$work_root/source"
+git archive --format=tar --prefix=ZenPDF/ "$zenpdf_revision" \
+  | tar -xf - -C "$work_root/source"
+printf '%s\n' "$zenpdf_revision" \
+  >"$work_root/source/ZenPDF/.zenpdf-source-revision"
+source_archive="$work_root/repo/apps/desktop/packaging/arch/zenpdf-source-$zenpdf_revision.tar.gz"
+tar -C "$work_root/source" -czf "$source_archive" ZenPDF
+
+cd apps/desktop/packaging/arch
+package_path=$(ZENPDF_SOURCE_ARCHIVE="$source_archive" \
+  ZENPDF_EXPECTED_REVISION="$zenpdf_revision" makepkg --packagelist)
+ZENPDF_SOURCE_ARCHIVE="$source_archive" \
+ZENPDF_EXPECTED_REVISION="$zenpdf_revision" \
+  makepkg --cleanbuild --clean --noconfirm
+sudo pacman -U "$package_path"
 omarchy plugin add https://github.com/rohan-patnaik/ZenPDF.git --enable --yes
 omarchy-shell shell summon io.github.rohan-patnaik.zenpdf '{}'
 ```
 
-The native application depends on Qt 6 and qpdf; the `PKGBUILD` resolves the
-complete Arch dependency set. ZenPDF processes only user-selected local files
-in this desktop workflow.
+The exact revision is also embedded in the package version and source marker.
+The `PKGBUILD` refuses a moving Git branch or an archive without a matching
+40-character revision. The native application depends on Qt 6 and qpdf; the
+package resolves the complete Arch dependency set. ZenPDF processes only
+user-selected local files in this desktop workflow.
 
 Remove the plugin and native package with:
 
