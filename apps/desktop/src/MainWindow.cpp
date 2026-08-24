@@ -230,7 +230,9 @@ void MainWindow::buildMenus() {
 
     auto* viewMenu = menuBar()->addMenu(tr("&View"));
     auto* presentation = viewMenu->addAction(tr("&Presentation mode"));
+    presentation->setObjectName(QStringLiteral("presentationModeAction"));
     presentation->setShortcut(QKeySequence(Qt::Key_F11));
+    presentation->setShortcutContext(Qt::ApplicationShortcut);
     connect(presentation, &QAction::triggered, this, &MainWindow::togglePresentationMode);
 }
 

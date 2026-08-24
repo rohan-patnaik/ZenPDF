@@ -414,6 +414,9 @@ void MainWindowTest::presentationModeExitsWithEscape() {
     Preferences preferences(directory.filePath(QStringLiteral("preferences.ini")));
     MainWindow window(state, preferences);
     window.show();
+    auto* presentationAction = window.findChild<QAction*>(QStringLiteral("presentationModeAction"));
+    QVERIFY(presentationAction != nullptr);
+    QCOMPARE(presentationAction->shortcutContext(), Qt::ApplicationShortcut);
 
     window.togglePresentationMode();
     QVERIFY(window.presentationMode_);
