@@ -1,4 +1,5 @@
 {
+  "foreground_preserved": true,
   "migration_relaunch": {
     "current_after_relaunch": {
       "directory": false,
@@ -6,12 +7,12 @@
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "62c75906842f3d0b313d2808d148ed49b12502070f4e3387604932c2cfc6f61e",
-      "size": 325
+      "sha256": "863c659f00a198535a05a1f2e964497a0ecaaef5f8b8bd0643d43f89d877951c",
+      "size": 329
     },
     "first_output": {
-      "bytes": 120,
-      "sha256": "8855efe992445d2289328c80e6a07392b27de84701f219c66a754adb096aad39"
+      "bytes": 182,
+      "sha256": "4db030a606c6577aa7a4d58d647246612312a1acc674b5efdc6631724b895bc9"
     },
     "fullscreen_restored_on_import_and_relaunch": true,
     "legacy": {
@@ -20,21 +21,45 @@
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "234fb57eb23e20ed43218d8a90b395865ea1bf44792176b936192b510241c2ba",
-      "size": 305
+      "sha256": "67af409d2052f4183369535c142a285f0f4d42e4cc302ccff2036c9726a11f57",
+      "size": 309
     },
     "legacy_immutable": true,
     "second_output": {
-      "bytes": 120,
-      "sha256": "2d0c89105add8481cd30483c6765dec8208b1979958d42eea84d895915df5237"
+      "bytes": 182,
+      "sha256": "697862428f2c0c71c69718b56663ccfc178a578e9866ec0b679581902df445eb"
     }
   },
   "no_residual_process": true,
   "normal_save": {
     "distinct_state_saved": "fullscreen",
     "first_output": {
-      "bytes": 120,
-      "sha256": "2ee502e62aa465662eae1fb9617c925f97678d3e7821975334db0bc7ac13a644"
+      "bytes": 182,
+      "sha256": "d68bbf1c9348756a8f9af5014a0f16d557ee5965896e3c8f857109cf822e15d5"
+    },
+    "nested_fullscreen_extents": {
+      "height": 720,
+      "showing": true,
+      "visible": true,
+      "width": 1280,
+      "x": 0,
+      "y": 0
+    },
+    "nested_initial_extents": {
+      "height": 620,
+      "showing": true,
+      "visible": true,
+      "width": 900,
+      "x": 0,
+      "y": 0
+    },
+    "nested_restored_extents": {
+      "height": 720,
+      "showing": true,
+      "visible": true,
+      "width": 1280,
+      "x": 0,
+      "y": 0
     },
     "preference_after_relaunch": {
       "directory": false,
@@ -42,12 +67,12 @@
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "62c75906842f3d0b313d2808d148ed49b12502070f4e3387604932c2cfc6f61e",
-      "size": 325
+      "sha256": "863c659f00a198535a05a1f2e964497a0ecaaef5f8b8bd0643d43f89d877951c",
+      "size": 329
     },
     "relaunch_output": {
-      "bytes": 120,
-      "sha256": "ee9075d4bc5bdd0debec815e40279016d0749f8284886364b021a3b211b1c728"
+      "bytes": 182,
+      "sha256": "186d6f59cdfe6c26f995718ffa0bcbe377b251efc6c9c9fb7e60b382847ba4d4"
     },
     "restored_fullscreen": true,
     "snapshot_unchanged_during_startup": true
@@ -59,6 +84,8 @@
   },
   "platform": {
     "hyprland": "Hyprland 0.56.2 built from branch v0.56.2 at commit efb50993780079460b0cbed1363e2166a2de1d9f clean ([gha] Nix: update inputs).",
+    "launch": "codex-background-launch on eDP-1/codex-background",
+    "nested_wayland": "weston 15.0.1",
     "omarchy": "4.0.1-1",
     "session": "wayland"
   },
@@ -110,7 +137,7 @@
     "keyboard_escape_returned_to_mapped_app": true,
     "output": {
       "bytes": 182,
-      "sha256": "9509098fc3c6ac4213f73febd2ef1ee3c08d9c756c6982a409cc5324fddac0c2"
+      "sha256": "3dd414d4a68644a1907d71cc17f0fa9dd306957458f933da2169a7c356ff3202"
     }
   },
   "schema": 1

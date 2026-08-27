@@ -4,6 +4,7 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -54,6 +55,48 @@ class L004WaylandAcceptanceTest(unittest.TestCase):
         self.assertEqual(list(value["entries"]), ["keep.marker"])
         self.assertEqual(value["entries"]["keep.marker"]["mode"], "0600")
         self.assertNotIn(temporary, repr(value))
+
+    def test_managed_process_accepts_zero_exit_status(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            status = Path(temporary) / "status"
+            status.write_text("0\n", encoding="ascii")
+            process = MODULE.ManagedProcess(123, status)
+            self.assertEqual(process.poll(), 0)
+            self.assertEqual(process.wait(0.1), 0)
+
+    def test_nested_presentation_requires_distinct_initial_extents(self) -> None:
+        fullscreen = {
+            "x": 0,
+            "y": 0,
+            "width": 1280,
+            "height": 720,
+            "showing": True,
+            "visible": True,
+        }
+        with mock.patch.object(MODULE, "atspi_window_state", return_value=fullscreen):
+            with self.assertRaisesRegex(AssertionError, "started fullscreen"):
+                MODULE.enter_nested_presentation(123)
+
+    def test_nested_presentation_records_transition(self) -> None:
+        initial = {
+            "x": 0,
+            "y": 0,
+            "width": 900,
+            "height": 620,
+            "showing": True,
+            "visible": True,
+        }
+        fullscreen = {**initial, "width": 1280, "height": 720}
+        action = object()
+        with (
+            mock.patch.object(MODULE, "atspi_window_state", return_value=initial),
+            mock.patch.object(MODULE, "atspi_action", return_value=action),
+            mock.patch.object(MODULE, "activate") as activate,
+            mock.patch.object(MODULE, "wait_for_nested_fullscreen", return_value=fullscreen),
+        ):
+            result = MODULE.enter_nested_presentation(123)
+        activate.assert_called_once_with(action)
+        self.assertEqual(result, {"initial": initial, "fullscreen": fullscreen})
 
 
 if __name__ == "__main__":

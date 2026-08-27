@@ -3,9 +3,10 @@
 L004 is `Verified` for implementation commit
 `5426d12462a6ec2bc419dd00b5573b7df9bc609c`, tree
 `8e877496f1af50df3fd0db424f97ed7086f7a673`. Its exact Arch package passed
-normal save/relaunch, immutable versionless legacy migration, hostile-leaf
-preservation, keyboard cancellation, real Wayland AT-SPI action semantics, and
-clean shutdown. The path-redacted machine record is
+offscreen nested-Wayland save/relaunch, immutable versionless legacy migration,
+real Hyprland hostile-leaf preservation, keyboard cancellation, AT-SPI action
+semantics, foreground preservation, and clean shutdown. The path-redacted
+machine record is
 [`acceptance/l004-installed-audit.json`](acceptance/l004-installed-audit.json).
 
 This closes only persistent window preferences. It does not claim document
@@ -23,8 +24,8 @@ reproducibility, or the product-wide Omarchy release smoke.
 | Installed package integrity | `zenpdf-git 0.1.0.r0.g5426d12-1`; 12 files checked, 0 altered |
 | Installed executable SHA-256 | `b44151524bd7af4b75671f7f05a29f3c8678452ce4b291fe9153b85fb079b4d7` |
 | Installed launcher SHA-256 | `5354a8f20b27f088cb44d256d984024ddbac669e97879b30dd5d132d3d8fe21e` |
-| Platform | Omarchy `4.0.1-1`; Hyprland `0.56.2`; native Wayland |
-| Redacted audit SHA-256 | `a31c8726b03b289230f81aa1ccf60e87d18eff6a8577aa2ffea281d816a1f97e` |
+| Platform | Omarchy `4.0.1-1`; Hyprland `0.56.2`; Weston `15.0.1`; native Wayland |
+| Redacted audit SHA-256 | `155ec7786876121b6c793f2816d443bafc79544e18a81e4df68f51f7fbe5dab0` |
 | Private screenshot SHA-256 | `893010e937a7f2615d6ef9deccf2b35367d01e3d0a0002bcac3f136b1edc7774` |
 
 The implementation CI jobs were `desktop-arch-package` (`97453153067`),
@@ -37,13 +38,13 @@ successfully. The accepted local package also ran all 11 CTest targets during
 
 | L004 criterion | Result |
 | --- | --- |
-| Private persistence | Pass. A first installed run entered fullscreen and atomically created an effective-user-owned, single-link 0600 schema-1 snapshot. A clean relaunch visibly restored fullscreen before any harness state change, without rewriting the snapshot during startup. |
-| Legacy migration | Pass. A valid versionless QSettings snapshot carrying the saved fullscreen state was imported into the current private leaf and visibly restored on import and relaunch. The legacy device, inode, mode, size, and SHA-256 remained unchanged across import, close, and relaunch. |
+| Private persistence | Pass. In an offscreen 1280x720 Weston compositor, the installed app began as a visible 900x620 AT-SPI frame. Invoking its `Presentation mode` AT-SPI action expanded that frame to 1280x720 and atomically created an effective-user-owned, single-link 0600 schema-1 snapshot. A clean relaunch exposed a visible 1280x720 frame before any harness state change and without rewriting the snapshot during startup. |
+| Legacy migration | Pass. A valid versionless QSettings snapshot carrying the saved fullscreen state was imported into the current private leaf and exposed a visible 1280x720 frame on import and relaunch in nested Wayland. The legacy device, inode, mode, size, and SHA-256 remained unchanged across import, close, and relaunch. |
 | Failure policy | Pass. Replacing the disposable current preference leaf with a 0700 directory containing a private sentinel produced a bounded path-free failure and required an explicit close decision. The directory device, inode, mode, size, complete immediate inventory, sentinel metadata, and sentinel SHA-256 remained unchanged. |
-| Keyboard | Pass. Escape canceled the save-failure dialog and returned to a mapped, visible, input-accepting main client; it did not accept close. |
-| Real AT-SPI semantics | Pass. The native Wayland tree exposed one `alert` named `Window preferences not saved`. `Cancel` was the safe default with description `Return to ZenPDF`; `Discard` was non-default with description `Continue without saving`. Both were actionable, and invoking Discard through AT-SPI closed the application cleanly. |
+| Keyboard | Pass. On real Hyprland, targeted Escape canceled the background save-failure dialog and returned to a mapped, visible, input-accepting main client; it did not accept close or change the foreground window/workspace. |
+| Real AT-SPI semantics | Pass. The real Hyprland native-Wayland tree exposed one `alert` named `Window preferences not saved`. `Cancel` was the safe default with description `Return to ZenPDF`; `Discard` was non-default with description `Continue without saving`. Both were actionable, and invoking Discard through AT-SPI closed the application cleanly. |
 | User-visible workflow | Pass. A private screenshot captured the installed failure dialog on the real compositor. Its raw host/session pixels remain outside the repository; the hash above authenticates it. |
-| Shutdown and preservation | Pass. Cancel preserved a usable running app, Discard exited with status 0, no client or ZenPDF process remained, and the hostile leaf identity and inventory were unchanged. The harness cleans up its process groups on all `BaseException` exits. |
+| Shutdown and preservation | Pass. Cancel preserved a usable running app, Discard exited with status 0, no client or ZenPDF process remained, the hostile leaf identity and inventory were unchanged, and every recorded foreground identity field was stable. The harness cleans up both nested and background process groups on all `BaseException` exits. |
 
 No PDF fixture or independent reader is applicable to window preferences. The
 normal, versionless-legacy, relaunch, and hostile-local-state cases are the
@@ -97,8 +98,13 @@ python3 scripts/acceptance/l004_wayland_acceptance.py \
   --output "$work_root/audit.json"
 ```
 
-The harness requires a clean task-owned root and the exact installed package.
-It bounds captured output, rejects its case-root name in diagnostics, limits
-AT-SPI traversal to 512 nodes, and writes only a path-redacted 0600 audit. Its
-fullscreen assertion is compositor-observable restoration evidence, rather
-than an inference from preference bytes alone.
+The harness requires a clean task-owned root, the exact installed package,
+Weston, and `/home/rohan/.local/bin/codex-background-launch`. Normal persistence
+and migration run in a headless 1280x720 nested compositor. The hostile-leaf
+dialog runs only through the background launcher on `eDP-1`'s hidden
+`codex-background` workspace; the harness never focuses or cycles a window and
+asserts the foreground identity is unchanged. It bounds captured output,
+rejects its case-root name in diagnostics, limits AT-SPI traversal to 512 nodes,
+and writes only a path-redacted 0600 audit. Its 900x620 -> 1280x720 -> 1280x720
+AT-SPI extent sequence is observable restoration evidence, rather than an
+inference from preference bytes alone.
