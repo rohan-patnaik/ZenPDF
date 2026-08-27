@@ -1,0 +1,93 @@
+{
+  "migration_relaunch": {
+    "current_after_relaunch": {
+      "directory": false,
+      "effective_uid_owned": true,
+      "links": 1,
+      "mode": "0600",
+      "regular": true,
+      "sha256": "59efa9f7b34890207102b9f049eb43983ae5521b577d1ca9a264cce5ec83e9aa",
+      "size": 311
+    },
+    "first_output": {
+      "bytes": 120,
+      "sha256": "b5fad22b0b8351583620658c405e0f7b1329f30da11e826ac871be026c7fa3c6"
+    },
+    "legacy": {
+      "directory": false,
+      "effective_uid_owned": true,
+      "links": 1,
+      "mode": "0600",
+      "regular": true,
+      "sha256": "4ecbf6af1e4162179786b9113bcb1cfa1a7afb9a7a36b982fff4a08497c0b67b",
+      "size": 291
+    },
+    "legacy_immutable": true,
+    "second_output": {
+      "bytes": 120,
+      "sha256": "6dae816582e3b066a6b14ada26f040a22d74d57e71a89fd9bf5109ad4c604bc3"
+    }
+  },
+  "no_residual_process": true,
+  "normal_save": {
+    "output": {
+      "bytes": 120,
+      "sha256": "5266acab51c8dfc37c9ab644354da76fe5c9fadf075f94792e379d2be4f22dd9"
+    },
+    "preference": {
+      "directory": false,
+      "effective_uid_owned": true,
+      "links": 1,
+      "mode": "0600",
+      "regular": true,
+      "sha256": "59efa9f7b34890207102b9f049eb43983ae5521b577d1ca9a264cce5ec83e9aa",
+      "size": 311
+    }
+  },
+  "package": {
+    "executable_sha256": "b44151524bd7af4b75671f7f05a29f3c8678452ce4b291fe9153b85fb079b4d7",
+    "integrity": "12 files, 0 altered",
+    "version": "0.1.0.r0.g5426d12-1"
+  },
+  "platform": {
+    "hyprland": "Hyprland 0.56.2 built from branch v0.56.2 at commit efb50993780079460b0cbed1363e2166a2de1d9f clean ([gha] Nix: update inputs).",
+    "omarchy": "4.0.1-1",
+    "session": "wayland"
+  },
+  "save_failure": {
+    "atspi_discard_closed": true,
+    "dialog": {
+      "cancel": {
+        "actions": 2,
+        "default": true,
+        "description": "Return to ZenPDF",
+        "name": "Cancel",
+        "role": "button"
+      },
+      "discard": {
+        "actions": 2,
+        "default": false,
+        "description": "Continue without saving",
+        "name": "Discard",
+        "role": "button"
+      },
+      "name": "Window preferences not saved",
+      "role": "alert"
+    },
+    "hostile_leaf_preserved": {
+      "directory": true,
+      "effective_uid_owned": true,
+      "links": 2,
+      "mode": "0700",
+      "regular": false,
+      "sha256": null,
+      "size": 40
+    },
+    "keyboard_escape_cancelled": true,
+    "output": {
+      "bytes": 182,
+      "sha256": "25dfdc74e39be48254e29bdd83a471547f1d29a57f43682921aa71a260e29b82"
+    }
+  },
+  "schema": 1
+}
