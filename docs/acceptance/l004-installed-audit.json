@@ -6,43 +6,51 @@
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "59efa9f7b34890207102b9f049eb43983ae5521b577d1ca9a264cce5ec83e9aa",
-      "size": 311
+      "sha256": "62c75906842f3d0b313d2808d148ed49b12502070f4e3387604932c2cfc6f61e",
+      "size": 325
     },
     "first_output": {
       "bytes": 120,
-      "sha256": "b5fad22b0b8351583620658c405e0f7b1329f30da11e826ac871be026c7fa3c6"
+      "sha256": "8855efe992445d2289328c80e6a07392b27de84701f219c66a754adb096aad39"
     },
+    "fullscreen_restored_on_import_and_relaunch": true,
     "legacy": {
       "directory": false,
       "effective_uid_owned": true,
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "4ecbf6af1e4162179786b9113bcb1cfa1a7afb9a7a36b982fff4a08497c0b67b",
-      "size": 291
+      "sha256": "234fb57eb23e20ed43218d8a90b395865ea1bf44792176b936192b510241c2ba",
+      "size": 305
     },
     "legacy_immutable": true,
     "second_output": {
       "bytes": 120,
-      "sha256": "6dae816582e3b066a6b14ada26f040a22d74d57e71a89fd9bf5109ad4c604bc3"
+      "sha256": "2d0c89105add8481cd30483c6765dec8208b1979958d42eea84d895915df5237"
     }
   },
   "no_residual_process": true,
   "normal_save": {
-    "output": {
+    "distinct_state_saved": "fullscreen",
+    "first_output": {
       "bytes": 120,
-      "sha256": "5266acab51c8dfc37c9ab644354da76fe5c9fadf075f94792e379d2be4f22dd9"
+      "sha256": "2ee502e62aa465662eae1fb9617c925f97678d3e7821975334db0bc7ac13a644"
     },
-    "preference": {
+    "preference_after_relaunch": {
       "directory": false,
       "effective_uid_owned": true,
       "links": 1,
       "mode": "0600",
       "regular": true,
-      "sha256": "59efa9f7b34890207102b9f049eb43983ae5521b577d1ca9a264cce5ec83e9aa",
-      "size": 311
-    }
+      "sha256": "62c75906842f3d0b313d2808d148ed49b12502070f4e3387604932c2cfc6f61e",
+      "size": 325
+    },
+    "relaunch_output": {
+      "bytes": 120,
+      "sha256": "ee9075d4bc5bdd0debec815e40279016d0749f8284886364b021a3b211b1c728"
+    },
+    "restored_fullscreen": true,
+    "snapshot_unchanged_during_startup": true
   },
   "package": {
     "executable_sha256": "b44151524bd7af4b75671f7f05a29f3c8678452ce4b291fe9153b85fb079b4d7",
@@ -74,19 +82,35 @@
       "name": "Window preferences not saved",
       "role": "alert"
     },
+    "hostile_leaf_identity_unchanged": true,
+    "hostile_leaf_inventory_unchanged": true,
     "hostile_leaf_preserved": {
-      "directory": true,
-      "effective_uid_owned": true,
-      "links": 2,
-      "mode": "0700",
-      "regular": false,
-      "sha256": null,
-      "size": 40
+      "directory": {
+        "directory": true,
+        "effective_uid_owned": true,
+        "links": 2,
+        "mode": "0700",
+        "regular": false,
+        "sha256": null,
+        "size": 60
+      },
+      "entries": {
+        "keep.marker": {
+          "directory": false,
+          "effective_uid_owned": true,
+          "links": 1,
+          "mode": "0600",
+          "regular": true,
+          "sha256": "ddc6f90b039712b6e32f46975fc6523f931e2227c19bde89dd40ec0efc192b1e",
+          "size": 21
+        }
+      }
     },
     "keyboard_escape_cancelled": true,
+    "keyboard_escape_returned_to_mapped_app": true,
     "output": {
       "bytes": 182,
-      "sha256": "25dfdc74e39be48254e29bdd83a471547f1d29a57f43682921aa71a260e29b82"
+      "sha256": "9509098fc3c6ac4213f73febd2ef1ee3c08d9c756c6982a409cc5324fddac0c2"
     }
   },
   "schema": 1

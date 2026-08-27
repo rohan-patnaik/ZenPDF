@@ -61,6 +61,20 @@ def metadata(path: Path) -> dict[str, Any]:
     }
 
 
+def identity(path: Path) -> tuple[int, int, int, int]:
+    value = path.lstat()
+    return value.st_dev, value.st_ino, value.st_mode, value.st_size
+
+
+def directory_snapshot(path: Path) -> dict[str, Any]:
+    check(path.is_dir() and not path.is_symlink(), "snapshot target is not a directory")
+    entries: dict[str, Any] = {}
+    for child in sorted(path.iterdir(), key=lambda item: item.name):
+        check("/" not in child.name and child.name not in {".", ".."}, "unsafe entry name")
+        entries[child.name] = metadata(child)
+    return {"directory": metadata(path), "entries": entries}
+
+
 def clients() -> list[dict[str, Any]]:
     return json.loads(command(["hyprctl", "clients", "-j"]).stdout)
 
@@ -99,13 +113,23 @@ def close_client(client: dict[str, Any]) -> None:
     dispatch(f'hl.dsp.window.close({{ window = "address:{address}" }})')
 
 
-def send_escape(dialog: dict[str, Any]) -> None:
-    dialog_address = validate_address(str(dialog["address"]))
-    dispatch(f'hl.dsp.focus({{ window = "address:{dialog_address}" }})')
+def focus_client(client: dict[str, Any]) -> None:
+    address = validate_address(str(client["address"]))
+    dispatch(f'hl.dsp.focus({{ window = "address:{address}" }})')
+
+
+def send_shortcut(client: dict[str, Any], key: str) -> None:
+    check(re.fullmatch(r"[A-Z0-9]+", key) is not None, "invalid shortcut key")
+    address = validate_address(str(client["address"]))
     dispatch(
-        'hl.dsp.send_shortcut({ mods = "", key = "ESCAPE", '
-        f'window = "address:{dialog_address}" }})'
+        'hl.dsp.send_shortcut({ mods = "", '
+        f'key = "{key}", window = "address:{address}" }})'
     )
+
+
+def send_escape(dialog: dict[str, Any]) -> None:
+    focus_client(dialog)
+    send_shortcut(dialog, "ESCAPE")
 
 
 def app_environment(case_root: Path) -> dict[str, str]:
@@ -149,6 +173,56 @@ def wait_for_main(process: subprocess.Popen[bytes]) -> dict[str, Any]:
     check(client.get("hidden") is False, "main client is hidden")
     check(client.get("xwayland") is False, "client is not native Wayland")
     return client
+
+
+def wait_for_usable_main(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+    def usable() -> dict[str, Any] | None:
+        client = client_for(process.pid, MAIN_TITLE)
+        if (
+            client is not None
+            and client.get("mapped") is True
+            and client.get("hidden") is False
+            and client.get("visible") is True
+            and client.get("acceptsInput") is True
+        ):
+            return client
+        return None
+
+    return wait_until(usable, "main Wayland client did not become mapped and usable")
+
+
+def enter_fullscreen(process: subprocess.Popen[bytes], client: dict[str, Any]) -> dict[str, Any]:
+    focus_client(client)
+    focused = wait_for_usable_main(process)
+    send_shortcut(focused, "F11")
+    fullscreen = wait_until(
+        lambda: (
+            current
+            if (current := client_for(process.pid, MAIN_TITLE)) is not None
+            and int(current.get("fullscreen", 0)) > 0
+            and current.get("visible") is True
+            and current.get("acceptsInput") is True
+            else None
+        ),
+        "F11 did not put the installed application into fullscreen",
+    )
+    # Let the Qt window-state event settle before closeEvent serializes it.
+    time.sleep(0.5)
+    return fullscreen
+
+
+def wait_for_restored_fullscreen(process: subprocess.Popen[bytes]) -> dict[str, Any]:
+    return wait_until(
+        lambda: (
+            current
+            if (current := client_for(process.pid, MAIN_TITLE)) is not None
+            and current.get("mapped") is True
+            and current.get("hidden") is False
+            and int(current.get("fullscreen", 0)) > 0
+            else None
+        ),
+        "saved fullscreen window state was not restored on relaunch",
+    )
 
 
 def wait_for_exit(process: subprocess.Popen[bytes], capture: Any) -> int:
@@ -288,6 +362,10 @@ def inspect_failure_dialog(pid: int) -> tuple[dict[str, Any], Any, Any]:
         cancel.get_state_set().contains(Atspi.StateType.IS_DEFAULT),
         "Cancel is not the safe default action",
     )
+    check(
+        not discard.get_state_set().contains(Atspi.StateType.IS_DEFAULT),
+        "Discard unexpectedly became the default action",
+    )
     return {
         "role": "alert",
         "name": FAILURE_TITLE,
@@ -315,15 +393,35 @@ def activate(node: Any) -> None:
 
 def run_normal(executable: Path, root: Path) -> tuple[bytes, dict[str, Any]]:
     root.mkdir(mode=0o700)
-    process, capture = launch(executable, root, "output.log")
+    process, capture = launch(executable, root, "first.log")
     client = wait_for_main(process)
-    close_client(client)
+    fullscreen = enter_fullscreen(process, client)
+    close_client(fullscreen)
     check(wait_for_exit(process, capture) == 0, "normal preference save did not exit cleanly")
     preference = root / "data" / "ZenPDF" / "ZenPDF" / "preferences.ini"
-    value = metadata(preference)
-    check(value["regular"] and value["effective_uid_owned"], "preference snapshot is unsafe")
-    check(value["mode"] == "0600" and value["links"] == 1, "preference mode/link policy failed")
-    return preference.read_bytes(), {"preference": value, "output": bounded_capture(root, "output.log")}
+    first_value = metadata(preference)
+    check(first_value["regular"] and first_value["effective_uid_owned"], "preference snapshot is unsafe")
+    check(first_value["mode"] == "0600" and first_value["links"] == 1, "preference mode/link policy failed")
+    first_hash = sha256(preference)
+
+    process, capture = launch(executable, root, "relaunch.log")
+    restored = wait_for_restored_fullscreen(process)
+    check(sha256(preference) == first_hash, "startup rewrote the saved preference snapshot")
+    focus_client(restored)
+    restored = wait_for_usable_main(process)
+    check(int(restored.get("fullscreen", 0)) > 0, "focused relaunch lost restored fullscreen state")
+    close_client(restored)
+    check(wait_for_exit(process, capture) == 0, "preference relaunch did not exit cleanly")
+    final_value = metadata(preference)
+    check(final_value["regular"] and final_value["mode"] == "0600", "relaunch snapshot is unsafe")
+    return preference.read_bytes(), {
+        "distinct_state_saved": "fullscreen",
+        "restored_fullscreen": True,
+        "snapshot_unchanged_during_startup": True,
+        "preference_after_relaunch": final_value,
+        "first_output": bounded_capture(root, "first.log"),
+        "relaunch_output": bounded_capture(root, "relaunch.log"),
+    }
 
 
 def run_migration(executable: Path, root: Path, seed: bytes) -> dict[str, Any]:
@@ -336,6 +434,7 @@ def run_migration(executable: Path, root: Path, seed: bytes) -> dict[str, Any]:
 
     process, first_capture = launch(executable, root, "first.log")
     first_client = wait_for_main(process)
+    first_client = wait_for_restored_fullscreen(process)
     wait_until(current.exists, "legacy preferences were not imported")
     close_client(first_client)
     check(wait_for_exit(process, first_capture) == 0, "migration launch did not exit cleanly")
@@ -352,6 +451,7 @@ def run_migration(executable: Path, root: Path, seed: bytes) -> dict[str, Any]:
 
     process, second_capture = launch(executable, root, "second.log")
     second_client = wait_for_main(process)
+    second_client = wait_for_restored_fullscreen(process)
     close_client(second_client)
     check(wait_for_exit(process, second_capture) == 0, "relaunch did not exit cleanly")
     current_second = metadata(current)
@@ -359,6 +459,7 @@ def run_migration(executable: Path, root: Path, seed: bytes) -> dict[str, Any]:
     check(sha256(legacy) == legacy_hash, "relaunch changed the legacy preference bytes")
     return {
         "legacy_immutable": True,
+        "fullscreen_restored_on_import_and_relaunch": True,
         "legacy": metadata(legacy),
         "current_after_relaunch": current_second,
         "first_output": bounded_capture(root, "first.log"),
@@ -369,7 +470,11 @@ def run_migration(executable: Path, root: Path, seed: bytes) -> dict[str, Any]:
 def run_failure(executable: Path, root: Path) -> dict[str, Any]:
     preference = root / "data" / "ZenPDF" / "ZenPDF" / "preferences.ini"
     preference.mkdir(parents=True, mode=0o700)
+    marker = preference / "keep.marker"
+    write_private(marker, b"L004 preserve marker\n")
     root.chmod(0o700)
+    before_identity = identity(preference)
+    before = directory_snapshot(preference)
     process, capture = launch(executable, root, "output.log")
     parent = wait_for_main(process)
 
@@ -385,6 +490,7 @@ def run_failure(executable: Path, root: Path) -> dict[str, Any]:
         "keyboard Escape did not cancel the preference failure dialog",
     )
     check(process.poll() is None, "keyboard cancellation unexpectedly exited ZenPDF")
+    parent = wait_for_usable_main(process)
 
     close_client(parent)
     wait_until(
@@ -395,13 +501,18 @@ def run_failure(executable: Path, root: Path) -> dict[str, Any]:
     check(semantics_second == semantics, "dialog semantics changed between attempts")
     activate(discard)
     check(wait_for_exit(process, capture) == 0, "AT-SPI Discard did not close ZenPDF cleanly")
-    check(metadata(preference)["directory"], "hostile preference directory was replaced")
+    after = directory_snapshot(preference)
+    check(identity(preference) == before_identity, "hostile preference directory identity changed")
+    check(after == before, "hostile preference directory contents or metadata changed")
     check(not any(item.get("pid") == process.pid for item in clients()), "Wayland client remains")
     return {
         "dialog": semantics,
         "keyboard_escape_cancelled": True,
+        "keyboard_escape_returned_to_mapped_app": True,
         "atspi_discard_closed": True,
-        "hostile_leaf_preserved": metadata(preference),
+        "hostile_leaf_identity_unchanged": True,
+        "hostile_leaf_inventory_unchanged": True,
+        "hostile_leaf_preserved": after,
         "output": bounded_capture(root, "output.log"),
     }
 
@@ -457,7 +568,7 @@ def main() -> int:
         result["save_failure"] = run_failure(executable, work_root / "failure")
         result["no_residual_process"] = not zenpdf_processes()
         check(result["no_residual_process"], "a ZenPDF process remains after acceptance")
-    except Exception:
+    except BaseException:
         cleanup_active_runs()
         raise
 

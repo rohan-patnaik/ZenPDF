@@ -43,7 +43,18 @@ class L004WaylandAcceptanceTest(unittest.TestCase):
         self.assertEqual(value["mode"], "0600")
         self.assertNotIn("path", value)
 
+    def test_directory_snapshot_captures_inventory_without_host_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "hostile-leaf"
+            path.mkdir(mode=0o700)
+            marker = path / "keep.marker"
+            marker.write_bytes(b"preserve\n")
+            marker.chmod(0o600)
+            value = MODULE.directory_snapshot(path)
+        self.assertEqual(list(value["entries"]), ["keep.marker"])
+        self.assertEqual(value["entries"]["keep.marker"]["mode"], "0600")
+        self.assertNotIn(temporary, repr(value))
+
 
 if __name__ == "__main__":
     unittest.main()
-
